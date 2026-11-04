@@ -334,7 +334,7 @@ def fmt_value(x, unit="", kind="num", t0=None, cats=None) -> str:
     if kind == "time" and t0 is not None:
         return (t0 + pd.Timedelta(minutes=float(x))).strftime("%Y-%m-%d %H:%M")
     a = abs(x)
-    s = f"{x:,.0f}" if a >= 1000 else f"{x:,.1f}" if a >= 10 else f"{x:,.2f}" if a >= 0.1 else f"{x:.3g}"
+    s = f"{x:,.2f}" if a >= 0.1 or a == 0 else f"{x:.3g}"   # two decimals (64.35, not 64.3)
     return f"{s} {unit}".strip()
 
 
@@ -426,8 +426,10 @@ def attribute_table(df: pd.DataFrame) -> pd.DataFrame:
         num = pd.to_numeric(s, errors="coerce") if not pd.api.types.is_numeric_dtype(s) else s
         if pd.api.types.is_numeric_dtype(s) or num.notna().mean() > 0.9:
             f = num[np.isfinite(num.astype(float))]
-            rng = (f"{f.min():,.4g} … {f.max():,.4g}" if len(f) else "—")
-            mean = f"{f.mean():,.4g}" if len(f) else "—"
+            ints = bool(len(f)) and bool((f.astype(float) % 1 == 0).all())   # ids, counts: no decimals
+            n2 = (lambda x: f"{x:,.0f}") if ints else (lambda x: f"{x:,.2f}" if abs(x) >= 0.1 or x == 0 else f"{x:.3g}")
+            rng = (f"{n2(f.min())} … {n2(f.max())}" if len(f) else "—")
+            mean = f"{f.mean():,.2f}" if len(f) else "—"
             valid = int(len(f))
         else:
             vals = s.astype(str)
@@ -524,14 +526,14 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
             st.dataframe(pd.DataFrame({"value": vc.index, "points": vc.values,
                                        "share (%)": 100 * vc.values / max(len(df), 1)}), hide_index=True,
                          height=min(36 * (len(vc) + 1) + 3, 420),
-                         column_config={"share (%)": st.column_config.NumberColumn(format="%.1f")})
+                         column_config={"share (%)": st.column_config.NumberColumn(format="%.2f")})
         elif S and S.get("valid"):
             rows_ = [("points with a value", f"{S['valid']:,} of {S['n']:,}"),
                      ("minimum", fmt_value(S["min"], unit, kind, t0)), ("2nd percentile", fmt_value(S["p2"], unit, kind, t0)),
                      ("mean", fmt_value(S["mean"], unit, kind, t0)), ("median", fmt_value(S["median"], unit, kind, t0)),
                      ("98th percentile", fmt_value(S["p98"], unit, kind, t0)), ("maximum", fmt_value(S["max"], unit, kind, t0))]
             if kind == "num":
-                rows_ += [("SD", fmt_value(S["sd"], unit)), ("CV", f"{S['cv']:.1f} %" if S.get("cv") else "—")]
+                rows_ += [("SD", fmt_value(S["sd"], unit)), ("CV", f"{S['cv']:.2f} %" if S.get("cv") else "—")]
             st.dataframe(pd.DataFrame(rows_, columns=["statistic", "value"]), hide_index=True,
                          height=36 * (len(rows_) + 1) + 3)
             f = v[np.isfinite(v)]
@@ -1102,13 +1104,13 @@ with st.container(border=True, key="oced_step_2"):
             r0 = OPX["rates"][0]
             rv = pd.to_numeric(df0[r0], errors="coerce")
             if rv.notna().any():
-                st.metric("Mean applied rate", f"{rv.mean():,.1f} {OPX['units'].get(r0, '')}".strip(), border=True,
+                st.metric("Mean applied rate", f"{rv.mean():,.2f} {OPX['units'].get(r0, '')}".strip(), border=True,
                           help=f"{r0}, every reading")
         if D.get("area_ac"):
-            st.metric("Area harvested", f"{float(D['area_ac']):,.1f} ac", border=True,
+            st.metric("Area harvested", f"{float(D['area_ac']):,.2f} ac", border=True,
                       help="The strips the readings swept (distance x width), added up.")
         if D.get("yield", True) and yv is not None and yv.notna().any():
-            st.metric("Mean dry yield", f"{yv.mean():,.1f} bu/ac", border=True)
+            st.metric("Mean dry yield", f"{yv.mean():,.2f} bu/ac", border=True)
         if tt is not None and tt.notna().any():
             st.metric("Date", f"{tt.min():%d %b %Y}" + (f" – {tt.max():%d %b}" if tt.max().date() != tt.min().date()
                                                             else ""), border=True)
@@ -1194,12 +1196,12 @@ with st.container(border=True, key="oced_step_3"):
                 else:
                     st.success(f"{B['name']} · " + (f"{chosen_fields(B)} · " if B.get("feature")
                                                      else f"{B['n_polygons']} polygon(s) · ")
-                               + f"{B['area_ac']:,.1f} ac" + ("" if clip else " · S1 is off: not clipped"),
+                               + f"{B['area_ac']:,.2f} ac" + ("" if clip else " · S1 is off: not clipped"),
                                icon=":material/crop_free:")
                 if B.get("fields") and (B["needs_choice"] or B.get("feature")):
                     opts = [int(f["index"]) for f in B["fields"]]
                     lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])} "
-                                            f"({float(f.get('area_ac') or 0):,.1f} ac)" for f in B["fields"]}
+                                            f"({float(f.get('area_ac') or 0):,.2f} ac)" for f in B["fields"]}
                     sel = st.multiselect("This file holds several fields: which one is this field?", opts,
                                          default=[v for v in (B.get("feature") or []) if v in opts], key=f"bnd_feat_{TK}",
                                          format_func=lab.get, placeholder="choose the field ...",
@@ -1340,7 +1342,7 @@ with st.container(border=True, key="oced_step_3"):
             try:
                 ss.cleaned[t] = clean_one(t, sset if t == ss.active else sset_for(t), log=status.text)
                 R = ss.cleaned[t]["R"]
-                status.update(label=f"{t}: {R['n_in']:,} in → {R['n_kept']:,} kept ({R['removed_pct']:.1f} % "
+                status.update(label=f"{t}: {R['n_in']:,} in → {R['n_kept']:,} kept ({R['removed_pct']:.2f} % "
                                     "removed)", state="complete", expanded=False)
             except Exception as e:                                   # shown, never swallowed
                 status.update(label=f"{t}: the cleaning failed", state="error")
@@ -1358,7 +1360,7 @@ with st.container(border=True, key="oced_step_3"):
         with st.container(horizontal=True):
             st.metric("Readings in", f"{R['n_read'] if R.get('n_read') else R['n_in']:,}", border=True)
             st.metric("Kept", f"{R['n_kept']:,}", border=True)
-            st.metric("Removed", f"{R['removed_pct']:.1f} %", border=True,
+            st.metric("Removed", f"{R['removed_pct']:.2f} %", border=True,
                       help="Of the readings inside the boundary" if C.get("boundary") else None)
             if C.get("boundary"):
                 st.metric("Clipped (S1)", f"{clipped_of(C):,}",
@@ -1371,7 +1373,7 @@ with st.container(border=True, key="oced_step_3"):
             else:
                 st.metric("Passes of " + str(R["main"]), f"{R.get('passes', 1)}", border=True)
             if CL:
-                st.metric("Monitor vs grower", f"{CL['diff_pct']:+.1f} %", border=True,
+                st.metric("Monitor vs grower", f"{CL['diff_pct']:+.2f} %", border=True,
                           help="The monitor's total against the grower's weight on the same basis: + = the monitor "
                                f"read more than the grower weighed (L = grower / monitor = {L['factor']:.4f}).")
         tab_names = ["Steps", "Limits", "Clean map", "Removed points"] + (["Grower's data"] if L else [])
@@ -1404,7 +1406,7 @@ with st.container(border=True, key="oced_step_3"):
                                             "sd": st.column_config.NumberColumn(format="%.3f"),
                                             "lo": st.column_config.NumberColumn("low", format="%.2f"),
                                             "hi": st.column_config.NumberColumn("high", format="%.2f"),
-                                            "sd_drop_pct": st.column_config.NumberColumn("SD drop %", format="%.1f")})
+                                            "sd_drop_pct": st.column_config.NumberColumn("SD drop %", format="%.2f")})
                 st.caption("Mean and SD of the points still alive before each step, and the limits typed into "
                            "Filter Data (mean ± k SD, rounded to 2 decimals). Grouping: "
                            + str(((R if A3 else (R.get("sms3sigma") or {})).get("grouping") or {}).get("rule", ""))
@@ -1454,14 +1456,14 @@ with st.container(border=True, key="oced_step_3"):
             with tabs_[4]:
                 area = float(L.get("export_area_ac") or 0)
                 mon, gro = float(L["export_total_bu"]), float(L["scale_ticket_bu"])
-                pct = (lambda m, g: f"{100 * (m / g - 1):+.1f} %" if g else "—")
+                pct = (lambda m, g: f"{100 * (m / g - 1):+.2f} %" if g else "—")
                 basis_txt = ("at the standard moisture" if L.get("ticket_bu_at_standard") is not None or
                              str(L.get("comparison_basis") or "").startswith("dry") else "as delivered")
                 rows_v = [{"": f"Total (bu, {basis_txt})", "monitor": f"{mon:,.0f}", "grower": f"{gro:,.0f}",
                            "monitor vs grower": pct(mon, gro)}]
                 if area > 0:
-                    rows_v.append({"": f"Mean yield (bu/ac, {basis_txt})", "monitor": f"{mon / area:,.1f}",
-                                   "grower": f"{gro / area:,.1f}", "monitor vs grower": pct(mon, gro)})
+                    rows_v.append({"": f"Mean yield (bu/ac, {basis_txt})", "monitor": f"{mon / area:,.2f}",
+                                   "grower": f"{gro / area:,.2f}", "monitor vs grower": pct(mon, gro)})
                 if L.get("ticket_lb") and L.get("export_total_lb") and L.get("ticket_basis") == "wet":
                     rows_v.append({"": "Total weight as delivered (lb)", "monitor": f"{L['export_total_lb']:,.0f}",
                                    "grower": f"{L['ticket_lb']:,.0f}",
@@ -1477,7 +1479,7 @@ with st.container(border=True, key="oced_step_3"):
                         f'<b style="color:{tone[1]}">L = {L["factor"]:.4f} · band {html.escape(band)}</b><br>'
                         f'{html.escape(CL.get("verdict", ""))}</div>')
                 facts = [f"Compared on the {L.get('comparison_basis') or L.get('basis')} basis, over the "
-                         f"{area:,.1f} ac the readings swept"
+                         f"{area:,.2f} ac the readings swept"
                          + (" inside the boundary" if C.get("boundary") else "") + "."]
                 if L.get("ticket_caption"):
                     facts.append("Grower's weight: " + L["ticket_caption"].replace(
@@ -1521,8 +1523,8 @@ with st.container(border=True, key="oced_step_4"):
         if T4["clipped (S1)"].isna().all():
             T4 = T4.drop(columns=["clipped (S1)"])
         st.dataframe(T4, hide_index=True,
-                     column_config={"removed (%)": st.column_config.NumberColumn(format="%.1f"),
-                                    "monitor vs grower (%)": st.column_config.NumberColumn(format="%+.1f"),
+                     column_config={"removed (%)": st.column_config.NumberColumn(format="%.2f"),
+                                    "monitor vs grower (%)": st.column_config.NumberColumn(format="%+.2f"),
                                     "clipped (S1)": st.column_config.NumberColumn(format="%d")})
         zp = all_clean_zip()
         if zp and len(ss.cleaned) > 1:

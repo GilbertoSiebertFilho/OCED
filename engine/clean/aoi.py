@@ -343,8 +343,8 @@ def is_plan_like(gdf, tcol, typed_headland: np.ndarray, rate_col, plot_col, area
     if cand.sum() >= MIN_PLAN_POLYGONS:
         a = area[cand]
         if float(a.max()) <= HEADLAND_RATIO * float(np.median(a)):
-            return True, f"{int(cand.sum())} polygons of similar size (max / median {a.max() / np.median(a):.1f})"
-        return False, (f"{len(area)} polygons of dissimilar size (max / median {a.max() / np.median(a):.1f}) and no "
+            return True, f"{int(cand.sum())} polygons of similar size (max / median {a.max() / np.median(a):.2f})"
+        return False, (f"{len(area)} polygons of dissimilar size (max / median {a.max() / np.median(a):.2f}) and no "
                        "rate / plot column")
     return False, f"{len(area)} polygons and no rate / plot column (a plan needs >= {MIN_PLAN_POLYGONS})"
 
@@ -432,11 +432,11 @@ def read_plan(path, id_col=None, rate_col=None, headland_types=("headland", "bor
                 warnings.append(f"{os.path.basename(path)} holds {len(gdf)} polygons that are several field boundaries, "
                                 f"not a trial plan ({why}): choose the field of interest (aoi.feature 1..{len(gdf)}: "
                                 + "; ".join(f"{f['index']} = {f['name'] or 'polygon ' + str(f['index'])} "
-                                            f"{f['area_ac']:,.1f} ac" for f in fields) + ")")
+                                            f"{f['area_ac']:,.2f} ac" for f in fields) + ")")
             elif len(chosen_l) == 1:
                 f = fields[chosen - 1]
                 warnings.append(f"field of interest = polygon {chosen} of {len(gdf)} in {os.path.basename(path)} "
-                                f"({f['name'] or 'no name'}, {f['area_ac']:,.1f} ac); the other polygons are ignored")
+                                f"({f['name'] or 'no name'}, {f['area_ac']:,.2f} ac); the other polygons are ignored")
                 gdf = gdf.iloc[[chosen - 1]].reset_index(drop=True)
                 headland = np.zeros(1, bool)
             else:
@@ -444,8 +444,8 @@ def read_plan(path, id_col=None, rate_col=None, headland_types=("headland", "bor
                 sel = [fields[k - 1] for k in chosen_l]
                 warnings.append(f"field of interest = {feature_text(chosen_l)} of {len(gdf)} in {os.path.basename(path)}, "
                                 "together (" + "; ".join(f"{f['name'] or 'polygon ' + str(f['index'])} "
-                                                         f"{f['area_ac']:,.1f} ac" for f in sel)
-                                + f"; {sum(f['area_ac'] for f in sel):,.1f} ac in all)"
+                                                         f"{f['area_ac']:,.2f} ac" for f in sel)
+                                + f"; {sum(f['area_ac'] for f in sel):,.2f} ac in all)"
                                 + ("; the other polygons are ignored" if len(chosen_l) < len(gdf) else ""))
                 gdf = gdf.iloc[[k - 1 for k in chosen_l]].reset_index(drop=True)
                 headland = np.zeros(len(gdf), bool)

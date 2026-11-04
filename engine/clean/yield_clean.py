@@ -1279,7 +1279,7 @@ def ticket_summary(S, test_weight_lb_bu=None, test_weight_source=None) -> dict |
         cap = f"{vtxt} bu" + (f" = {lb:,.0f} lb at {tw:.2f} lb/bu (test weight from {test_weight_source})"
                               if lb and tw else "")
     else:
-        cap = f"{vtxt} {tk['unit']} = {bu:,.1f} bu at {tw:.2f} lb/bu (test weight from {test_weight_source})"
+        cap = f"{vtxt} {tk['unit']} = {bu:,.2f} bu at {tw:.2f} lb/bu (test weight from {test_weight_source})"
     cap += f", {tk['basis']} basis" + (f", ticket moisture {tk['moisture_pct']:g} %" if tk["moisture_pct"] is not None
                                         else "")
     return {**tk, "ticket_lb": lb, "ticket_bu": bu, "test_weight_used": tw, "test_weight_source": test_weight_source,
@@ -1603,7 +1603,7 @@ def clean(path, S, C, log=print, source=None):
                              "choose the field of interest with aoi.feature (a 1-based polygon index, or a list of them "
                              "for a field drawn in several polygons; CLI --aoi-feature 2 or 1,2,3): "
                              + "; ".join(f"{f['index']} = {f['name'] or 'polygon ' + str(f['index'])} "
-                                         f"({f['area_ac']:,.1f} ac)" for f in plan.fields)
+                                         f"({f['area_ac']:,.2f} ac)" for f in plan.fields)
                              + ". A field drawn in several parts should be one MultiPolygon feature.")
         if _legacy_boundary(S) and plan.is_plan:
             plan.is_plan = False                         # the v1 alias: a boundary union, never plots
@@ -1953,7 +1953,7 @@ def clean(path, S, C, log=print, source=None):
         y0 = np.nanmin(g._y) - 30 + RASTER_ORIGIN_SHIFT_M
         nr, nc = int((np.nanmax(g._y) + 30 - y0) / RES) + 1, int((np.nanmax(g._x) + 30 - x0) / RES) + 1
         if nr * nc > MAX_RASTER_CELLS:
-            raise ValueError(f"the points span {nc * RES / 1000:,.1f} x {nr * RES / 1000:,.1f} km (after removing the "
+            raise ValueError(f"the points span {nc * RES / 1000:,.2f} x {nr * RES / 1000:,.2f} km (after removing the "
                              f"implausible positions): more than one field's overlap raster can hold ({MAX_RASTER_CELLS:,} "
                              f"cells of {RES} m). The file probably holds several fields or farms: export or decode one "
                              "field per file")
@@ -2184,11 +2184,11 @@ def clean(path, S, C, log=print, source=None):
                 why = ("fewer than 30 records with local controls in the lowest overlap band (0-2 %"
                        + (f", {int(b1['size_used'])} of {int(b1['size']):,})" if b1 is not None else ")")
                        if b1 is None or b1["size_used"] < 30 else
-                       f"the yield already drops {-b1['vs_zero_pct']:.1f} % in the lowest overlap band (0-2 %, "
+                       f"the yield already drops {-b1['vs_zero_pct']:.2f} % in the lowest overlap band (0-2 %, "
                        f"{int(b1['size_used']):,} records with local controls) against its local no-overlap controls")
             else:
                 why = ("fewer than 30 points in the lowest overlap band (0-2 %)" if b1 is None or b1["size"] < 30 else
-                       f"the yield already drops {-b1['vs_zero_pct']:.1f} % in the lowest overlap band (0-2 %, "
+                       f"the yield already drops {-b1['vs_zero_pct']:.2f} % in the lowest overlap band (0-2 %, "
                        f"{int(b1['size']):,} points) against the no-overlap band")
             warnings.append(f"F8: {why}, so this field's dose-response cannot set the threshold (the automatic rule would "
                             f"stop at {100 * th_auto:.3g} %, removing {int((g.Overlap_f[alive] > th_auto).sum()):,} of the "
@@ -2210,7 +2210,7 @@ def clean(path, S, C, log=print, source=None):
         alive = st["alive"]
         k_sd = F["F10"]["k_sd"]
         mu, sd = y[alive].mean(), y[alive].std()
-        apply("F10", d("F10", F["F10"], range_txt=f" ({mu - k_sd * sd:.1f}-{mu + k_sd * sd:.1f})"),
+        apply("F10", d("F10", F["F10"], range_txt=f" ({mu - k_sd * sd:.2f}-{mu + k_sd * sd:.2f})"),
               lambda: (y - mu).abs() > k_sd * sd)
         p11 = F["F11"]
         win = 2 * p11["half_window"] + 1
@@ -2426,7 +2426,7 @@ def clean(path, S, C, log=print, source=None):
                     # compared with the symmetric dry integral (the same shrink both ways, sessions.dry_symmetric)
                     ticket_std = ticket_bu * (100.0 - float(m_tk)) / (100.0 - float(Ms))
                     ticket_cmp = ticket_std
-                    notes.append(f"scale ticket: {ticket_bu:,.1f} bu at {m_tk:g} % moisture = {ticket_std:,.1f} bu at "
+                    notes.append(f"scale ticket: {ticket_bu:,.2f} bu at {m_tk:g} % moisture = {ticket_std:,.2f} bu at "
                                  f"the standard moisture {Ms:g} % (symmetric shrink); compared with the Yld_Dry_Sy "
                                  "integral")
         integ_by_machine = (ylev * area_ac).groupby(g._machine.values).sum().to_dict()
@@ -2481,7 +2481,7 @@ def clean(path, S, C, log=print, source=None):
                     if v.get("paired_factor") is not None:
                         txt += (f"; paired-cell factor {v['paired_factor']:.4f} "
                                 f"({'inside' if v['inside_paired_ci'] else 'outside'} its CI, agreement "
-                                f"{100 * v['agreement']:+.1f} %)")
+                                f"{100 * v['agreement']:+.2f} %)")
                     elif v.get("note"):
                         txt += "; " + v["note"]
                     return txt
@@ -2492,7 +2492,7 @@ def clean(path, S, C, log=print, source=None):
                     if v.get("agreement") is not None and abs(v["agreement"]) > 0.05:
                         warnings.append(f"machine {m}: the ticket ratio L_m / L_ref ({v['ticket_ratio']:.4f}) and the "
                                         f"paired-cell factor ({v['paired_factor']:.4f}) disagree by "
-                                        f"{100 * v['agreement']:+.1f} %: check the tickets' coverage and the machines' "
+                                        f"{100 * v['agreement']:+.2f} %: check the tickets' coverage and the machines' "
                                         "calibration")
     harm_on = harmonise or levels_m is not None          # Yld_Harm carries a factor other than 1 only in these cases
     if harm_on:
@@ -2542,7 +2542,7 @@ def clean(path, S, C, log=print, source=None):
                         f"integral x L_ref of the {n_no_ticket} machine(s) without a ticket)")
                 name = "scale_ticket_bu" if tk["legacy"] else "scale_ticket"
                 warnings.append(f"{name} ({float(ticket_cmp):,.0f} bu) differs from {what} ({ticket:,.0f} bu) "
-                                f"by {100 * (ticket / float(ticket_cmp) - 1):+.1f} %: the per-machine tickets are used")
+                                f"by {100 * (ticket / float(ticket_cmp) - 1):+.2f} %: the per-machine tickets are used")
         else:
             ticket = float(ticket_cmp)
         factor = ticket / integral
@@ -2611,8 +2611,8 @@ def clean(path, S, C, log=print, source=None):
                 warnings.append(
                     f"level: {what} ({ticket:,.0f} bu) is divided by the integral of the processed set "
                     f"(inside {aoi_zone(A['buffer_m'])}: {integral:,.0f} bu over "
-                    f"{integral_area:,.1f} ac, L = {factor:.4f}), but the records set aside by the AOI carry another "
-                    f"{out_bu:,.0f} bu over {out_ac:,.1f} ac (whole file {integral + out_bu:,.0f} bu, L would be "
+                    f"{integral_area:,.2f} ac, L = {factor:.4f}), but the records set aside by the AOI carry another "
+                    f"{out_bu:,.0f} bu over {out_ac:,.2f} ac (whole file {integral + out_bu:,.0f} bu, L would be "
                     f"{ticket / (integral + out_bu):.4f}): give the ticket(s) of the field of interest only, or run "
                     "without the AOI when the ticket covers the whole export")
         if plan is not None:
@@ -2658,8 +2658,8 @@ def clean(path, S, C, log=print, source=None):
             R["level"]["leveled_export_integral_bu"] = float((ylev * area_ac * harm * lvl).sum())
         miss = R["level"]["leveled_export_integral_bu"] / ticket - 1
         if abs(miss) > LEVEL_TOL:
-            warnings.append(f"the leveled export integrates to {R['level']['leveled_export_integral_bu']:,.1f} bu, "
-                            f"{100 * miss:+.1f} % from the scale ticket ({ticket:,.0f} bu)")
+            warnings.append(f"the leveled export integrates to {R['level']['leveled_export_integral_bu']:,.2f} bu, "
+                            f"{100 * miss:+.2f} % from the scale ticket ({ticket:,.0f} bu)")
         # the integrals of the columns actually written: L is derived on the comparison column (ylev: the wet yield
         # for a wet ticket) and applied to the mapped dry yield, so Yld_Level integrates to the ticket only up to the
         # gap between the mapped dry and the comparison integral (one-sided shrink: Yld_Vol_Dr < Yld_Vol_We on the
@@ -2686,8 +2686,8 @@ def clean(path, S, C, log=print, source=None):
         ad = abs(Lgap)
         if levels_m is not None:
             lm_txt = ", ".join(f"{m} x {v['L']:.4f}" for m, v in sorted(levels_m.items()))
-            verdict = (f"the monitor total is {d0:+.1f} % from the sum of the per-machine tickets (field-level L = "
-                       f"{factor:.4f}, {Lgap:+.1f} % from 1); each combine is leveled to its own ticket ({lm_txt}), so "
+            verdict = (f"the monitor total is {d0:+.2f} % from the sum of the per-machine tickets (field-level L = "
+                       f"{factor:.4f}, {Lgap:+.2f} % from 1); each combine is leveled to its own ticket ({lm_txt}), so "
                        "the leveled map integrates to the tickets")
             if ad <= 1:
                 verdict += ": a small level correction"
@@ -2704,17 +2704,17 @@ def clean(path, S, C, log=print, source=None):
                 verdict = (f"the monitor total agrees with the grower's weight within 1 % ({d1:+.2f} %): {ltxt} is a "
                            "small level correction")
             elif ad <= 3:
-                verdict = (f"the monitor total is {d1:+.1f} % from the grower's weight ({ltxt} is {Lgap:+.1f} % from 1), "
+                verdict = (f"the monitor total is {d1:+.2f} % from the grower's weight ({ltxt} is {Lgap:+.2f} % from 1), "
                            f"within the 1-3 % agreement expected after a field calibration: L levels the map to the scale")
             elif ad <= 10:
-                verdict = (f"the monitor total is {d1:+.1f} % from the grower's weight ({ltxt} is {Lgap:+.1f} % from 1): "
+                verdict = (f"the monitor total is {d1:+.2f} % from the grower's weight ({ltxt} is {Lgap:+.2f} % from 1): "
                            "L levels the map to the scale; the yield monitor's calibration should be checked")
             else:
-                verdict = (f"the monitor total is {d1:+.1f} % from the grower's weight ({ltxt} is {Lgap:+.1f} % from 1, "
+                verdict = (f"the monitor total is {d1:+.2f} % from the grower's weight ({ltxt} is {Lgap:+.2f} % from 1, "
                            "> 10 %): check the ticket coverage (whole field? this field only? dockage? moisture basis?) "
                            "before trusting L")
             if abs(after - integral) > 1e-9 * max(1.0, integral):
-                verdict = f"before the harmonisation {d0:+.1f} %, after it {d1:+.2f} %; " + verdict
+                verdict = f"before the harmonisation {d0:+.2f} %, after it {d1:+.2f} %; " + verdict
         R["level"]["closure"] = {"monitor_total_bu": integral, "ticket_bu": ticket, "diff_pct": d0,
                                  "after_harmonisation_bu": after, "diff_after_pct": d1, "verdict": verdict,
                                  # the same gaps seen from the scale ("monitor 38,613 bu vs scale 36,608 bu (-5.2 %)")
@@ -2789,7 +2789,7 @@ def advice(R: dict) -> list[str]:
     (0-2 %), and the F8 fallback."""
     out = []
     if R.get("removed_pct") is not None and R["removed_pct"] > REMOVED_CHECK_PCT:
-        out.append(f"the cleaning removed {R['removed_pct']:.1f} % of the points ({R['n_in'] - R['n_kept']:,} of "
+        out.append(f"the cleaning removed {R['removed_pct']:.2f} % of the points ({R['n_in'] - R['n_kept']:,} of "
                    f"{R['n_in']:,}; more than {REMOVED_CHECK_PCT:g} %): check the filters below and the map before "
                    "using this file")
     for c in R.get("cascade", []):
@@ -2812,12 +2812,12 @@ def advice(R: dict) -> list[str]:
     if Lf is None and L.get("factor") is not None and not L.get("per_machine"):
         Lf = L.get("factor_harmonised", L.get("factor"))
     if Lf is not None and abs(float(Lf) - 1) > 0.10:            # the same quantity and band as the closure verdict
-        out.append(f"level: the monitor is > 10 % off the scale (L = {float(Lf):.4f}, {100 * (float(Lf) - 1):+.1f} % "
+        out.append(f"level: the monitor is > 10 % off the scale (L = {float(Lf):.4f}, {100 * (float(Lf) - 1):+.2f} % "
                    "from 1): check the ticket coverage (whole field? this field only? dockage, moisture basis?) before "
                    "trusting L")
     elif L.get("per_machine") and L.get("factor") is not None and abs(float(L["factor"]) - 1) > 0.10:
         out.append(f"level: the monitor is > 10 % off the per-machine tickets (field-level L = {float(L['factor']):.4f}, "
-                   f"{100 * (float(L['factor']) - 1):+.1f} % from 1): check the tickets' coverage (whole field? this "
+                   f"{100 * (float(L['factor']) - 1):+.2f} % from 1): check the tickets' coverage (whole field? this "
                    "field only? dockage, moisture basis?) before trusting the per-machine L")
     return out
 
@@ -2945,7 +2945,7 @@ def figures(g, R, diag, ycol, tag, out):
     for ax, m, q, px, py, title in ((axA, np.ones(len(g), bool), q_log, x_, y_,
                                      f"Before: all {len(g):,} export readings"),
                                     (axB, keep, q_fin, fx, fy,
-                                     f"After: {keep.sum():,} kept ({R['removed_pct']:.1f} % removed)")):
+                                     f"After: {keep.sum():,} kept ({R['removed_pct']:.2f} % removed)")):
         mp = _strips(ax, q[m], px[m], py[m], y.values[m], cmap, lo, hi)
         sc = mp if mp is not None else sc
         _extent(ax, x_, y_)
@@ -3012,7 +3012,7 @@ def figures(g, R, diag, ycol, tag, out):
     ax.axhline(-tol, color=MUTED, lw=1, ls="--")
     ax.text(-0.45, -tol - 0.6, f"-{tol:g} % tolerance", color=MUTED, va="top", ha="left", fontsize=8.5)
     loc8 = f8.get("reference_mode") == "local"
-    k_ = lambda v: f"{v / 1000:.1f}k" if v >= 10000 else f"{v:,}"  # noqa: E731
+    k_ = lambda v: f"{v / 1000:.2f}k" if v >= 10000 else f"{v:,}"  # noqa: E731
     ax.set_xticks(xs, [(b if b != ">35" else "> 35") + (f"\n{k_(int(r['size_used']))}\n/{k_(int(r['size']))}" if loc8
                                                        else f"\n{int(r['size']):,}") for b, r in dose.iterrows()],
                   fontsize=7.8)
@@ -3037,7 +3037,7 @@ def figures(g, R, diag, ycol, tag, out):
         if np.isfinite(r_th[col]):
             ax.scatter([th * 100], [r_th[col]], s=90, facecolor="white", edgecolor=LIGHT_BLUE, lw=2, zorder=4)
             lab = (f"{int(r_th.removed):,} removed at {th * 100:.3g} %" if col == "removed"
-                   else f"{r_th.mean_kept:.1f} bu/ac")
+                   else f"{r_th.mean_kept:.2f} bu/ac")
             ax.annotate(lab, (th * 100, r_th[col]), xytext=(10, 8 if col == "removed" else -14),
                         textcoords="offset points", color=INK2, fontsize=8.5)
         ok_ = np.isfinite(sens[col].to_numpy(float)) & (sens.threshold.to_numpy(float) > 0)
@@ -3066,7 +3066,7 @@ def figures(g, R, diag, ycol, tag, out):
     ax.set_xlim(0, xmax * 1.32)
     ax.set_xlabel("Points removed")
     ax.grid(axis="y", visible=False)
-    ax.set_title(f"Cleaning cascade: {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.1f} % removed)",
+    ax.set_title(f"Cleaning cascade: {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.2f} % removed)",
                  loc="left")
     files["cascade"] = os.path.join(out, "fig_clean_cascade.png")
     fig.savefig(files["cascade"], bbox_inches="tight")
@@ -3135,7 +3135,7 @@ def figures_sms(g, R, diag, tag, out):
     for ax, m, q, px, py, vals, title in ((axA, np.ones(len(g), bool), q_log, x_, y_, yraw,
                                            f"Before: all {len(g):,} export readings"),
                                           (axB, keep, q_fin, fx, fy, y,
-                                           f"After: {keep.sum():,} kept ({R['removed_pct']:.1f} % removed), "
+                                           f"After: {keep.sum():,} kept ({R['removed_pct']:.2f} % removed), "
                                            "optimised strips")):
         mp = _strips(ax, q[m], px[m], py[m], vals.values[m], cmap, lo, hi)
         sc = mp if mp is not None else sc
@@ -3195,7 +3195,7 @@ def figures_sms(g, R, diag, tag, out):
     ax.set_xlim(0, xmax * 1.45)
     ax.set_xlabel("Points removed")
     ax.grid(axis="y", visible=False)
-    ax.set_title(f"SMS 3-sigma steps: {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.1f} % removed)",
+    ax.set_title(f"SMS 3-sigma steps: {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.2f} % removed)",
                  loc="left")
     files["cascade"] = os.path.join(out, "fig_clean_cascade.png")
     fig.savefig(files["cascade"], bbox_inches="tight")
@@ -3455,7 +3455,7 @@ def figure_seams(g, R, diag, tag, out, q, px, py, ex, ey, x0, y0):
             lc = LineCollection(segs, cmap=lcmap, norm=norm, linewidths=2.4, capstyle="butt", zorder=3)
             lc.set_array(machines_mod.seam_pct(Bs[colname]))
             ax.add_collection(lc)
-        sub = (f"median {st['median_pct']:.1f} % · {st['stretches']:,} stretch{'es' if st['stretches'] != 1 else ''}"
+        sub = (f"median {st['median_pct']:.2f} % · {st['stretches']:,} stretch{'es' if st['stretches'] != 1 else ''}"
                f" · {st['pass_pairs']} pass pair{'s' if st['pass_pairs'] != 1 else ''}"
                if st["stretches"] else "no neighbouring passes")
         ax.set_title(f"{title}\n{sub}", loc="left", fontsize=10)
@@ -3484,7 +3484,7 @@ def figure_seams(g, R, diag, tag, out, q, px, py, ex, ey, x0, y0):
                 ax.text(left + share / 2, yi, f"{share:.0f} %", ha="center", va="center", fontsize=8.5,
                         color="white" if c >= 2 else INK, zorder=4)
             left += share
-        ax.text(101.5, yi, (f"median {st['median_pct']:.1f} %, {st['share_above_10_pct']:.0f} % of the stretches "
+        ax.text(101.5, yi, (f"median {st['median_pct']:.2f} %, {st['share_above_10_pct']:.0f} % of the stretches "
                             "above 10 %" if st["stretches"] else "none"), va="center", fontsize=9, color=INK2)
     ax.set_yticks(yy, [labels[p[0]] for p in panels])
     ax.set_xlim(0, 100)
@@ -3507,7 +3507,7 @@ def final_applied_text(R: dict) -> list:
     """What the yield column to map carries, in three short lines (filters, combine factor, level)."""
     col = R.get("yield_column_for_difm")
     RM, L, A = R.get("machines") or {}, R.get("level") or {}, R.get("aoi") or {}
-    lines = [f"Filters: {R['n_in'] - R['n_kept']:,} of {R['n_in']:,} readings removed ({R['removed_pct']:.1f} %)"
+    lines = [f"Filters: {R['n_in'] - R['n_kept']:,} of {R['n_in']:,} readings removed ({R['removed_pct']:.2f} %)"
              + (f"; {int(A['n_output_outside_aoi']):,} kept points outside the field of interest left out"
                 if A.get("n_output_outside_aoi") and A.get("clip_output", True) else "")]
     leveled = col is not None and col in (R.get("level_column_for_difm"), R.get("level_sym_column_for_difm"))
@@ -3572,7 +3572,7 @@ def figure_final(g, R, diag, tag, out, q, px, py, ex, ey):
     mids = (edges[:-1] + edges[1:]) / 2
     hx.barh(mids, 100 * cnt / cnt.sum(), height=np.diff(edges), color=cmap(norm(mids)), edgecolor="none", zorder=3)
     hx.axhline(mean, color=INK, lw=1.2, zorder=4)
-    hx.text(hx.get_xlim()[1] * 0.98, mean, f"mean {mean:,.1f}", ha="right", va="bottom", fontsize=8.5, color=INK,
+    hx.text(hx.get_xlim()[1] * 0.98, mean, f"mean {mean:,.2f}", ha="right", va="bottom", fontsize=8.5, color=INK,
             zorder=5)
     hx.set_ylim(lo, hi)
     hx.set_ylabel(f"{col} (bu/ac)")
@@ -3582,8 +3582,8 @@ def figure_final(g, R, diag, tag, out, q, px, py, ex, ey):
     sec.set_ylabel("% of the field mean", color=INK2)
     hx.set_title("Values (the legend)", loc="left", fontsize=10)
     sd = float(vv.std(ddof=1)) if len(vv) > 1 else 0.0
-    stats_ = (f"mean {mean:,.1f} · median {float(np.median(vv)):,.1f} · SD {sd:,.1f} bu/ac · CV "
-              f"{100 * sd / mean:.1f} %" if mean > 0 else f"mean {mean:,.1f} bu/ac")
+    stats_ = (f"mean {mean:,.2f} · median {float(np.median(vv)):,.2f} · SD {sd:,.2f} bu/ac · CV "
+              f"{100 * sd / mean:.2f} %" if mean > 0 else f"mean {mean:,.2f} bu/ac")
     note = ("Yellow = the field mean, red below it, green above (scale: 2nd-98th percentile; the end bars hold the "
             f"values beyond it). Every strip is one point of the file with its own value: {Fz['source']}.")
     lines = final_applied_text(R)
@@ -4009,17 +4009,17 @@ def _run_single(input_shp, out_dir, settings=None, log=print, source=None):
     lag = R["lag"]
     if R.get("method") == "sms3sigma":
         sw = (R.get("sms3sigma") or {}).get("swath") or {}
-        log(f"in {R['n_in']:,} -> kept {R['n_kept']:,} ({R['removed_pct']:.1f} % removed); SMS 3-sigma, "
+        log(f"in {R['n_in']:,} -> kept {R['n_kept']:,} ({R['removed_pct']:.2f} % removed); SMS 3-sigma, "
             f"{R['sms3sigma']['grouping']['n_groups']} group(s) ({R['sms3sigma']['grouping']['mode']}); swath "
             f"{sw.get('n_removed', 0):,} removed, {sw.get('n_narrowed', 0):,} narrowed")
     else:
-        log(f"in {R['n_in']:,} -> kept {R['n_kept']:,} ({R['removed_pct']:.1f} % removed); F8 {R['f8']['mode']} "
+        log(f"in {R['n_in']:,} -> kept {R['n_kept']:,} ({R['removed_pct']:.2f} % removed); F8 {R['f8']['mode']} "
             f"(dose-response choice {R['f8']['threshold_auto'] * 100:.3g} %); lag scan best {lag['best_records']} rec "
             f"-> applied {lag['applied_records']}")
     if "level" in R:
         Lv = R["level"]
-        log(f"level: scale {Lv['scale_ticket_bu']:,.1f} bu / export integral "
-            f"{Lv['export_integral_bu']:,.1f} bu = {Lv['factor']:.4f}"
+        log(f"level: scale {Lv['scale_ticket_bu']:,.2f} bu / export integral "
+            f"{Lv['export_integral_bu']:,.2f} bu = {Lv['factor']:.4f}"
             + (f" (after harmonisation {Lv['factor_harmonised']:.4f})" if "factor_harmonised" in Lv else "")
             + (f"; ticket {Lv['ticket_caption']}" if Lv.get("ticket_caption") else ""))
         if Lv.get("closure"):

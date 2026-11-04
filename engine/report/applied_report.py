@@ -38,10 +38,10 @@ def make_report(R: dict, path: str) -> str:
             ["Operation", _e(R.get("operation_label"))],
             ["Readings in the file", _n(n_read)],
             ["Clipped to the field boundary (S1)",
-             (f"{_n(B['n_outside'])} outside {_e(os.path.basename(B['file']))} ({_n(B['area_ac'], 1)} ac)" if B
+             (f"{_n(B['n_outside'])} outside {_e(os.path.basename(B['file']))} ({_n(B['area_ac'], 2)} ac)" if B
               else "no boundary given")],
-            ["Kept", f"{_n(n_kept)} of {_n(n_in)} ({100 * n_kept / max(n_in or 1, 1):.1f} %); removed "
-                     f"{R.get('removed_pct', 0):.1f} %"],
+            ["Kept", f"{_n(n_kept)} of {_n(n_in)} ({100 * n_kept / max(n_in or 1, 1):.2f} %); removed "
+                     f"{R.get('removed_pct', 0):.2f} %"],
             ["Attributes filtered", ", ".join(_e(a) for a in R.get("attributes") or [])
              + f" (the main one: <b>{_e(R.get('main'))}</b>, {R.get('passes', 1)} pass(es))"],
             ["Mean and SD", _e((R.get("grouping") or {}).get("rule", ""))],
@@ -73,7 +73,7 @@ def make_report(R: dict, path: str) -> str:
         for r in st:
             t.append([_e(r["step"]), _e(r["group"]), _e(r["attribute"]) + (f" ({_e(r['unit'])})" if r.get("unit") else ""),
                       _n(r["n_before"]), _f(r["mean"], 3), _f(r["sd"], 3), _f(r["lo"]), _f(r["hi"]), _n(r["removed"]),
-                      ("-" if r.get("sd_drop_pct") is None else f"{r['sd_drop_pct']:.1f} %")])
+                      ("-" if r.get("sd_drop_pct") is None else f"{r['sd_drop_pct']:.2f} %")])
         w = TEXT_W / 100
         story.append(_table(t, [7 * w, 12 * w, 17 * w, 9 * w, 10 * w, 9 * w, 9 * w, 9 * w, 9 * w, 9 * w], small=True))
         story.append(Paragraph("Mean and SD of the points still alive before each step; the limits as typed in SMS "
@@ -87,7 +87,7 @@ def make_report(R: dict, path: str) -> str:
             for when in ("before", "after"):
                 s = d.get(when) or {}
                 t.append([_e(a) if when == "before" else "", when, _n(s.get("n")), _f(s.get("mean")), _f(s.get("sd")),
-                          ("-" if s.get("cv_pct") is None else f"{s['cv_pct']:.1f} %"), _f(s.get("min")),
+                          ("-" if s.get("cv_pct") is None else f"{s['cv_pct']:.2f} %"), _f(s.get("min")),
                           _f(s.get("median")), _f(s.get("max"))])
         w = TEXT_W / 100
         story.append(_table(t, [18 * w, 9 * w, 10 * w, 10 * w, 10 * w, 9 * w, 11 * w, 11 * w, 12 * w], small=True))

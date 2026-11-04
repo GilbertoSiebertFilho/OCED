@@ -499,8 +499,8 @@ def ticket_conversion(ticket: dict | None, test_weight: float | None = None, shp
         out["text"] = f"{v:,.0f} {u}" + (f" = {out['lb']:,.0f} lb" if u != "lb" else "") + "; " + out["error"]
         return out
     out["bu"] = out["lb"] / tw
-    out["text"] = (f"= {out['bu']:,.1f} bu at {tw:.2f} lb/bu ({src})" if u == "lb" else
-                   f"= {out['lb']:,.0f} lb = {out['bu']:,.1f} bu at {tw:.2f} lb/bu ({src})")
+    out["text"] = (f"= {out['bu']:,.2f} bu at {tw:.2f} lb/bu ({src})" if u == "lb" else
+                   f"= {out['lb']:,.0f} lb = {out['bu']:,.2f} bu at {tw:.2f} lb/bu ({src})")
     return out
 
 
@@ -547,7 +547,7 @@ def level_caption(R: dict) -> str:
     f = L.get("factor")
     if mon is None or tick is None:
         return f"level factor {f:.4f}" if f is not None else ""
-    s = f"monitor {float(mon):,.0f} bu vs scale {float(tick):,.0f} bu ({100 * (float(tick) / float(mon) - 1):+.1f} %"
+    s = f"monitor {float(mon):,.0f} bu vs scale {float(tick):,.0f} bu ({100 * (float(tick) / float(mon) - 1):+.2f} %"
     if L.get("ticket_bu_at_standard") is not None and L.get("ticket_bu") is not None:
         ms = (R.get("moisture") or {}).get("standard_pct")
         s += (f"; {float(L['ticket_bu']):,.0f} bu at {float(L['ticket_moisture_pct']):g} % = {float(tick):,.0f} bu"
@@ -828,7 +828,7 @@ def difm_note(R: dict) -> str:
         f = (M["sms3sigma"].get("files") or {}).get("difm_ready_zip")
         cm = M.get("comparison") or {}
         s += (f". The SMS 3-sigma file is {f} (map {M['sms3sigma'].get('yield_column_for_difm')} and its optimised "
-              "swath width)" + (f"; the two methods agree on {cm['agreement_pct']:.1f} % of the kept points"
+              "swath width)" + (f"; the two methods agree on {cm['agreement_pct']:.2f} % of the kept points"
                                 if cm.get("agreement_pct") is not None else ""))
     return s + "."
 
@@ -1261,7 +1261,7 @@ def units_inside_aoi(candidate: dict, units, aoi_union, opts, workdir: str, buff
             continue
         inside = shapely.contains_xy(poly, lon, lat)
         out[u.id] = float(inside.mean())
-        log(f"unit {u.id}: {100 * out[u.id]:.1f} % of {len(lon):,} readings inside the AOI + {buffer_m:g} m")
+        log(f"unit {u.id}: {100 * out[u.id]:.2f} % of {len(lon):,} readings inside the AOI + {buffer_m:g} m")
     return out
 
 
@@ -1471,7 +1471,7 @@ def _cli(a) -> int:
     if a.aoi:
         plan = read_plan(os.path.abspath(a.aoi), feature=a.aoi_feature)
         _print(f"\nField of interest: {os.path.basename(a.aoi)}: {plan['n_polygons']} polygon(s), {plan['n_plots']} "
-               f"plot(s), {plan['headland_polygons']} headland polygon(s), {plan['area_ac']:,.1f} ac"
+               f"plot(s), {plan['headland_polygons']} headland polygon(s), {plan['area_ac']:,.2f} ac"
                + (f", rate column {plan['rate_col']} ({', '.join(format(r, 'g') for r in plan['rates'])})"
                   if plan["rate_col"] else "")
                + (f" (polygon(s) {plan['feature']} of {plan.get('n_in_file')} chosen with --aoi-feature)"
@@ -1482,7 +1482,7 @@ def _cli(a) -> int:
             raise ValueError(f"{os.path.basename(a.aoi)} holds {plan['n_polygons']} field boundaries, not a trial plan: "
                              "choose the field of interest with --aoi-feature N, or N,M,... for a field drawn in several polygons ("
                              + "; ".join(f"{f['index']} = {f['name'] or 'polygon ' + str(f['index'])} "
-                                         f"({f['area_ac']:,.1f} ac)" for f in plan.get("fields") or []) + ")")
+                                         f"({f['area_ac']:,.2f} ac)" for f in plan.get("fields") or []) + ")")
     if a.list:
         for u in units:
             _print(f"  {'*' if u.default else ' '} {u.id}\n      {u.label}")
@@ -1529,8 +1529,8 @@ def _cli(a) -> int:
         rep = dec["report"]
         t = rep.get("totals") or {}
         _print(f"\nDecoded {dec['n']:,} readings (from {rep.get('n_records_read') or 0:,} records): "
-               f"{t.get('area_ac', float('nan')):,.2f} ac, {t.get('bu_wet', float('nan')):,.1f} bu wet, "
-               f"{t.get('bu_dry', float('nan')):,.1f} bu dry; time basis {rep.get('time_basis')}")
+               f"{t.get('area_ac', float('nan')):,.2f} ac, {t.get('bu_wet', float('nan')):,.2f} bu wet, "
+               f"{t.get('bu_dry', float('nan')):,.2f} bu dry; time basis {rep.get('time_basis')}")
         for w in rep["warnings"]:
             _print("  decoder warning: " + str(w))
         shp = dec["shp"]
@@ -1604,7 +1604,7 @@ def _cli(a) -> int:
     _print(f"  dataset          {cand['label']}")
     if dec:
         _print(f"  decoded points   {dec['zip']}")
-    _print(f"  points           {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.1f} % removed)")
+    _print(f"  points           {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.2f} % removed)")
     if R.get("method") == "sms3sigma":
         M3 = R.get("sms3sigma") or {}
         sw, gr = M3.get("swath") or {}, M3.get("grouping") or {}
@@ -1619,9 +1619,9 @@ def _cli(a) -> int:
         m3, cm = M.get("sms3sigma") or {}, M.get("comparison") or {}
         base = M.get("base_dir") or R["files"]["dir"]
         _print(f"  SMS 3-sigma      {m3.get('n_in', 0):,} in -> {m3.get('n_kept', 0):,} kept "
-               f"({m3.get('removed_pct', 0):.1f} % removed): "
+               f"({m3.get('removed_pct', 0):.2f} % removed): "
                f"{os.path.join(base, (m3.get('files') or {}).get('difm_ready_zip') or '')}")
-        _print(f"  comparison       agreement {cm.get('agreement_pct', float('nan')):.1f} % of the kept points; mean "
+        _print(f"  comparison       agreement {cm.get('agreement_pct', float('nan')):.2f} % of the kept points; mean "
                f"OCCD {cm.get('mean_occd', float('nan')):.2f} vs SMS 3-sigma "
                f"{cm.get('mean_sms3sigma', float('nan')):.2f} bu/ac: "
                f"{os.path.join(base, (cm.get('files') or {}).get('report_pdf') or '')}")
@@ -1634,7 +1634,7 @@ def _cli(a) -> int:
                    + (f", {t['moisture_pct']:g} % moisture" if t.get("moisture_pct") is not None else "") + ")"
                    + (f" {conv['text']}" if conv and conv.get("text") and t["unit"] != "bu" else ""))
         elif L.get("scale_ticket_bu") is not None:          # per-machine totals: the implied field total
-            _print(f"  level ticket     {float(L['scale_ticket_bu']):,.1f} bu ({L.get('scale_ticket_note') or 'per-machine totals'})")
+            _print(f"  level ticket     {float(L['scale_ticket_bu']):,.2f} bu ({L.get('scale_ticket_note') or 'per-machine totals'})")
         _print(f"  level factor     {level_factor_text(L)}: {level_caption(R)}")
         c = L.get("closure") or {}
         if c.get("verdict"):
@@ -1642,9 +1642,9 @@ def _cli(a) -> int:
         tt = (R.get("machines") or {}).get("ticket_test") or {}
         if tt:
             wo, wi = tt.get("without") or {}, tt.get("with") or {}
-            _print(f"  ticket test      without the factor {float(wo.get('total_bu', float('nan'))):,.1f} bu "
+            _print(f"  ticket test      without the factor {float(wo.get('total_bu', float('nan'))):,.2f} bu "
                    f"({float(wo.get('diff_pct', float('nan'))):+.2f} %), with it "
-                   f"{float(wi.get('total_bu', float('nan'))):,.1f} bu ({float(wi.get('diff_pct', float('nan'))):+.2f} %): "
+                   f"{float(wi.get('total_bu', float('nan'))):,.2f} bu ({float(wi.get('diff_pct', float('nan'))):+.2f} %): "
                    + ("applied" if tt.get("applied") else "not applied")
                    + (f" ({', '.join(map(str, tt.get('machines') or []))})" if tt.get("machines") else ""))
     se = (R.get("machines") or {}).get("seams") or {}
@@ -1652,7 +1652,7 @@ def _cli(a) -> int:
         _print(f"  seams            {se['text']}")
     fm = R.get("final_map") or {}
     if fm:
-        _print(f"  final map        {fm['column']}: mean {fm['mean']:,.1f} bu/ac over {fm['n_points']:,} points "
+        _print(f"  final map        {fm['column']}: mean {fm['mean']:,.2f} bu/ac over {fm['n_points']:,} points "
                f"(fig_clean_final.png); " + "; ".join(fm.get("applied") or []))
     if R.get("aoi"):
         A = R["aoi"]

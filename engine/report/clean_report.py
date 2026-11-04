@@ -131,8 +131,8 @@ def _n(v, d=0) -> str:
         return _e(v)
 
 
-def _pct(v, d=1) -> str:
-    """A fraction (0.12) as '12.0 %'; None -> '-'."""
+def _pct(v, d=2) -> str:
+    """A fraction (0.12) as '12.00 %'; None -> '-'."""
     if v is None:
         return "-"
     try:
@@ -233,7 +233,7 @@ def _f8_controls_text(f8, lead: str = "controls: ") -> str:
         who = "all records taken as one combine, since the file names none;"
     else:
         who = f"same combine as identified by the {_e(key)}" if key else "same combine"
-    txt = (f"({lead}{who}" + ("" if who.endswith(";") else ",") + f" another pass, within {_n(rad, 1)} m"
+    txt = (f"({lead}{who}" + ("" if who.endswith(";") else ",") + f" another pass, within {_n(rad, 2)} m"
            + (f" = 1.5 header widths, above the {_n(rset)} m minimum" if widened else "")
            + f", the same distance from the harvested edge within {_n(loc.get('edge_tol_m'))} m, "
            f"&ge; {_n(loc.get('min_controls'))} of them")
@@ -488,11 +488,11 @@ def _level_text(R) -> str | None:
     s += ")"
     tick_as_given = L.get("ticket_bu", L.get("scale_ticket_bu"))
     if L.get("ticket_unit") and L.get("ticket_unit") != "bu" and tick_as_given is not None:
-        s += f" = {float(tick_as_given):,.1f} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu ({_e(_tw_source(L))})"
+        s += f" = {float(tick_as_given):,.2f} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu ({_e(_tw_source(L))})"
                                                     if L.get("test_weight_used") else "")
     if L.get("ticket_bu_at_standard") is not None and tick is not None:
-        s += f" = {float(tick):,.1f} bu at the standard moisture (symmetric shrink of the ticket)"
-    s += (f" / monitor total {_n(mon, 1)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac "
+        s += f" = {float(tick):,.2f} bu at the standard moisture (symmetric shrink of the ticket)"
+    s += (f" / monitor total {_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac "
           f"(column {_e(L.get('integral_column'))}, all processed points"
           + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else "")
           + f") = <b>L = {float(L['factor']):.4f}</b>")
@@ -502,11 +502,11 @@ def _level_text(R) -> str | None:
     if c.get("verdict"):
         s += f". {_e(c['verdict'])}"
     if "inside_boundary_integral_bu" in L:
-        s += (f". Inside the boundary: {L['inside_boundary_integral_bu']:,.1f} bu over "
+        s += (f". Inside the boundary: {L['inside_boundary_integral_bu']:,.2f} bu over "
               f"{L['inside_boundary_area_ac']:,.2f} ac ({L['n_points_outside_boundary']:,} points outside; diagnostic only)")
     for kb, ka in (("inside_aoi_integral_bu", "inside_aoi_area_ac"), ("aoi_integral_bu", "aoi_area_ac")):
         if kb in L:
-            s += f". Inside the field of interest (0 m): {L[kb]:,.1f} bu" + (f" over {L[ka]:,.2f} ac" if ka in L else "")
+            s += f". Inside the field of interest (0 m): {L[kb]:,.2f} bu" + (f" over {L[ka]:,.2f} ac" if ka in L else "")
             break
     return s + "."
 
@@ -692,7 +692,7 @@ def _section_sms_limits(story, R, num):
         rows.append([_e(str(s_["group"])[:34]), _e(f"{s_['step']} {s_['attribute']}"), _n(s_["n_before"]),
                      f"{s_['mean']:.3f}", f"{s_['sd']:.3f}", f"{s_['lo']:.2f}", f"{s_['hi']:.2f}", _n(s_["removed"]),
                      (f"{s_['sd_after']:.3f}" if s_.get("sd_after") is not None else "-"),
-                     (f"{s_['sd_drop_pct']:.0f} %" + (" &rarr; again" if s_.get("next_pass") else "")
+                     (f"{s_['sd_drop_pct']:.2f} %" + (" &rarr; again" if s_.get("next_pass") else "")
                       if s_.get("sd_drop_pct") is not None else "-")])
     t = _table(rows, [1.45 * inch, 1.05 * inch, 0.6 * inch, 0.55 * inch, 0.5 * inch, 0.5 * inch, 0.55 * inch,
                       0.55 * inch, 0.55 * inch, 0.65 * inch], small=True)
@@ -731,7 +731,7 @@ def _section_aoi(story, A, num):
              + (" (left out of the clean file)" if A.get("clip_output", True) else " (kept; In_AOI = 0)")],
             ["Plot id column", _e(A.get("id_col") or "-")],
             ["Rate column", _e(A.get("rate_col") or "-")],
-            ["Target rates", ", ".join(_n(r, 1) if isinstance(r, float) else _e(r) for r in rates) or "-"]]
+            ["Target rates", ", ".join(_n(r, 2) if isinstance(r, float) else _e(r) for r in rates) or "-"]]
     story.append(_table(rows, [2.9 * inch, TEXT_W - 2.9 * inch], header=True, bold_first=True))
 
 
@@ -765,11 +765,11 @@ def _section_sessions(story, R, num):
             se = (f"{_e(str(r['start'])[-8:])} - {_e(str(r['end'])[-8:])}" if r.get("start") and r.get("end")
                   else "-")
             rows.append([_session_label(r), _e(ds), se, _n(r.get("n_readings")), _n(r.get("n_kept")),
-                         _n(r.get("area_ac"), 1), _n(r.get("wet_bu")),
-                         f"{_n(r.get('mean_moisture'), 1)} ({_n(r.get('sd_moisture'), 2)})",
+                         _n(r.get("area_ac"), 2), _n(r.get("wet_bu")),
+                         f"{_n(r.get('mean_moisture'), 2)} ({_n(r.get('sd_moisture'), 2)})",
                          _pct(r.get("share_below_standard_kept", r.get("share_below_standard")), 0),
-                         _n(r.get("mean_wet_yield"), 1),
-                         _n(r.get("mean_dry_yield"), 1), _n(r.get("mean_dry_sym"), 1)])
+                         _n(r.get("mean_wet_yield"), 2),
+                         _n(r.get("mean_dry_yield"), 2), _n(r.get("mean_dry_sym"), 2)])
         w = [1.1, 0.85, 0.72, 0.7, 0.55, 0.45, 0.5, 0.68, 0.52, 0.42, 0.45, 0.45]
         scale = TEXT_W / (sum(w) * inch)
         t = _table(rows, [x * inch * scale for x in w], small=True)
@@ -785,11 +785,11 @@ def _section_sessions(story, R, num):
         if Fd.get("mean_mass_per_area_all") is not None:
             s.append(f"field mean over all processed readings (mass / area"
                      + (f", {_e(Fd['mean_mass_per_area_basis'])}" if Fd.get("mean_mass_per_area_basis") else "")
-                     + (f", {_n(Fd['area_ac'], 1)} ac" if Fd.get("area_ac") is not None else "")
-                     + f") <b>{_n(Fd['mean_mass_per_area_all'], 1)}</b>")
+                     + (f", {_n(Fd['area_ac'], 2)} ac" if Fd.get("area_ac") is not None else "")
+                     + f") <b>{_n(Fd['mean_mass_per_area_all'], 2)}</b>")
         if Fd.get("cleaned_map_mean") is not None:
-            s.append(f"mean of the cleaned map <b>{_n(Fd['cleaned_map_mean'], 1)}</b>"
-                     + (f" ({_n(Fd['cleaned_map_mean_dry_sym'], 1)} on the symmetric dry basis)"
+            s.append(f"mean of the cleaned map <b>{_n(Fd['cleaned_map_mean'], 2)}</b>"
+                     + (f" ({_n(Fd['cleaned_map_mean_dry_sym'], 2)} on the symmetric dry basis)"
                         if Fd.get("cleaned_map_mean_dry_sym") is not None else ""))
         if s:
             story.append(Paragraph("Field level: " + "; ".join(s) + (f". {_e(Fd['note'])}" if Fd.get("note") else "")
@@ -841,9 +841,9 @@ def _section_machines(story, R, num):
              "Decision"]]
     for m in sorted(M.get("n_points") or {}):
         mm = means.get(m) or {}
-        rows.append([_e(m), _n(_g(M, "n_points", m)), _n(_g(M, "n_kept", m)), _n(mm.get("area_ac"), 1),
-                     _n(mm.get("wet_bu")), _n(mm.get("mass_per_area_mean"), 1), _n(mm.get("moisture_mean"), 1),
-                     _n(mm.get("cleaned_map_mean"), 1), _n(_g(M, "factor_applied", m, default=1.0), 4),
+        rows.append([_e(m), _n(_g(M, "n_points", m)), _n(_g(M, "n_kept", m)), _n(mm.get("area_ac"), 2),
+                     _n(mm.get("wet_bu")), _n(mm.get("mass_per_area_mean"), 2), _n(mm.get("moisture_mean"), 2),
+                     _n(mm.get("cleaned_map_mean"), 2), _n(_g(M, "factor_applied", m, default=1.0), 4),
                      _e(_g(M, "decision", m, default=""))])
     w = [0.85, 0.55, 0.55, 0.55, 0.6, 0.7, 0.6, 0.7, 0.55, 1.6]
     scale = TEXT_W / (sum(w) * inch)
@@ -940,7 +940,7 @@ def _section_machines(story, R, num):
         rows = [["Machine", "Ticket bu", "Integral bu", "L_m", "L_m / L_ref"]]
         for m in sorted(P):
             pm = P[m] if isinstance(P[m], dict) else {"ticket_bu": P[m]}
-            rows.append([_e(m), _n(pm.get("ticket_bu"), 1), _n(pm.get("integral_bu"), 1), _n(pm.get("L"), 4),
+            rows.append([_e(m), _n(pm.get("ticket_bu"), 2), _n(pm.get("integral_bu"), 2), _n(pm.get("L"), 4),
                          _n(pm.get("relative_to_ref", pm.get("relative")), 4)])
         t = _table(rows, [1.4 * inch, 1.2 * inch, 1.2 * inch, 1.0 * inch, 1.0 * inch])
         t.setStyle(TableStyle([("ALIGN", (1, 0), (-1, -1), "RIGHT")]))
@@ -972,8 +972,8 @@ def _final_map(story, R):
     applied = "; ".join(_e(a) for a in (fm.get("applied") or []))
     _fig_block(story, R, "final", f"<b>Final map</b>: {_e(fm.get('column', ''))}, the yield to map",
                f"The {_n(fm.get('n_points'))} points of the clean file with their own values ({_e(fm.get('values_from') or '')}); "
-               f"mean {_n(fm.get('mean'), 1)}, median {_n(fm.get('median'), 1)}, SD {_n(fm.get('sd'), 1)} bu/ac, CV "
-               f"{_n(fm.get('cv_pct'), 1)} %. {applied}. Colours centred on the field mean (yellow): red below, green "
+               f"mean {_n(fm.get('mean'), 2)}, median {_n(fm.get('median'), 2)}, SD {_n(fm.get('sd'), 2)} bu/ac, CV "
+               f"{_n(fm.get('cv_pct'), 2)} %. {applied}. Colours centred on the field mean (yellow): red below, green "
                "above; nothing is interpolated or smoothed.", 4.9 * inch)
 
 
@@ -992,7 +992,7 @@ def _section_seams(story, R):
     rows = [["Neighbouring passes", "Stretches", "Pass pairs", "Median difference %", "Stretches > 10 %"]]
     for lab, st in (("same combine", sc), ("different combines" + (", before the factor" if moved else ""), db)) + (
             (("different combines, after the factor", da),) if moved else ()):
-        rows.append([_e(lab), _n(st.get("stretches")), _n(st.get("pass_pairs")), _n(st.get("median_pct"), 1),
+        rows.append([_e(lab), _n(st.get("stretches")), _n(st.get("pass_pairs")), _n(st.get("median_pct"), 2),
                      (_n(st.get("share_above_10_pct"), 0) + " %") if st.get("share_above_10_pct") is not None
                      else "-"])
     w = [2.3, 0.9, 0.9, 1.4, 1.3]
@@ -1006,8 +1006,8 @@ def _section_seams(story, R):
                                "a calibration difference would make the same on every seam):", BODY))
         rows = [["Combine a", "Combine b", "Stretches", "Pass pairs", "Median diff. %", "a over b %"]]
         for p_ in pr:
-            md = _n(p_.get("median_pct_before"), 1) + ((" &rarr; " + _n(p_.get("median_pct_after"), 1)) if moved else "")
-            ab = (f"{p_.get('a_over_b_pct_before'):+.1f}" + (f" &rarr; {p_.get('a_over_b_pct_after'):+.1f}" if moved else ""))
+            md = _n(p_.get("median_pct_before"), 2) + ((" &rarr; " + _n(p_.get("median_pct_after"), 2)) if moved else "")
+            ab = (f"{p_.get('a_over_b_pct_before'):+.2f}" + (f" &rarr; {p_.get('a_over_b_pct_after'):+.2f}" if moved else ""))
             rows.append([_e(p_.get("a")), _e(p_.get("b")), _n(p_.get("stretches")), _n(p_.get("pass_pairs")), md, ab])
         w = [1.45, 1.45, 0.75, 0.75, 1.2, 1.2]
         scale = TEXT_W / (sum(w) * inch)
@@ -1043,19 +1043,19 @@ def _section_level(story, R, num):
                  + (f", {float(L['ticket_moisture_pct']):g} % moisture on the ticket" if L.get("ticket_moisture_pct") is not None
                     else "") + (f". {_e(L['ticket_note'])}" if L.get("ticket_note") else "")])
     if L.get("ticket_unit") and L.get("ticket_unit") != "bu":
-        conv = (f"{_n(tick, 1)} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu" if L.get("test_weight_used") else "")
+        conv = (f"{_n(tick, 2)} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu" if L.get("test_weight_used") else "")
                 + (f" ({_e(_tw_source(L))})" if L.get("test_weight_source") else "")
                 + (f"; {_n(L.get('ticket_lb'))} lb" if L.get("ticket_lb") and L.get("ticket_unit") != "lb" else ""))
         rows.append(["Converted to bushels", conv])
     at_std = L.get("ticket_bu_at_standard", L.get("ticket_bu_dry"))
     if at_std is not None:
-        rows.append(["At the standard moisture", f"{_n(at_std, 1)} bu (symmetric shrink of the ticket"
+        rows.append(["At the standard moisture", f"{_n(at_std, 2)} bu (symmetric shrink of the ticket"
                      + (f"; compared on the {_e(L['comparison_basis'])} basis" if L.get("comparison_basis") else "") + ")"])
     harm_differs = _harmonised_differs(L)
     rows.append(["Monitor total (processed set)",
-                 f"{_n(mon, 1)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, column "
+                 f"{_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, column "
                  f"{_e(L.get('integral_column'))}" + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else "")
-                 + (f"; after the combine harmonisation {_n(L.get('export_total_harmonised_bu'), 1)} bu"
+                 + (f"; after the combine harmonisation {_n(L.get('export_total_harmonised_bu'), 2)} bu"
                     if harm_differs else "")])
     # the factor applied to the columns first (factor_final = after the harmonisation when a combine factor was
     # applied); the pre-harmonisation factor only when a factor changed it. The scale figure is the one L divides by:
@@ -1065,7 +1065,7 @@ def _section_level(story, R, num):
         ff = L.get("factor_harmonised", L.get("factor"))
     lv = f"<b>{float(ff):.4f}</b>" if ff is not None else "-"
     if mon and tick:
-        lv += f" (monitor {_n(mon)} bu vs scale {_n(tick)} bu, {100 * (float(tick) / float(mon) - 1):+.1f} %"
+        lv += f" (monitor {_n(mon)} bu vs scale {_n(tick)} bu, {100 * (float(tick) / float(mon) - 1):+.2f} %"
         if L.get("ticket_bu_at_standard") is not None and L.get("ticket_bu") is not None:
             lv += (f"; the ticket's {_n(L['ticket_bu'])} bu at {float(L['ticket_moisture_pct']):g} % = {_n(tick)} bu at "
                    "the standard moisture")
@@ -1077,13 +1077,13 @@ def _section_level(story, R, num):
     rows.append(["Level factor L", lv])
     c = L.get("closure") or {}
     if c:
-        cl = (f"monitor {_n(c.get('monitor_total_bu'), 1)} bu vs scale {_n(c.get('ticket_bu'), 1)} bu: "
+        cl = (f"monitor {_n(c.get('monitor_total_bu'), 2)} bu vs scale {_n(c.get('ticket_bu'), 2)} bu: "
               f"the monitor is {_spct(c.get('diff_pct'))} from the scale")
         after = c.get("after_harmonisation_bu")
         if (after is not None and c.get("monitor_total_bu") is not None
                 and abs(float(after) - float(c["monitor_total_bu"])) > 1e-9 * max(1.0, abs(float(c["monitor_total_bu"])))):
             cl += (("; the leveled map integrates to " if L.get("per_machine") else "; after the combine harmonisation ")
-                   + f"{_n(after, 1)} bu ({_spct(c.get('diff_after_pct'))})")
+                   + f"{_n(after, 2)} bu ({_spct(c.get('diff_after_pct'))})")
         if c.get("verdict"):
             v = str(c["verdict"])
             cl += f". {_e(v[:1].upper() + v[1:])}"
@@ -1092,8 +1092,8 @@ def _section_level(story, R, num):
     if tt:
         wo, wi = tt.get("without") or {}, tt.get("with") or {}
         rows.append(["Ticket closure test (combines)",
-                     f"without the factor {_n(wo.get('total_bu'), 1)} bu ({_spct(wo.get('diff_pct'))} from the scale); "
-                     f"with the factor {_n(wi.get('total_bu'), 1)} bu ({_spct(wi.get('diff_pct'))}): "
+                     f"without the factor {_n(wo.get('total_bu'), 2)} bu ({_spct(wo.get('diff_pct'))} from the scale); "
+                     f"with the factor {_n(wi.get('total_bu'), 2)} bu ({_spct(wi.get('diff_pct'))}): "
                      + ("<b>factor applied</b>" if tt.get("applied") else "<b>factor not applied</b>")
                      + (f" ({_e(', '.join(map(str, tt.get('machines') or [])))})" if tt.get("machines") else "")
                      + (f". {_e(tt['text'])}" if tt.get("text") else "")])
@@ -1101,7 +1101,7 @@ def _section_level(story, R, num):
     rows.append(["Yield column to map", f"<b>{_e(col)}</b>" + (f": {_e(why)}" if why else "")])
     if L.get("set_aside_integral_bu"):
         rows.append(["Records set aside by the field of interest",
-                     f"{_n(L['set_aside_integral_bu'])} bu over {_n(L.get('set_aside_area_ac'), 1)} ac not in the "
+                     f"{_n(L['set_aside_integral_bu'])} bu over {_n(L.get('set_aside_area_ac'), 2)} ac not in the "
                      f"denominator; whole file {_n(L.get('file_integral_bu'))} bu, L would be {_n(L.get('factor_whole_file'), 4)}"])
     story.append(_table(rows, [2.0 * inch, TEXT_W - 2.0 * inch], header=True, bold_first=True))
 
@@ -1168,7 +1168,7 @@ def make_report(result: dict, path: str) -> str:
     if aoi_txt:
         rows.append(["Field of interest", aoi_txt])
     rows += [
-        ["Points", f"{R['n_in']:,} in &rarr; <b>{R['n_kept']:,} kept</b>; {rem:,} removed ({R['removed_pct']:.1f} %)"],
+        ["Points", f"{R['n_in']:,} in &rarr; <b>{R['n_kept']:,} kept</b>; {rem:,} removed ({R['removed_pct']:.2f} %)"],
         ["Harvest order", _e(f"{R['order']['basis']}: {R['order']['rule']}")
          + (f" ({R['order']['n_logs']} logs)" if R["order"].get("n_logs") else "")],
     ]

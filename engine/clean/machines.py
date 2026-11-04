@@ -582,11 +582,11 @@ def harmonise(g, alive, y, moi, Mset: dict, warnings: list | None = None, info: 
             # the closure test reconsiders the step only when it is significant and consistent across cell sizes and
             # over the field; otherwise the decision says why a grower's weight cannot confirm it
             unconfirmed = unconfirmed_reason(e30, e50)
-            decision[m] = (f"not applied: |factor - 1| = {100 * eff:.1f} % is above machines.max_factor "
+            decision[m] = (f"not applied: |factor - 1| = {100 * eff:.2f} % is above machines.max_factor "
                            f"({100 * P['max_factor']:.0f} %)"
                            + (f" and {unconfirmed}, so a grower's weight is not used to confirm it" if unconfirmed else
                               " (a grower's weight for the field can confirm it: the ticket closure test)"))
-            warnings.append(f"machine {m}: the paired cells put it {100 * (1 / f30 - 1):+.1f} % against {ref} "
+            warnings.append(f"machine {m}: the paired cells put it {100 * (1 / f30 - 1):+.2f} % against {ref} "
                             f"(factor {f30:.4f}, CI {e30['ci_lo']:.4f}-{e30['ci_hi']:.4f}), more than the "
                             f"{100 * P['max_factor']:.0f} % a relative factor should repair: no harmonisation applied "
                             "unless the field's scale ticket confirms it; check the monitor's calibration")
@@ -610,7 +610,7 @@ def harmonise(g, alive, y, moi, Mset: dict, warnings: list | None = None, info: 
         elif sp.get("consistent") is False:
             applied[m] = 1.0
             decision[m] = (f"not applied: the factor differs over the field (halves {sp['factor_half_1']:.4f} and "
-                           f"{sp['factor_half_2']:.4f}, {sp['diff_pct']:+.1f} %, more than {100 * SPATIAL_AGREE:.0f} % "
+                           f"{sp['factor_half_2']:.4f}, {sp['diff_pct']:+.2f} %, more than {100 * SPATIAL_AGREE:.0f} % "
                            "and significant): one factor does not fit the whole field")
             warnings.append(f"machine {m}: its difference to the other combines changes over the field (the two halves "
                             f"of its contact cells read {sp['factor_half_1']:.4f} and {sp['factor_half_2']:.4f}): no "
@@ -865,11 +865,11 @@ def _gate_other(e: dict, P: dict, ref: str):
     sp = e.get("spatial") or {}
     if eff > P["max_factor"]:
         unconfirmed = unconfirmed_reason(e, None)
-        txt = (f"not applied: |factor - 1| = {100 * eff:.1f} % is above machines.max_factor "
+        txt = (f"not applied: |factor - 1| = {100 * eff:.2f} % is above machines.max_factor "
                f"({100 * P['max_factor']:.0f} %)"
                + (f" and {unconfirmed}, so a grower's weight is not used to confirm it" if unconfirmed else
                   " (a grower's weight for the field can confirm it: the ticket closure test)"))
-        w = (f"machine {m}: the {lab} estimate puts it {100 * (1 / f - 1):+.1f} % against {ref} (factor {f:.4f}, CI "
+        w = (f"machine {m}: the {lab} estimate puts it {100 * (1 / f - 1):+.2f} % against {ref} (factor {f:.4f}, CI "
              f"{e['ci_lo']:.4f}-{e['ci_hi']:.4f}), more than the {100 * P['max_factor']:.0f} % a relative factor should "
              "repair: no harmonisation applied unless the field's scale ticket confirms it; check the monitor's "
              "calibration")
@@ -882,7 +882,7 @@ def _gate_other(e: dict, P: dict, ref: str):
     if sp.get("consistent") is False:
         return ("spatially_inconsistent",
                 f"not applied: the factor differs over the field (halves {sp['factor_half_1']:.4f} and "
-                f"{sp['factor_half_2']:.4f}, {sp['diff_pct']:+.1f} %, more than {100 * SPATIAL_AGREE:.0f} % and "
+                f"{sp['factor_half_2']:.4f}, {sp['diff_pct']:+.2f} %, more than {100 * SPATIAL_AGREE:.0f} % and "
                 "significant): one factor does not fit the whole field",
                 f"machine {m}: its difference to the other combines changes over the field ({lab}: the two halves read "
                 f"{sp['factor_half_1']:.4f} and {sp['factor_half_2']:.4f}): no harmonisation applied")
@@ -1101,7 +1101,7 @@ def unconfirmed_reason(e30: dict, e50: dict | None = None) -> str | None:
     sp = e30.get("spatial") or {}
     if sp.get("consistent") is False:
         return (f"the factor differs over the field (halves {sp['factor_half_1']:.4f} and {sp['factor_half_2']:.4f}, "
-                f"{sp['diff_pct']:+.1f} %)")
+                f"{sp['diff_pct']:+.2f} %)")
     return None
 
 
@@ -1157,10 +1157,10 @@ def ticket_closure(tests: list, applied: dict, decision: dict, ref: str, Mset: d
         res["with"] = dict(res["without"])
         if rejected:
             parts = [f"candidate {m} rejected: {r['reason']} ({_factor_name(f30[m])} {r['factor']:.4f}; with it the "
-                     f"monitor total would be {r['with_diff_pct']:+.1f} % from the weight)" for m, r in rejected.items()]
+                     f"monitor total would be {r['with_diff_pct']:+.2f} % from the weight)" for m, r in rejected.items()]
             hint = [m for m, r in rejected.items() if r["weight_nearer_this_machine"]]
             res["verdict"] = ("no paired factor the grower's weight may confirm: " + "; ".join(parts)
-                              + f"; the weight is {100 * (ticket_bu / without - 1):+.1f} % from the monitor total"
+                              + f"; the weight is {100 * (ticket_bu / without - 1):+.2f} % from the monitor total"
                               + (f" and sits nearer {', '.join(hint)}'s level than the reference {ref}'s: try "
                                  f"machines.reference = {hint[0]}" if hint else "")
                               + "; check the monitors' calibration")
@@ -1187,17 +1187,17 @@ def ticket_closure(tests: list, applied: dict, decision: dict, ref: str, Mset: d
                            f"(harmonised total within {100 * abs(d_all):.2f} % of the scale); " + estimate_text(t))
             warnings[:] = [w_ for w_ in warnings
                            if not (w_.startswith(f"machine {m}:") and "a relative factor should repair" in w_)]
-        res["verdict"] = (f"the monitor total is {100 * d0:+.1f} % from the grower's weight without the factor and "
+        res["verdict"] = (f"the monitor total is {100 * d0:+.2f} % from the grower's weight without the factor and "
                           f"{100 * d_all:+.2f} % with it: the paired factor of {', '.join(chosen)} is confirmed and "
                           "applied")
         notes.append(f"machines: {res['verdict']} (ticket closure test, tolerance {100 * tol:g} %)")
     else:
         if abs(d0) <= TICKET_OPEN_MULT * tol:
-            why = (f"the monitor total already agrees with the grower's weight ({100 * d0:+.1f} %, within "
+            why = (f"the monitor total already agrees with the grower's weight ({100 * d0:+.2f} %, within "
                    f"{100 * TICKET_OPEN_MULT * tol:g} %), so the weight cannot confirm a {100 * (1 - f30[cands[0]]['factor']):+.0f} % step")
         else:
-            why = (f"with the factor the monitor total is {100 * d_all:+.1f} % from the grower's weight (without it "
-                   f"{100 * d0:+.1f} %), not within {100 * tol:g} %")
+            why = (f"with the factor the monitor total is {100 * d_all:+.2f} % from the grower's weight (without it "
+                   f"{100 * d0:+.2f} %), not within {100 * tol:g} %")
         res["verdict"] = f"not confirmed: {why}; the factor stays unapplied, check the monitor's calibration"
         for m in cands:
             decision[m] += f"; the grower's weight does not confirm it ({why})"
@@ -1429,17 +1429,17 @@ def seam_text(S: dict, min_pass_pairs: int = 5) -> str:
     """The plain-language reading of the seam diagnostic (seam_summary)."""
     sc, db, da = S["same_combine"], S["different_combines"]["before"], S["different_combines"]["after"]
     L = f"{S['stretch_m']:g} m"
-    same_t = (f"neighbouring passes of the SAME combine differ by a median {sc['median_pct']:.1f} % ({sc['stretches']:,} "
+    same_t = (f"neighbouring passes of the SAME combine differ by a median {sc['median_pct']:.2f} % ({sc['stretches']:,} "
               f"stretches of {L})" if sc["stretches"] else "no two passes of the same combine are neighbours")
     if not db["stretches"]:
         return ("The combines never harvested neighbouring passes, so this map has no seam between combines; "
                 + same_t + ".")
     moved = S["different_combines"].get("factor_moved_them")
     npp = db["pass_pairs"]
-    diff_t = (f"neighbouring passes of DIFFERENT combines differ by a median {db['median_pct']:.1f} % "
+    diff_t = (f"neighbouring passes of DIFFERENT combines differ by a median {db['median_pct']:.2f} % "
               f"({db['stretches']:,} stretch{'es' if db['stretches'] != 1 else ''} of {L} along {npp} pass "
               f"pair{'s' if npp != 1 else ''}"
-              + (f") before the combine factor and {da['median_pct']:.1f} % after it" if moved else
+              + (f") before the combine factor and {da['median_pct']:.2f} % after it" if moved else
                  "; no combine factor applied)"))
     txt = diff_t[0].upper() + diff_t[1:] + "; " + same_t + ". "
     if not sc["stretches"]:
@@ -1452,7 +1452,7 @@ def seam_text(S: dict, min_pass_pairs: int = 5) -> str:
                 "combine too).")
     else:
         txt += (f"The seams between the combines are larger than the field's own pass-to-pass steps by "
-                f"{final - sc['median_pct']:.1f} points of %. A factor is one number per combine: it removes only the "
+                f"{final - sc['median_pct']:.2f} points of %. A factor is one number per combine: it removes only the "
                 "part of the difference that is the same on every seam (a calibration difference), and only when "
                 "the side-by-side passes prove it (the gates above).")
         if db["pass_pairs"] < int(min_pass_pairs):

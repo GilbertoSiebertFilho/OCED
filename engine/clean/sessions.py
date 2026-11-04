@@ -202,7 +202,7 @@ def standard_moisture(Mset: dict, source, crop: str | None, M, wet=None, dry=Non
             if below.sum() >= 30:
                 share_eq = float((np.abs(ratio[below] - 1) < 1e-6).mean())
                 shrink = "one_sided" if share_eq >= ONE_SIDED_SHARE else "symmetric"
-                shrink_src = f"detected: dry == wet on {100 * share_eq:.1f} % of the {int(below.sum()):,} records below Ms"
+                shrink_src = f"detected: dry == wet on {100 * share_eq:.2f} % of the {int(below.sum()):,} records below Ms"
             else:
                 shrink, shrink_src = "unknown", "too few records below the standard to tell"
         else:
@@ -241,9 +241,9 @@ def local_day_offset_h(source, lon_deg) -> tuple:
     lon = float(lon_deg) if lon_deg is not None and np.isfinite(lon_deg) else None
     if lon is None or abs(lon) > 180:
         return 0.0, ("UTC (no longitude to derive the local day)" if lon is None else
-                     f"UTC (longitude {lon:.1f} is not in degrees: no local day derived)")
+                     f"UTC (longitude {lon:.2f} is not in degrees: no local day derived)")
     off = float(round(lon / 15.0))
-    return off, f"UTC {off:+g} h (solar time at longitude {lon:.1f}; the records are in UTC)"
+    return off, f"UTC {off:+g} h (solar time at longitude {lon:.2f}; the records are in UTC)"
 
 
 def _day_from_column(v: pd.Series) -> np.ndarray:
@@ -418,11 +418,11 @@ def recommendation(moist: dict, table: list, offsets: list, dry_sym_available: b
     reasons = []
     mm = [r["mean_moisture"] for r in table if r.get("mean_moisture") is not None]
     if len(mm) >= 2 and (max(mm) - min(mm)) > MOISTURE_STEP_PTS:
-        reasons.append(f"the session mean moistures span {max(mm) - min(mm):.1f} points (> {MOISTURE_STEP_PTS:g})")
+        reasons.append(f"the session mean moistures span {max(mm) - min(mm):.2f} points (> {MOISTURE_STEP_PTS:g})")
     for o in offsets:
         md = o.get("moisture_diff_2_minus_1")
         if md is not None and abs(md) > MOISTURE_STEP_PTS:
-            reasons.append(f"sessions {o['session_1']} -> {o['session_2']} differ by {md:+.1f} moisture points on "
+            reasons.append(f"sessions {o['session_1']} -> {o['session_2']} differ by {md:+.2f} moisture points on "
                            "adjacent passes")
     share = moist.get("share_below_standard")
     if moist.get("shrink") == "one_sided" and share is not None and share > BELOW_STANDARD_SHARE:
