@@ -401,11 +401,11 @@ def engine_knows_v2() -> bool:
 
 
 # ------------------------------------------------------------------------------------------------ grower's weight
-TICKET_UNITS = ("lb", "kg", "bu", "t")
+TICKET_UNITS = ("lb", "kg", "bu", "t", "bu/ac")   # bu/ac = the grower's yield per acre (x the field's acres)
 LB_PER_KG = 2.20462262185
 LB_PER_UNIT = {"lb": 1.0, "kg": LB_PER_KG, "t": 1000.0 * LB_PER_KG}       # bu needs the test weight
-TICKET_DEFAULT = {"value": None, "unit": "lb", "basis": "wet", "moisture_pct": None, "note": None}
-UNIT_LABEL = {"lb": "lb", "kg": "kg", "bu": "bu", "t": "t"}
+TICKET_DEFAULT = {"value": None, "unit": "lb", "basis": "wet", "moisture_pct": None, "note": None, "area_ac": None}
+UNIT_LABEL = {"lb": "lb", "kg": "kg", "bu": "bu", "t": "t", "bu/ac": "bu/ac"}
 
 
 def engine_knows_ticket() -> bool:
@@ -433,8 +433,15 @@ def ticket_settings(settings: dict | None) -> dict | None:
     if not np.isfinite(out["value"]) or out["value"] <= 0:
         raise ValueError(f"scale_ticket.value must be a positive weight, not {out['value']!r}")
     out["unit"] = str(out.get("unit") or "lb").strip().lower()
+    out["unit"] = yield_clean.TICKET_UNIT_ALIASES.get(out["unit"], out["unit"])
     if out["unit"] not in TICKET_UNITS:
         raise ValueError(f"scale_ticket.unit must be one of {', '.join(TICKET_UNITS)}, not {out['unit']!r}")
+    if out.get("area_ac") is not None:
+        out["area_ac"] = float(out["area_ac"])
+        if not np.isfinite(out["area_ac"]) or out["area_ac"] <= 0:
+            raise ValueError(f"scale_ticket.area_ac must be a positive area in acres, not {out['area_ac']!r}")
+        if out["unit"] != "bu/ac":
+            out["area_ac"] = None                     # acres only matter for a yield per acre
     out["basis"] = str(out.get("basis") or "wet").strip().lower()
     if out["basis"] not in ("wet", "dry"):
         raise ValueError(f"scale_ticket.basis must be 'wet' or 'dry', not {out['basis']!r}")
@@ -466,7 +473,8 @@ def file_test_weight(shp: str) -> float | None:
 
 
 def ticket_conversion(ticket: dict | None, test_weight: float | None = None, shp: str | None = None,
-                      crop: str | None = None, file_tw: float | None = None) -> dict | None:
+                      crop: str | None = None, file_tw: float | None = None, area_ac: float | None = None,
+                      area_source: str | None = None) -> dict | None:
     """The grower's weight in every unit, for the caption of the app, the CLI summary and the compat path:
     {value, unit, basis, moisture_pct, lb, bu, test_weight, test_weight_source, text, error}. The test weight is
     `test_weight` (settings.test_weight_lb_bu) > the file's own ratio (file_tw, or read from shp) > the crop table
@@ -486,6 +494,21 @@ def ticket_conversion(ticket: dict | None, test_weight: float | None = None, shp
             tw, src = float(common.CROPS[str(crop).lower()][0]), f"test weight of the crop table: {str(crop).lower()}"
     out = {**t, "lb": None, "bu": None, "test_weight": tw, "test_weight_source": src, "text": "", "error": None}
     v, u = t["value"], t["unit"]
+    if u == "bu/ac":
+        # a yield per acre: a total over the grower's acres, else over the area the caller knows (area_ac: the
+        # boundary); without either the engine uses the boundary or the swept area when it cleans
+        a_ac = t.get("area_ac") or area_ac
+        a_src = "the grower's acres" if t.get("area_ac") else (area_source or "the field's area")
+        if not a_ac:
+            out["text"] = ("x the field's acres when it is cleaned (the boundary's area, else the area the readings "
+                           "swept)")
+            return out
+        out["bu"] = v * float(a_ac)
+        out["lb"] = out["bu"] * tw if tw else None
+        out["area_ac"], out["area_source"] = float(a_ac), a_src
+        out["text"] = (f"x {float(a_ac):,.2f} ac ({a_src}) = {out['bu']:,.2f} bu"
+                       + (f" = {out['lb']:,.0f} lb at {tw:.2f} lb/bu ({src})" if tw else ""))
+        return out
     if u == "bu":
         out["bu"] = v
         out["lb"] = v * tw if tw else None
@@ -554,7 +577,8 @@ def level_caption(R: dict) -> str:
               + (f" at {float(ms):g} %" if ms is not None else " at the standard moisture"))
     s += ")"
     if L.get("ticket_unit") and L.get("ticket_unit") != "bu" and L.get("ticket_value") is not None:
-        s += f"; the scale said {ticket_label({'value': L['ticket_value'], 'unit': L['ticket_unit']})}"
+        s += (f"; the grower said {ticket_label({'value': L['ticket_value'], 'unit': L['ticket_unit']})}"
+              + (f" x {float(L['ticket_area_ac']):,.2f} ac" if L.get("ticket_area_ac") else ""))
         if L.get("test_weight_used"):
             s += f" at {float(L['test_weight_used']):.2f} lb/bu"
     return s
@@ -1378,7 +1402,12 @@ def main(argv=None) -> int:
     ap.add_argument("--ticket-unit", choices=list(TICKET_UNITS), default=None,
                     help="unit of --scale-ticket (default lb; t = metric tonne). lb / kg / t are converted to bushels "
                          "with the test weight: --test-weight, else the file's own Yld_Mass_W / Yld_Vol_We, else the "
-                         "crop. Not for --scale-ticket-bu, which is in bushels")
+                         "crop. bu/ac = the grower's yield per acre, made a total with --ticket-area-ac (else the "
+                         "boundary's area, else the area the readings swept). Not for --scale-ticket-bu, which is in "
+                         "bushels")
+    ap.add_argument("--ticket-area-ac", type=float, default=None, metavar="AC",
+                    help="with --ticket-unit bu/ac: the acres the grower's yield is over (default: the boundary's "
+                         "area, else the area the readings swept)")
     ap.add_argument("--ticket-basis", choices=["wet", "dry"], default="wet",
                     help="wet (default): the scale weighed wet grain; dry: the weight is already at the standard moisture")
     ap.add_argument("--ticket-moisture", type=float, default=None, metavar="PCT",
@@ -1547,7 +1576,8 @@ def _cli(a) -> int:
                          "the scale wrote it with --ticket-basis wet")
     if a.scale_ticket is not None:
         settings["scale_ticket"] = {"value": a.scale_ticket, "unit": a.ticket_unit or "lb", "basis": a.ticket_basis,
-                                    "moisture_pct": a.ticket_moisture, "note": None}
+                                    "moisture_pct": a.ticket_moisture, "note": None,
+                                    "area_ac": a.ticket_area_ac if (a.ticket_unit == "bu/ac") else None}
     if a.scale_ticket_bu is not None:
         if a.ticket_unit is not None or a.ticket_moisture is not None:
             raise ValueError("--scale-ticket-bu is the legacy ticket in bushels and takes no unit or moisture: use "

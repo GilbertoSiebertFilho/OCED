@@ -37,8 +37,9 @@ to the newest version of this repository (branch `main`), keeping a backup and r
      below 5 bu/ac), **S1 Clip To Field Boundary**, S2 Optimize Swath Widths (overlapping strips removed or narrowed,
      per-area values scaled), S3 speed, S4 moisture and S5 dry yield within mean ± 3 SD of the points still alive,
      another yield pass while the SD falls by more than 25 %. No combine factor between harvesters.
-     **The grower's data** of the field (total weight with its unit — lb, kg, bu or t — and basis, the grain moisture
-     on the ticket, the bushel weight) **validate** the yields: the monitor's total against the grower's on the same
+     **The grower's data** of the field (total weight with its unit — lb, kg, bu or t — or the yield per acre in
+     bu/ac with the acres it is over, by default the boundary's area; the basis, the grain moisture on the ticket, the
+     bushel weight) **validate** the yields: the monitor's total against the grower's on the same
      basis (at the standard moisture when the grain moisture is given), `L = grower / monitor` and a verdict
      (≤ 1 %, 1–3 %, 3–10 %, > 10 %). *Validate and adjust* also writes `Yld_Level` (the dry yield × L) into the
      clean file; the monitor's columns always stay as logged.
@@ -56,6 +57,12 @@ to the newest version of this repository (branch `main`), keeping a backup and r
    cleaning report (PDF: the steps, the limits, the statistics and the maps) and the cleaning record (JSON); all the
    clean shapefiles in one zip.
 
+**Sidebar.** *Saved works*: the name of this work with **Save**, and the saved works with **Open** (the files, their
+boundaries, the grower's data, the settings and the cleanings come back without running again; a work is also saved
+automatically after each extraction and cleaning, in `oced_work.json` inside its work folder; older work folders are
+listed too, rebuilt from their files). *Action tree*: the four steps and, file by file, the boundary, the grower's
+data, the cleaning (kept, removed %, L) and the outputs; a file name shows that file in steps 2 to 4.
+
 ## Files
 
 | Path | What it is |
@@ -67,6 +74,7 @@ to the newest version of this repository (branch `main`), keeping a backup and r
 | `engine/clean/aoi.py` | the field boundary: read any polygon file, choose the field, inside / outside |
 | `engine/clean/sessions.py`, `machines.py`, `references.py` | moisture basis and harvest sessions, machines, the literature cited by the report |
 | `engine/clean/applied3s.py` | the 3-sigma cleaning of planter, sprayer and other point files |
+| `engine/works.py` | saved works: `oced_work.json` per work folder (save, open, list; older folders rebuilt from their files) |
 | `engine/report/` | the PDF reports (`clean_report.py` for harvest files, `applied_report.py` for the others) |
 | `engine/run.py` | the API from the files to the clean shapefile (`open_input`, `list_units`, `decode`, `clean`) and a command line (`python -m engine.run --help`) |
 | `tests/` | end-to-end tests on synthetic fields (`python -m pytest -q tests`); no real data in the repository |

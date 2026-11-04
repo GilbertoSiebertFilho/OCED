@@ -487,7 +487,10 @@ def _level_text(R) -> str | None:
         s += f", {float(L['ticket_moisture_pct']):g} % moisture"
     s += ")"
     tick_as_given = L.get("ticket_bu", L.get("scale_ticket_bu"))
-    if L.get("ticket_unit") and L.get("ticket_unit") != "bu" and tick_as_given is not None:
+    if L.get("ticket_unit") == "bu/ac" and tick_as_given is not None and L.get("ticket_area_ac"):
+        s += (f" &times; {float(L['ticket_area_ac']):,.2f} ac ({_e(L.get('ticket_area_source') or 'area')}) = "
+              f"{float(tick_as_given):,.2f} bu")
+    elif L.get("ticket_unit") and L.get("ticket_unit") != "bu" and tick_as_given is not None:
         s += f" = {float(tick_as_given):,.2f} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu ({_e(_tw_source(L))})"
                                                     if L.get("test_weight_used") else "")
     if L.get("ticket_bu_at_standard") is not None and tick is not None:
@@ -1039,10 +1042,16 @@ def _section_level(story, R, num):
         f"{_e(refs.cite('level', notes=False))}.", BODY))
     rows = [["Item", "Value"]]
     basis = L.get("ticket_basis", L.get("basis", "wet"))
-    rows.append(["Grower's weight (scale ticket)", f"<b>{_ticket_label(L)}</b>, {_e(basis)} basis"
+    rows.append(["Grower's yield per acre" if L.get("ticket_unit") == "bu/ac" else "Grower's weight (scale ticket)",
+                 f"<b>{_ticket_label(L)}</b>, {_e(basis)} basis"
                  + (f", {float(L['ticket_moisture_pct']):g} % moisture on the ticket" if L.get("ticket_moisture_pct") is not None
                     else "") + (f". {_e(L['ticket_note'])}" if L.get("ticket_note") else "")])
-    if L.get("ticket_unit") and L.get("ticket_unit") != "bu":
+    if L.get("ticket_unit") == "bu/ac":
+        rows.append(["Made a total", f"{_ticket_label(L)} &times; {_n(L.get('ticket_area_ac'), 2)} ac "
+                     f"({_e(L.get('ticket_area_source') or 'area')}) = {_n(L.get('ticket_bu'), 2)} bu"
+                     + (f"; {_n(L.get('ticket_lb'))} lb at {float(L['test_weight_used']):.2f} lb/bu"
+                        if L.get("ticket_lb") and L.get("test_weight_used") else "")])
+    elif L.get("ticket_unit") and L.get("ticket_unit") != "bu":
         conv = (f"{_n(tick, 2)} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu" if L.get("test_weight_used") else "")
                 + (f" ({_e(_tw_source(L))})" if L.get("test_weight_source") else "")
                 + (f"; {_n(L.get('ticket_lb'))} lb" if L.get("ticket_lb") and L.get("ticket_unit") != "lb" else ""))

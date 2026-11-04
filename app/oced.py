@@ -84,6 +84,7 @@ def _engine_lock():
 with _engine_lock():
     _drop_stale_engine()
     from engine import run as er  # noqa: E402
+    from engine import works as ew  # noqa: E402
     from engine.clean import applied3s as a3  # noqa: E402
     from engine.clean import sms3sigma as sms  # noqa: E402
     from engine.clean import yield_clean as yc  # noqa: E402
@@ -127,7 +128,7 @@ ATTR_INFO = {
 LEVEL_COLUMNS = ("Yld_Level", "Yld_Lvl_Sy")      # what "adjust the yields" adds; "validate only" leaves them out
 BOUNDARY_TYPES = ["zip", "shp", "shx", "dbf", "prj", "cpg", "geojson", "json", "gpkg", "kml", "kmz"]
 OUTLINE_RGB = [0, 229, 255]                      # the field boundary on the satellite image (cyan)
-TICKET_UNIT_LABEL = {"lb": "lb", "kg": "kg", "bu": "bu", "t": "t (1,000 kg)"}
+TICKET_UNIT_LABEL = {"lb": "lb", "kg": "kg", "bu": "bu", "t": "t (1,000 kg)", "bu/ac": "bu/ac"}
 GROWER_USE = {"validate": "Validate only", "adjust": "Validate and adjust the yields"}
 # the same for the columns of a vendor export, by the key yield_clean.detect_columns gives them
 DET_INFO = {"yield": ("Dry yield", "bu/ac", "RdYlGn"), "yield_wet": ("Wet yield", "bu/ac", "RdYlGn"),
@@ -174,7 +175,8 @@ st.html(f"""<style>
 ss = st.session_state
 for k, v in {"workdir": None, "cands": None, "open_error": None, "open_exc": None, "open_request": None,
              "open_log": [], "units": {}, "datasets": {}, "cleaned": {}, "active": None, "boundary": {},
-             "grower": {}, "a3set": {}, "smsset": None}.items():
+             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None,
+             "work_saved_at": None, "work_msg": None}.items():
     ss.setdefault(k, v)
 
 
@@ -192,6 +194,9 @@ def start_over():
         ss[k] = None
     ss.open_log, ss.units, ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set = [], {}, {}, {}, {}, {}, {}
     ss.workdir = None
+    ss.input_label = ss.work_saved = ss.work_saved_at = ss.work_msg = None
+    for k in ("work_name", "work_name_for", "active_pick"):
+        ss.pop(k, None)
     for k in [k for k in ss if str(k).startswith(("cand_idx", "units_", "attr_", "path_in", "bnd_", "gw_", "a3_"))]:
         ss.pop(k, None)
 
@@ -206,6 +211,9 @@ def do_open(source):
         ss[k] = None
     ss.open_log, ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set = [], {}, {}, {}, {}, {}
     ss.pop("cand_idx", None)
+    ss.input_label = ss.work_saved = ss.work_saved_at = ss.work_msg = None
+    for k in ("work_name", "work_name_for", "active_pick"):
+        ss.pop(k, None)
     kind, val = source
     try:
         if kind == "upload":
@@ -216,12 +224,14 @@ def do_open(source):
                 with open(os.path.join(up, os.path.basename(f.name)), "wb") as fh:
                     fh.write(f.getbuffer())
             paths = [up]
+            ss.input_label = ", ".join(os.path.basename(f.name) for f in val)
         else:
             p = val.strip().strip('"')
             if not p or not os.path.exists(p):
                 raise ValueError(f"not found on this computer: {p or '(empty)'}")
             ss.workdir = er.new_workdir(WORKSPACE, os.path.splitext(os.path.basename(p.rstrip('\\/')))[0])
             paths = [p]
+            ss.input_label = p
         ss.cands = er.open_input(paths, ss.workdir, log=ss.open_log.append)
     except ValueError as e:
         ss.open_error = str(e)
@@ -643,8 +653,10 @@ def grower_ticket(G: dict | None) -> dict | None:
     if not G or not G.get("weight"):
         return None
     wet = G.get("basis") == "wet"
-    return {"value": float(G["weight"]), "unit": G.get("unit") or "lb", "basis": "wet" if wet else "dry",
-            "moisture_pct": (float(G["moisture"]) if (wet and G.get("moisture") is not None) else None), "note": None}
+    unit = G.get("unit") or "lb"
+    return {"value": float(G["weight"]), "unit": unit, "basis": "wet" if wet else "dry",
+            "moisture_pct": (float(G["moisture"]) if (wet and G.get("moisture") is not None) else None), "note": None,
+            "area_ac": (float(G["area_ac"]) if (unit == "bu/ac" and G.get("area_ac")) else None)}
 
 
 def file_config(tag: str, sset: dict) -> dict:
@@ -653,7 +665,7 @@ def file_config(tag: str, sset: dict) -> dict:
     G = ss.grower.get(tag) or {}
     return {"sms3sigma": dict(sset), "boundary": (B["path"], tuple(B.get("feature") or ())) if B else None,
             "grower": {k: G.get(k) for k in ("weight", "unit", "basis", "moisture", "test_weight", "crop", "std_moisture",
-                                             "use")} if grower_ticket(G) or G.get("test_weight") else None}
+                                             "use", "area_ac")} if grower_ticket(G) or G.get("test_weight") else None}
 
 
 def settings_of(tag: str, sset: dict) -> dict:
@@ -901,6 +913,224 @@ def record_without_level(R: dict, dropped: list) -> dict:
     return R2
 
 
+# ------------------------------------------------------------------------------------------------ saved works
+SMS_WIDGET_KEYS = ("k_sd", "group_by", "max_passes", "min_yield", "t_clip", "t_swath", "t_speed", "t_moist", "t_yield")
+
+
+def work_record(name: str | None = None) -> dict:
+    """The current work as a saved-work record (engine/works.py); the creation time of an earlier save is kept."""
+    prev = ew.load_work(ss.workdir) if os.path.exists(ew.work_path(ss.workdir)) else None
+    return ew.make_record(ss.workdir, name or ss.get("work_name") or ew.folder_name(ss.workdir),
+                          input_label=ss.get("input_label"), active=ss.active, datasets=ss.datasets,
+                          boundary=ss.boundary, grower=ss.grower, smsset=ss.get("smsset"), a3set=ss.a3set,
+                          cleaned=ss.cleaned, app_version=VERSION, created=(prev or {}).get("created"))
+
+
+def save_current(quiet: bool = False):
+    """Saves the current work into its work folder (oced_work.json). quiet: the automatic save after an extraction
+    or a cleaning (a failure is only a toast)."""
+    if not ss.workdir or not ss.datasets:
+        return
+    try:
+        ew.save_work(ss.workdir, work_record())
+        ss.work_saved = ss.workdir
+        ss.work_saved_at = dt.datetime.now().strftime("%H:%M")
+        if not quiet:
+            st.toast(f"Saved: {ss.get('work_name') or ew.folder_name(ss.workdir)}", icon=":material/save:")
+    except OSError as e:
+        st.toast(f"The work could not be saved: {e}", icon=":material/error:")
+
+
+def restore_work(wd: str):
+    """Opens a saved work: the files, their boundaries, the grower's data, the settings and the cleanings come back
+    as they were (the cleaning results are read from their JSON; nothing runs again)."""
+    rec = ew.load_work(wd)
+    if rec is None or rec.get("error"):
+        ss.work_msg = ("error", f"This work cannot be opened: {(rec or {}).get('error') or 'nothing in it'}")
+        return
+    start_over()
+    for k in SMS_WIDGET_KEYS + ("active_pick",):
+        ss.pop(k, None)
+    ss.workdir = wd
+    ss.input_label = rec.get("input_label")
+    probs = []
+    ss.datasets = {}
+    for t, D in (rec.get("datasets") or {}).items():
+        if D.get("shp") and os.path.exists(D["shp"]):
+            ss.datasets[t] = D
+        else:
+            probs.append(f"{t}: its points are no longer at {D.get('shp')}")
+    ss.grower = {t: G for t, G in (rec.get("grower") or {}).items() if t in ss.datasets}
+    ss.a3set = {t: A for t, A in (rec.get("a3set") or {}).items() if t in ss.datasets}
+    ss.smsset = rec.get("smsset")
+    for t, B in (rec.get("boundary") or {}).items():
+        if t not in ss.datasets:
+            continue
+        try:
+            ss.boundary[t] = load_boundary(t, ("path", B["path"]), B.get("feature") or None)
+        except Exception as e:
+            probs.append(f"{t}: the boundary {B.get('path')} could not be read ({e})")
+    for t, C in (rec.get("cleaned") or {}).items():
+        if t not in ss.datasets:
+            continue
+        try:
+            with open(C["json"], encoding="utf-8") as fh:
+                R = json.load(fh)
+        except (OSError, ValueError, TypeError) as e:
+            probs.append(f"{t}: its cleaning record could not be read ({e})")
+            continue
+        if not C.get("shp") or not os.path.exists(C["shp"]):
+            probs.append(f"{t}: its clean shapefile is no longer at {C.get('shp')}")
+            continue
+        ss.cleaned[t] = {**C, "R": R, "config": None,
+                         "boundary": boundary_of(t) if (R.get("aoi") or R.get("boundary")) else None}
+    for t in ss.cleaned:                     # the settings restored are the ones the cleaning ran with
+        ss.cleaned[t]["config"] = file_config(t, sset_for(t))
+    act = rec.get("active")
+    ss.active = act if act in ss.datasets else next(iter(ss.datasets), None)
+    ss.work_name, ss.work_name_for = rec.get("name") or ew.folder_name(wd), wd
+    ss.work_saved = None if rec.get("legacy") else wd
+    ss.work_saved_at = None
+    ss.work_msg = (("warning" if probs else "ok"),
+                   f"Opened {ss.work_name}: {len(ss.datasets)} file(s), {len(ss.cleaned)} cleaned"
+                   + (" (an older work: Save keeps it in the list with its name)" if rec.get("legacy") else "")
+                   + ("".join(f"\n- {x}" for x in probs)))
+
+
+def open_picked():
+    restore_work(ss.get("work_pick"))
+
+
+def select_file(tag: str):
+    """A file of the action tree: shown in steps 2 to 4."""
+    ss.active = tag
+    ss["active_pick"] = tag
+
+
+def works_signature() -> tuple:
+    """What the list of saved works depends on: each work folder and the time of its oced_work.json."""
+    out = []
+    try:
+        for e in os.scandir(WORKSPACE):
+            if e.is_dir():
+                wp = os.path.join(e.path, ew.WORK_FILE)
+                out.append((e.name, e.stat().st_mtime, os.path.getmtime(wp) if os.path.exists(wp) else 0.0))
+    except OSError:
+        pass
+    return tuple(sorted(out))
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def list_works_cached(sig: tuple) -> list:
+    """ew.list_works, read again only when a work folder or a saved work changed."""
+    return ew.list_works(WORKSPACE)
+
+
+def saved_works_block():
+    """The top of the sidebar: the name of this work with Save, and the saved works with Open."""
+    st.subheader("Saved works", anchor=False)
+    if ss.workdir and ss.datasets:
+        if ss.get("work_name_for") != ss.workdir:
+            rec0 = ew.load_work(ss.workdir) if os.path.exists(ew.work_path(ss.workdir)) else None
+            ss.work_name = (rec0 or {}).get("name") or ew.folder_name(ss.workdir)
+            ss.work_name_for = ss.workdir
+            ss.work_saved = ss.workdir if rec0 else None
+        with st.container(horizontal=True, vertical_alignment="bottom", gap="small"):
+            st.text_input("This work", key="work_name", help="The name it is listed with. Saving keeps the files, the "
+                          "boundaries, the grower's data, the settings and the cleanings of this work, to open it "
+                          "again later.")
+            st.button("Save", icon=":material/save:", key="work_save", type="primary", on_click=save_current)
+        global SAVE_PH
+        SAVE_PH = st.empty()                   # filled at the end of the page, after an automatic save of this run
+        SAVE_PH.caption(save_status_text())
+    try:
+        works = list_works_cached(works_signature())
+    except Exception as e:                               # a broken folder must not take the sidebar down
+        st.caption(f"The saved works could not be listed: {e}")
+        works = []
+    if works:
+        by = {w["workdir"]: w for w in works}
+        if ss.get("work_pick") not in by:
+            ss.work_pick = next(iter(by))
+        st.selectbox("Open a saved work", list(by), key="work_pick", format_func=lambda w: ew.work_label(by[w]))
+        st.button("Open", icon=":material/folder_open:", key="work_open", on_click=open_picked,
+                  help="Brings the work back as it was saved: the files, the maps, the settings and the cleanings "
+                       "(nothing runs again).")
+    else:
+        st.caption("No saved work yet.")
+    msg = ss.get("work_msg")
+    if msg:
+        (st.success if msg[0] == "ok" else st.warning if msg[0] == "warning" else st.error)(
+            msg[1], icon=":material/folder_open:")
+
+
+SAVE_PH = None
+
+
+def save_status_text() -> str:
+    return (("Saved" + (f" at {ss.work_saved_at}" if ss.get("work_saved_at") else "")
+             if ss.get("work_saved") == ss.workdir else "Not saved yet")
+            + " · saved automatically after each extraction and cleaning")
+
+
+def _tick(ok: bool) -> str:
+    return ":material/check_circle:" if ok else ":material/radio_button_unchecked:"
+
+
+def action_tree():
+    """The action tree of the sidebar: what was done in each step, file by file; a file name shows that file."""
+    st.subheader("Action tree", anchor=False)
+    DSx = ss.datasets
+    with st.expander("1 · Machine data", icon=":material/upload_file:", expanded=not DSx):
+        st.caption(f"{_tick(bool(DSx))} " + (html.escape(str(ss.get("input_label"))) if ss.get("input_label")
+                                              else ("opened from a saved work" if DSx else "nothing opened")))
+        if DSx:
+            st.caption(f"{len(DSx)} file(s): " + ", ".join(DSx))
+    with st.expander("2 · Map and attributes", icon=":material/map:", expanded=bool(DSx)):
+        if not DSx:
+            st.caption("nothing yet")
+        for t, D in DSx.items():
+            st.button(t, key=f"tree_f_{key_of(t)}", type="tertiary", on_click=select_file, args=(t,),
+                      icon=":material/arrow_right:" if t == ss.active else ":material/description:",
+                      help="Show this file in steps 2 to 4")
+            st.caption(f"{int(D.get('n') or 0):,} readings · {html.escape(str(D.get('label') or ''))}")
+    with st.expander("3 · Cleaning", icon=":material/cleaning_services:", expanded=bool(DSx)):
+        if not DSx:
+            st.caption("nothing yet")
+        for t, D in DSx.items():
+            B, G, C = boundary_of(t), ss.grower.get(t) or {}, ss.cleaned.get(t)
+            lines = [f"**{html.escape(t)}**",
+                     f"{_tick(bool(B))} boundary: " + (f"{html.escape(B['name'])} · {B['area_ac']:,.2f} ac" if B
+                                                       else "none")]
+            if D.get("yield", True):
+                T_ = grower_ticket(G)
+                lines.append(f"{_tick(bool(T_))} grower's data: " + (
+                    er.ticket_label(T_) + (" · adjust" if G.get("use") == "adjust" else " · validate") if T_
+                    else "not given"))
+            if C:
+                R = C["R"]
+                stale = C.get("config") != file_config(t, sset_for(t))
+                lines.append(f"{_tick(True)} cleaned {html.escape(str(C.get('at') or ''))}: {int(R['n_kept']):,} of "
+                             f"{int(R['n_in']):,} kept ({float(R['removed_pct']):.2f} % removed)"
+                             + (" · :orange[settings changed: clean again]" if stale else ""))
+                L = R.get("level") or {}
+                if L.get("factor") is not None:
+                    lines.append(f"{_tick(True)} L = {float(L['factor']):.4f} · "
+                                 + html.escape(str((L.get("closure") or {}).get("band") or "")))
+            else:
+                lines.append(f"{_tick(False)} not cleaned yet")
+            st.caption("  \n".join(lines))
+    with st.expander("4 · Clean shapefiles and reports", icon=":material/download:", expanded=bool(ss.cleaned)):
+        if not ss.cleaned:
+            st.caption("nothing cleaned yet")
+        for t, C in ss.cleaned.items():
+            st.caption(f"{_tick(os.path.exists(C['shp']))} {html.escape(os.path.basename(C['shp']))}  \n"
+                       f"{_tick(bool(C.get('report_pdf')) and os.path.exists(C.get('report_pdf') or ''))} report (PDF)")
+        if ss.workdir:
+            st.caption("Work folder")
+            st.code(ss.workdir, language=None, wrap_lines=True)
+
+
 def all_clean_zip() -> str | None:
     C = {t: c for t, c in ss.cleaned.items() if os.path.exists(c["shp"])}
     if not C:
@@ -932,15 +1162,14 @@ with st.container(key="app_header"):
 
 with st.sidebar:
     st.markdown(f"**{NAME} {VERSION}** · Olds College Extract Data")
-    st.caption("The data of combines, planters and sprayers: the map of every attribute, the 3-sigma cleaning with "
-               "the clip to the field boundary, the grower's data to validate or adjust the yields, and the clean "
-               "shapefiles and reports.")
-    st.caption("Combines, raw: Case IH / New Holland .cn1 cards, John Deere Gen4 / G5 logs (JD-Data .jdl), John Deere "
-               "GreenStar 3 cards (.fdd / .fdl). Point exports of combines, planters and sprayers: SMS and Operations "
-               "Center shapefiles (yield also as .kml / .kmz), or any point shapefile of a machine.")
-    if ss.workdir:
-        st.caption("Work folder")
-        st.code(ss.workdir, language=None, wrap_lines=True)
+    with st.expander("What OCED reads", icon=":material/info:"):
+        st.caption("The data of combines, planters and sprayers: the map of every attribute, the 3-sigma cleaning "
+                   "with the clip to the field boundary, the grower's data to validate or adjust the yields, and the "
+                   "clean shapefiles and reports.")
+        st.caption("Combines, raw: Case IH / New Holland .cn1 cards, John Deere Gen4 / G5 logs (JD-Data .jdl), John "
+                   "Deere GreenStar 3 cards (.fdd / .fdl). Point exports of combines, planters and sprayers: SMS and "
+                   "Operations Center shapefiles (yield also as .kml / .kmz), or any point shapefile of a machine.")
+    saved_works_block()
 
 # ------------------------------------------------------------------------------------------------ 1 raw data
 with st.container(border=True, key="oced_step_1"):
@@ -969,6 +1198,10 @@ with st.container(border=True, key="oced_step_1"):
         if ss.open_exc is not None:
             st.exception(ss.open_exc)
     cands, cand = ss.cands, None
+    if cands is None and ss.datasets:
+        st.info(f"Saved work **{ss.get('work_name') or ew.folder_name(ss.workdir or '')}**: "
+                + (f"{ss.input_label} · " if ss.get("input_label") else "") + f"{len(ss.datasets)} file(s). Open "
+                "other data above to start a new work.", icon=":material/folder_open:")
     if cands is not None:
         if not cands:
             st.error(cands.message or "Nothing that OCED can read was found.", icon=":material/help:")
@@ -1049,6 +1282,7 @@ with st.container(border=True, key="oced_step_1"):
                             made = extract(cand, chosen, opts, kw, status.text)
                             ss.datasets.update(made)
                             ss.active = next(iter(made), ss.active)
+                            save_current(quiet=True)
                             status.update(label=f"Extracted {len(made)} file(s): "
                                                 + ", ".join(f"{m['tag']} ({m['n']:,} readings)" for m in made.values()),
                                           state="complete", expanded=False)
@@ -1270,13 +1504,27 @@ with st.container(border=True, key="oced_step_3"):
                 G0 = ss.grower.get(ss.active) or {}
                 with st.container(horizontal=True, vertical_alignment="bottom"):
                     g_unit_prev = ss.get(f"gw_u_{TK}", G0.get("unit") or "lb")
-                    g_w = st.number_input("Total weight of the field", 0.0, 1e12, value=G0.get("weight"), step=100.0,
-                                          key=f"gw_w_{TK}", format="%.3f" if g_unit_prev == "t" else "%.0f",
-                                          placeholder="optional, e.g. 1500000",
+                    per_ac = g_unit_prev == "bu/ac"
+                    g_w = st.number_input("Yield of the field" if per_ac else "Total weight of the field", 0.0, 1e12,
+                                          value=G0.get("weight"), step=1.0 if per_ac else 100.0, key=f"gw_w_{TK}",
+                                          format=("%.2f" if per_ac else "%.3f" if g_unit_prev == "t" else "%.0f"),
+                                          placeholder="optional, e.g. 52" if per_ac else "optional, e.g. 1500000",
                                           help="What the grower got for this field (scale tickets or the grain cart), as "
-                                               "written, in the unit at the right.")
+                                               "written, in the unit at the right; bu/ac when the grower gives the "
+                                               "yield per acre (it is made a total with the acres).")
                     g_unit = st.segmented_control("Unit", list(er.TICKET_UNITS), default=G0.get("unit") or "lb",
                                                   required=True, key=f"gw_u_{TK}", format_func=TICKET_UNIT_LABEL.get)
+                B_g = boundary_of(ss.active)
+                g_area = None
+                if g_unit == "bu/ac":
+                    ph = (f"empty = the boundary, {B_g['area_ac']:,.2f} ac" if B_g else
+                          "empty = the area the readings swept")
+                    g_area = st.number_input("Acres the yield is over", 0.0, 1e7, value=G0.get("area_ac"), step=1.0,
+                                             key=f"gw_a_{TK}", format="%.2f", placeholder=ph,
+                                             help="The grower's acres for this yield. Empty: the field boundary's "
+                                                  "area (without a boundary, the area the readings swept). bu/ac x "
+                                                  "acres = the grower's total in bushels, compared with the "
+                                                  "monitor's total over the same field.")
                 with st.container(horizontal=True, vertical_alignment="bottom"):
                     g_basis = st.segmented_control("Weighed", ["wet", "dry"], default=G0.get("basis") or "wet",
                                                    required=True, key=f"gw_b_{TK}",
@@ -1311,11 +1559,13 @@ with st.container(border=True, key="oced_step_3"):
                 ss.grower[ss.active] = {"weight": float(g_w) if g_w else None, "unit": g_unit or "lb",
                                         "basis": g_basis or "wet", "moisture": g_m if g_basis == "wet" else None,
                                         "test_weight": g_tw, "crop": g_crop, "std_moisture": g_sm,
-                                        "use": g_use or "validate"}
+                                        "use": g_use or "validate", "area_ac": g_area or None}
                 T_ = grower_ticket(ss.grower[ss.active])
                 if T_ is not None:
                     try:
-                        conv = er.ticket_conversion(T_, test_weight=g_tw, shp=D["shp"], crop=g_crop)
+                        conv = er.ticket_conversion(T_, test_weight=g_tw, shp=D["shp"], crop=g_crop,
+                                                    area_ac=(B_g["area_ac"] if B_g else None),
+                                                    area_source="the field boundary")
                     except ValueError as e:
                         conv = {"error": str(e), "text": str(e)}
                     if conv.get("error"):
@@ -1347,6 +1597,8 @@ with st.container(border=True, key="oced_step_3"):
             except Exception as e:                                   # shown, never swallowed
                 status.update(label=f"{t}: the cleaning failed", state="error")
                 st.exception(e)
+    if todo and any(t in ss.cleaned for t in todo):
+        save_current(quiet=True)
     C = ss.cleaned.get(ss.active)
     if C and os.path.exists(C["shp"]):
         R = C["R"]
@@ -1456,14 +1708,18 @@ with st.container(border=True, key="oced_step_3"):
             with tabs_[4]:
                 area = float(L.get("export_area_ac") or 0)
                 mon, gro = float(L["export_total_bu"]), float(L["scale_ticket_bu"])
+                # a grower's yield per acre: both means over the grower's acres, so the grower's column shows the
+                # figure given (52 bu/ac) and the monitor's is its total over the same acres
+                area_y = float(L.get("ticket_area_ac") or 0) if L.get("ticket_unit") == "bu/ac" else area
                 pct = (lambda m, g: f"{100 * (m / g - 1):+.2f} %" if g else "—")
                 basis_txt = ("at the standard moisture" if L.get("ticket_bu_at_standard") is not None or
                              str(L.get("comparison_basis") or "").startswith("dry") else "as delivered")
                 rows_v = [{"": f"Total (bu, {basis_txt})", "monitor": f"{mon:,.0f}", "grower": f"{gro:,.0f}",
                            "monitor vs grower": pct(mon, gro)}]
-                if area > 0:
-                    rows_v.append({"": f"Mean yield (bu/ac, {basis_txt})", "monitor": f"{mon / area:,.2f}",
-                                   "grower": f"{gro / area:,.2f}", "monitor vs grower": pct(mon, gro)})
+                if area_y > 0:
+                    lab = f"Mean yield (bu/ac, {basis_txt}" + (f", over {area_y:,.2f} ac)" if area_y != area else ")")
+                    rows_v.append({"": lab, "monitor": f"{mon / area_y:,.2f}", "grower": f"{gro / area_y:,.2f}",
+                                   "monitor vs grower": pct(mon, gro)})
                 if L.get("ticket_lb") and L.get("export_total_lb") and L.get("ticket_basis") == "wet":
                     rows_v.append({"": "Total weight as delivered (lb)", "monitor": f"{L['export_total_lb']:,.0f}",
                                    "grower": f"{L['ticket_lb']:,.0f}",
@@ -1547,3 +1803,9 @@ with st.container(border=True, key="oced_step_4"):
                    "= of the readings inside the boundary. Flagged = every reading with Keep and the step that removed "
                    "it (Rem_By). Report = the steps, the limits, the statistics and the maps (PDF). The files are also "
                    "in the work folder: " + os.path.join(ss.workdir or "", "clean_shapefiles") + ".")
+
+# ------------------------------------------------------------------------------------------------ action tree
+with st.sidebar:
+    action_tree()
+if SAVE_PH is not None:
+    SAVE_PH.caption(save_status_text())

@@ -251,7 +251,9 @@ METHOD_ALIASES = {"house": "occd", "cascade": "occd", "occd": "occd", "sms3sigma
                   "compare": "both"}
 SMS_TAG_SUFFIX = "_sms3s"
 # grower's weight (scale ticket): units and the conversion to bushels (bu = lb / test weight lb/bu)
-TICKET_UNITS = ("lb", "kg", "bu", "t")       # t = metric tonne (1000 kg)
+TICKET_UNITS = ("lb", "kg", "bu", "t", "bu/ac")   # t = metric tonne (1000 kg); bu/ac = the grower's yield per acre
+TICKET_UNIT_ALIASES = {"tonne": "t", "tonnes": "t", "mt": "t", "bu_ac": "bu/ac", "buac": "bu/ac", "bu/acre": "bu/ac",
+                       "bpa": "bu/ac", "bu per ac": "bu/ac", "bu per acre": "bu/ac"}
 LB_PER_KG = 2.20462262185
 TICKET_LB_PER_UNIT = {"lb": 1.0, "kg": LB_PER_KG, "t": 1000.0 * LB_PER_KG}
 TICKET_MIN_RATIO_POINTS = 30                 # the file's own test weight needs >= 30 readings with both mass and volume
@@ -312,8 +314,10 @@ DEFAULT_SETTINGS = {
     # wet the ticket is converted to the standard moisture symmetric-wise and compared with the symmetric dry integral);
     # note = free text (e.g. "elevator ticket, whole field"). bu = lb / test weight (settings.test_weight_lb_bu > the
     # file's own median Yld_Mass_W / Yld_Vol_We > the decoder report > the crop table).
-    "scale_ticket": {"value": None, "unit": "lb", "basis": "wet", "moisture_pct": None, "note": None},
-    "boundary": None,                 # alias: polygon file for the level diagnostics only (-> aoi.file, no clip)
+    # unit bu/ac: the grower's yield per acre; the total = value x area_ac (the acres the grower's yield is over;
+    # null = the field boundary's area, else, without a boundary, the area the processed readings swept)
+    "scale_ticket": {"value": None, "unit": "lb", "basis": "wet", "moisture_pct": None, "note": None, "area_ac": None},
+    "boundary": None,                # alias: polygon file for the level diagnostics only (-> aoi.file, no clip)
     "pass_break": {"max_step_m": 15.0, "max_heading_change_deg": 60.0},
     "crop": None,                     # key of engine.formats.common.CROPS; drives the F1 window and the standard moisture
     # field of interest / trial plan: polygon file (.shp/.zip/.geojson/.gpkg/.kml/.kmz). buffer_m: records farther than
@@ -581,11 +585,16 @@ def merge_settings(user=None) -> dict:
     if T["value"] is not None:
         T["value"] = _num(T["value"], "f", "scale_ticket.value", 1e-9, 1e12)
     unit = str(T["unit"] if T["unit"] is not None else "lb").strip().lower()
-    if unit == "tonne" or unit == "tonnes" or unit == "mt":
-        unit = "t"
+    unit = TICKET_UNIT_ALIASES.get(unit, unit)
     if unit not in TICKET_UNITS:
-        raise ValueError(f"scale_ticket.unit must be one of {list(TICKET_UNITS)} (t = metric tonne), not {T['unit']!r}")
+        raise ValueError(f"scale_ticket.unit must be one of {list(TICKET_UNITS)} (t = metric tonne, bu/ac = the "
+                         f"grower's yield per acre), not {T['unit']!r}")
     T["unit"] = unit
+    if T.get("area_ac") is not None:
+        T["area_ac"] = _num(T["area_ac"], "f", "scale_ticket.area_ac", 1e-6, 1e7)
+        if unit != "bu/ac":
+            raise ValueError("scale_ticket.area_ac only applies to a yield per acre (unit 'bu/ac'): drop it or give the "
+                             "grower's figure in bu/ac")
     tb = str(T["basis"] if T["basis"] is not None else "wet").strip().lower()
     if tb not in ("wet", "dry"):
         raise ValueError(f"scale_ticket.basis must be 'wet' or 'dry', not {T['basis']!r}")
@@ -1154,29 +1163,37 @@ def ticket_spec(S) -> dict | None:
     T = S.get("scale_ticket") or {}
     if T.get("value") is not None:
         return {"value": float(T["value"]), "unit": T.get("unit") or "lb", "basis": T.get("basis") or "wet",
-                "moisture_pct": T.get("moisture_pct"), "note": T.get("note"), "legacy": False}
+                "moisture_pct": T.get("moisture_pct"), "note": T.get("note"), "area_ac": T.get("area_ac"),
+                "legacy": False}
     if S.get("scale_ticket_bu"):
         return {"value": float(S["scale_ticket_bu"]), "unit": "bu", "basis": S.get("scale_ticket_basis") or "wet",
-                "moisture_pct": None, "note": None, "legacy": True}
+                "moisture_pct": None, "note": None, "area_ac": None, "legacy": True}
     return None
 
 
-def ticket_to_lb(value, unit: str, test_weight_lb_bu=None):
-    """A ticket in lb: lb / kg / t need no test weight; bu x test weight (None when the test weight is unknown)."""
-    unit = str(unit).strip().lower()
+def ticket_to_lb(value, unit: str, test_weight_lb_bu=None, area_ac=None):
+    """A ticket in lb: lb / kg / t need no test weight; bu (and bu/ac x area_ac) x test weight (None when the test
+    weight is unknown)."""
+    unit = TICKET_UNIT_ALIASES.get(str(unit).strip().lower(), str(unit).strip().lower())
     if unit not in TICKET_UNITS:
         raise ValueError(f"unknown ticket unit {unit!r}: use one of {list(TICKET_UNITS)}")
-    if unit == "bu":
-        return float(value) * float(test_weight_lb_bu) if test_weight_lb_bu else None
+    if unit in ("bu", "bu/ac"):
+        bu = ticket_to_bu(value, unit, area_ac=area_ac)
+        return bu * float(test_weight_lb_bu) if test_weight_lb_bu else None
     return float(value) * TICKET_LB_PER_UNIT[unit]
 
 
-def ticket_to_bu(value, unit: str, test_weight_lb_bu=None):
-    """A ticket in bu: bu as given; lb / kg / t divided by the test weight (lb/bu). Raises when the test weight is
-    needed and missing."""
-    unit = str(unit).strip().lower()
+def ticket_to_bu(value, unit: str, test_weight_lb_bu=None, area_ac=None):
+    """A ticket in bu: bu as given; bu/ac x area_ac (the acres the grower's yield is over); lb / kg / t divided by
+    the test weight (lb/bu). Raises when the test weight or the acres are needed and missing."""
+    unit = TICKET_UNIT_ALIASES.get(str(unit).strip().lower(), str(unit).strip().lower())
     if unit == "bu":
         return float(value)
+    if unit == "bu/ac":
+        if not area_ac or not np.isfinite(float(area_ac)) or float(area_ac) <= 0:
+            raise ValueError("the grower's yield is per acre (bu/ac) but no area is known to make it a total: give "
+                             "scale_ticket.area_ac (the grower's acres) or a field boundary")
+        return float(value) * float(area_ac)
     lb = ticket_to_lb(value, unit)
     if not test_weight_lb_bu:
         raise ValueError(f"the scale ticket is in {unit} but no test weight (lb/bu) is available to convert it to "
@@ -1254,6 +1271,8 @@ def ticket_value_text(value, unit: str = "lb", bu_decimals: int = 1) -> str:
     ticket is written with its decimals: 184.1975 t is 406,080 lb, '184 t' would be 435 lb short)."""
     v = float(value)
     u = str(unit or "lb")
+    if u == "bu/ac":                              # a yield: '52 bu/ac', '52.35 bu/ac'
+        return f"{v:,.0f} {u}" if v == int(v) else f"{v:,.2f} {u}"
     if u in ("kg", "t") and v != int(v):
         return f"{v:,.4f}".rstrip("0").rstrip(".") + f" {u}"
     if u == "bu" and v != int(v):
@@ -1261,29 +1280,40 @@ def ticket_value_text(value, unit: str = "lb", bu_decimals: int = 1) -> str:
     return f"{v:,.0f} {u}"
 
 
-def ticket_summary(S, test_weight_lb_bu=None, test_weight_source=None) -> dict | None:
+def ticket_summary(S, test_weight_lb_bu=None, test_weight_source=None, area_ac=None, area_source=None) -> dict | None:
     """The ticket of the settings converted: {value, unit, basis, moisture_pct, note, legacy, ticket_lb, ticket_bu,
-    test_weight_used, test_weight_source, caption}, or None without a ticket. The caption is the one-line conversion
-    the app shows ("1,500,000 lb = 31,256.5 bu at 47.99 lb/bu (test weight from the file)"). Raises ValueError when
-    a lb / kg / t ticket has no test weight."""
+    ticket_area_ac, ticket_area_source, test_weight_used, test_weight_source, caption}, or None without a ticket. The
+    caption is the one-line conversion the app shows ("1,500,000 lb = 31,256.5 bu at 47.99 lb/bu (test weight from
+    the file)"; "52 bu/ac x 106.26 ac (the field boundary) = 5,525.52 bu"). A bu/ac ticket uses its own area_ac when
+    given, else `area_ac` (the caller's default: the boundary's area or the swept area). Raises ValueError when a lb /
+    kg / t ticket has no test weight or a bu/ac ticket no area."""
     tk = ticket_spec(S)
     if tk is None:
         return None
     tw = float(test_weight_lb_bu) if test_weight_lb_bu else None
-    bu = ticket_to_bu(tk["value"], tk["unit"], tw)
-    lb = ticket_to_lb(tk["value"], tk["unit"], tw)
+    t_area = t_area_src = None
+    if tk["unit"] == "bu/ac":
+        if tk.get("area_ac"):
+            t_area, t_area_src = float(tk["area_ac"]), "the grower's acres"
+        elif area_ac:
+            t_area, t_area_src = float(area_ac), area_source or "the field's area"
+    bu = ticket_to_bu(tk["value"], tk["unit"], tw, area_ac=t_area)
+    lb = ticket_to_lb(tk["value"], tk["unit"], tw, area_ac=t_area)
     v = tk["value"]
-    vtxt = (ticket_value_text(v, tk["unit"]).rsplit(" ", 1)[0] if tk["unit"] in ("kg", "t") else
+    vtxt = (ticket_value_text(v, tk["unit"]).rsplit(" ", 1)[0] if tk["unit"] in ("kg", "t", "bu/ac") else
             (f"{v:,.0f}" if v >= 100 else f"{v:,.3g}"))
-    if tk["unit"] == "bu":
+    if tk["unit"] == "bu/ac":
+        cap = (f"{vtxt} bu/ac x {t_area:,.2f} ac ({t_area_src}) = {bu:,.2f} bu"
+               + (f" = {lb:,.0f} lb at {tw:.2f} lb/bu (test weight from {test_weight_source})" if lb and tw else ""))
+    elif tk["unit"] == "bu":
         cap = f"{vtxt} bu" + (f" = {lb:,.0f} lb at {tw:.2f} lb/bu (test weight from {test_weight_source})"
                               if lb and tw else "")
     else:
         cap = f"{vtxt} {tk['unit']} = {bu:,.2f} bu at {tw:.2f} lb/bu (test weight from {test_weight_source})"
     cap += f", {tk['basis']} basis" + (f", ticket moisture {tk['moisture_pct']:g} %" if tk["moisture_pct"] is not None
                                         else "")
-    return {**tk, "ticket_lb": lb, "ticket_bu": bu, "test_weight_used": tw, "test_weight_source": test_weight_source,
-            "caption": cap}
+    return {**tk, "ticket_lb": lb, "ticket_bu": bu, "ticket_area_ac": t_area, "ticket_area_source": t_area_src,
+            "test_weight_used": tw, "test_weight_source": test_weight_source, "caption": cap}
 
 
 # ===================================================================================================== geometry
@@ -1573,7 +1603,8 @@ def clean(path, S, C, log=print, source=None):
     if tk0 is not None and not tk0["legacy"]:
         # a lb / kg / t ticket needs a test weight: resolve it on the file now so that a missing one is refused before
         # the cascade runs (the same resolution is repeated on the processed set below, where the level is computed)
-        ticket_summary(S, *resolve_test_weight(S, g0, source, C))
+        # (a bu/ac yield needs no test weight; its acres are only known below, so a placeholder area here)
+        ticket_summary(S, *resolve_test_weight(S, g0, source, C), area_ac=1.0)
     lon_deg, _, pos_bad, pos_counts = position_check(g0, nogeom)
     if pos_bad.all():
         raise ValueError("no record has a plausible position ("
@@ -2381,7 +2412,7 @@ def clean(path, S, C, log=print, source=None):
     totals = Mset.get("totals_bu") or None
     ylev = icol = cmp_basis = None
     ticket_cmp = ticket_bu = ticket_lb = ticket_std = None
-    tw_used = tw_src = tk_caption = None
+    tw_used = tw_src = tk_caption = tk_area = tk_area_src = None
     integ_by_machine = {}
     if tk is not None or totals:
         basis = tk["basis"] if tk is not None else S["scale_ticket_basis"]
@@ -2394,8 +2425,15 @@ def clean(path, S, C, log=print, source=None):
         else:
             tw_used, tw_src = resolve_test_weight(S, g, source, C)
             if tk is not None:
-                summ = ticket_summary(S, tw_used, tw_src)          # raises when a lb / kg / t ticket has no test weight
-                ticket_bu, ticket_lb, tk_caption = summ["ticket_bu"], summ["ticket_lb"], summ["caption"]
+                # a yield per acre (bu/ac) becomes a total over the grower's acres when given, else the boundary's
+                # area, else (no boundary) the area the processed readings swept
+                if aoi_R is not None and aoi_R.get("area_ac"):
+                    d_area, d_area_src = float(aoi_R["area_ac"]), "the field boundary"
+                else:
+                    d_area, d_area_src = float(area_ac.sum()), "the area the readings swept; no boundary"
+                summ = ticket_summary(S, tw_used, tw_src, area_ac=d_area, area_source=d_area_src)  # raises when a
+                ticket_bu, ticket_lb, tk_caption = summ["ticket_bu"], summ["ticket_lb"], summ["caption"]  # lb ticket
+                tk_area, tk_area_src = summ["ticket_area_ac"], summ["ticket_area_source"]     # has no test weight
             m_tk = tk["moisture_pct"] if tk is not None else None
             use_std = basis == "wet" and m_tk is not None
             if use_std and (Ms is None or dry_sym is None):
@@ -2570,6 +2608,7 @@ def clean(path, S, C, log=print, source=None):
                               ticket_basis=tk["basis"], ticket_moisture_pct=tk["moisture_pct"],
                               ticket_bu_at_standard=ticket_std, ticket_compared_bu=ticket, comparison_basis=cmp_basis,
                               test_weight_used=tw_used, test_weight_source=tw_src, export_total_lb=tot_lb,
+                              ticket_area_ac=tk_area, ticket_area_source=tk_area_src,
                               export_total_wet_bu=wet_bu, ticket_note=tk["note"], ticket_caption=tk_caption,
                               legacy_setting=bool(tk["legacy"]),
                               rule="L = grower's weight / monitor total of the processed set on the same basis; the "

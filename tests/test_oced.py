@@ -180,3 +180,127 @@ def test_app_planter(field, tmp_path, monkeypatch):
     assert list(steps["filter"][:2]) == ["S0", "S1"] and steps.iloc[0]["removed"] == A["n_zero"]
     clean = glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_3s_clean.shp"))
     assert len(clean) == 1 and os.path.exists(clean[0][:-4] + ".zip")
+
+
+def test_engine_grower_yield_per_acre(field, tmp_path):
+    """bu/ac: the grower's yield per acre x the boundary's area (or the acres given) is the total compared."""
+    wd = er.new_workdir(str(tmp_path), "syn")
+    cand = er.open_input([field["shp"]], wd)[0]
+    base = {"method": "sms3sigma", "machines": {"harmonise": False}, "tag": "syn",
+            "aoi": {"file": field["boundary"], "buffer_m": 0.01, "clip_output": True, "feature": None},
+            "test_weight_lb_bu": 60.0}
+    S = {**base, "scale_ticket": {"value": 52.0, "unit": "bu/ac", "basis": "dry", "moisture_pct": None, "note": None}}
+    R = er.clean(cand["path"], str(tmp_path / "out1"), S, log=lambda m: None)
+    L, area = R["level"], R["aoi"]["area_ac"]
+    assert L["ticket_unit"] == "bu/ac" and L["ticket_value"] == 52.0
+    assert L["ticket_area_ac"] == pytest.approx(area) and L["ticket_area_source"] == "the field boundary"
+    assert L["ticket_bu"] == pytest.approx(52.0 * area)
+    assert L["factor"] == pytest.approx(52.0 * area / L["export_total_bu"])
+    assert "bu/ac x" in L["ticket_caption"]
+    # the grower's own acres win over the boundary; an alias of the unit is accepted
+    S2 = {**base, "scale_ticket": {"value": 52.0, "unit": "bu_ac", "basis": "dry", "moisture_pct": None, "note": None,
+                                   "area_ac": 100.0}}
+    R2 = er.clean(cand["path"], str(tmp_path / "out2"), S2, log=lambda m: None)
+    assert R2["level"]["ticket_bu"] == pytest.approx(5200.0)
+    assert R2["level"]["ticket_area_source"] == "the grower's acres"
+    # acres only belong to a yield per acre
+    S3 = {**base, "scale_ticket": {"value": 9000.0, "unit": "bu", "basis": "dry", "moisture_pct": None, "note": None,
+                                   "area_ac": 100.0}}
+    with pytest.raises(ValueError, match="area_ac"):
+        er.clean(cand["path"], str(tmp_path / "out3"), S3, log=lambda m: None)
+    # the caption of the app before the cleaning
+    conv = er.ticket_conversion({"value": 52.0, "unit": "bu/ac", "basis": "dry"}, test_weight=60.0, area_ac=106.26,
+                                area_source="the field boundary")
+    assert conv["bu"] == pytest.approx(52.0 * 106.26) and "106.26 ac (the field boundary)" in conv["text"]
+
+
+def test_app_grower_yield_per_acre(field, tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("OCED_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_file(APP, default_timeout=900)
+    at.run()
+    at.text_input(key="path_in").input(field["shp"])
+    at.button(key="open_btn").click().run()
+    _by_key(at.text_input, "bnd_path_").input(field["boundary"])
+    _by_key(at.button, "bnd_use_").click().run()
+    _by_key(at.button_group, "gw_u_").set_value("bu/ac").run()
+    assert not at.exception, at.exception
+    assert _by_key(at.number_input, "gw_w_").label == "Yield of the field"
+    assert _by_key(at.number_input, "gw_a_").label == "Acres the yield is over"
+    _by_key(at.number_input, "gw_w_").set_value(52.0).run()
+    _by_key(at.button_group, "gw_b_").set_value("dry").run()
+    assert not at.exception, at.exception
+    assert any("bu/ac x" in c.value and "(the field boundary)" in c.value for c in at.caption)
+    at.button(key="clean_one").click().run()
+    assert not at.exception, at.exception
+    v = next(d.value for d in at.dataframe if "grower" in d.value.columns)
+    row = v[v.iloc[:, 0].str.startswith("Mean yield")].iloc[0]
+    assert row["grower"] == "52.00"
+
+
+def test_works_save_open_and_older_folders(field, tmp_path):
+    """engine/works.py: a record keeps its paths relative to the work folder; a folder from before saved works is
+    rebuilt from its decoded / clean files (boundary, grower's data, SMS settings from the cleaning record)."""
+    from engine import works as ew
+    ws = tmp_path / "ws"
+    wd = er.new_workdir(str(ws), "syn")
+    cand = er.open_input([field["shp"]], wd)[0]
+    S = {"method": "sms3sigma", "machines": {"harmonise": False}, "tag": "syn",
+         "aoi": {"file": field["boundary"], "buffer_m": 0.01, "clip_output": True, "feature": None},
+         "scale_ticket": {"value": 52.0, "unit": "bu/ac", "basis": "dry", "moisture_pct": None, "note": None}}
+    R = er.clean(cand["path"], os.path.join(wd, "clean", "syn"), S, log=lambda m: None)
+    # an older folder: no oced_work.json, rebuilt from clean/syn/*_cleaning.json
+    rec = ew.load_work(wd)
+    assert rec["legacy"] and list(rec["cleaned"]) == ["syn"] and list(rec["datasets"]) == ["syn"]
+    assert rec["boundary"]["syn"]["path"] == field["boundary"]
+    assert rec["grower"]["syn"]["unit"] == "bu/ac" and rec["grower"]["syn"]["weight"] == 52.0
+    assert rec["smsset"]["k_sd"] == 3.0
+    # saved: relative paths inside the folder, absolute outside it; read back absolute
+    C = {"json": R["files"]["json"], "shp": R["files"]["difm_ready_shp"], "zip": R["files"]["difm_ready_zip"],
+         "kind": "sms", "at": "12:00:00", "adjusted": True, "dropped": [], "settings": {"k_sd": 3.0}}
+    new = ew.make_record(wd, "  Trial 50  ", input_label="card", active="syn", datasets=rec["datasets"],
+                         boundary={"syn": {"path": field["boundary"], "feature": []}}, grower=rec["grower"],
+                         smsset=rec["smsset"], a3set={}, cleaned={"syn": C}, app_version="t")
+    assert new["name"] == "Trial 50" and not os.path.isabs(new["cleaned"]["syn"]["json"])
+    assert new["boundary"]["syn"]["path"] == field["boundary"]           # outside the folder: absolute
+    ew.save_work(wd, new)
+    back = ew.load_work(wd)
+    assert not back["legacy"] and back["cleaned"]["syn"]["json"] == os.path.normpath(R["files"]["json"])
+    works = ew.list_works(str(ws))
+    assert [w["name"] for w in works] == ["Trial 50"] and works[0]["n_cleaned"] == 1
+    assert "Trial 50" in ew.work_label(works[0])
+
+
+def test_app_save_and_open_a_work(field, tmp_path, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("OCED_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_file(APP, default_timeout=900)
+    at.run()
+    at.text_input(key="path_in").input(field["shp"])
+    at.button(key="open_btn").click().run()
+    _by_key(at.text_input, "bnd_path_").input(field["boundary"])
+    _by_key(at.button, "bnd_use_").click().run()
+    _by_key(at.number_input, "gw_w_").set_value(110_000.0).run()
+    _by_key(at.number_input, "gw_tw_").set_value(60.0).run()
+    at.button(key="clean_one").click().run()
+    assert not at.exception, at.exception
+    # saved automatically after the cleaning; then a name and Save
+    saved = glob.glob(str(tmp_path / "ws" / "*" / "oced_work.json"))
+    assert len(saved) == 1
+    at.text_input(key="work_name").input("Synthetic work").run()
+    at.button(key="work_save").click().run()
+    assert not at.exception, at.exception
+    # the action tree shows the file and its cleaning
+    assert any(str(b.key or "").startswith("tree_f_") for b in at.button)
+    assert any("cleaned" in c.value and "kept" in c.value for c in at.caption)
+    # start over, then open the saved work: the cleaning comes back without running again
+    at.button(key="start_over").click().run()
+    assert not at.exception, at.exception
+    assert not any(m.label == "Clipped (S1)" for m in at.metric)
+    assert "Synthetic work" in at.selectbox(key="work_pick").format_func(at.selectbox(key="work_pick").value)
+    at.button(key="work_open").click().run()
+    assert not at.exception, at.exception
+    assert any(m.label == "Clipped (S1)" and m.value == f"{field['n'] - field['n_inside']:,}" for m in at.metric)
+    assert any("Synthetic_boundary.geojson" in s.value for s in at.success)
+    assert _by_key(at.number_input, "gw_w_").value == 110_000.0
+    assert not any("settings, the boundary or the grower's data changed" in w.value for w in at.warning)
