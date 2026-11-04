@@ -20,6 +20,7 @@ Record, version 1:
                                                  area_ac
     smsset    the SMS 3-sigma settings of the harvest panel, or None
     a3set     {tag: the 3-sigma settings of a planter / sprayer file}
+    combines  {tag: the combine-factor settings (on, method, reference, max_pct, ticket_confirms)}
     cleaned   {tag: {json, shp, zip, flagged_shp, flagged_zip, report_pdf, settings, adjusted, dropped, kind, at}}
 A folder written before saved works existed (decoded/ and clean/<tag>/*_cleaning.json, no oced_work.json) is listed
 with legacy=True, its record rebuilt in memory from those files; nothing is written into it until it is saved.
@@ -110,7 +111,7 @@ def _json_default(v):
 
 # ================================================================================================ save / load
 def make_record(workdir: str, name: str, *, input_label=None, active=None, datasets=None, boundary=None, grower=None,
-                smsset=None, a3set=None, cleaned=None, app_version=None, created=None) -> dict:
+                smsset=None, a3set=None, cleaned=None, app_version=None, created=None, combines=None) -> dict:
     """A record from the app's state; every path inside the work folder made relative."""
     ds = {}
     for t, D in (datasets or {}).items():
@@ -131,7 +132,7 @@ def make_record(workdir: str, name: str, *, input_label=None, active=None, datas
             "input_label": input_label, "active": active, "datasets": ds, "boundary": bd,
             "grower": {t: dict(G) for t, G in (grower or {}).items() if G},
             "smsset": dict(smsset) if smsset else None, "a3set": {t: dict(A) for t, A in (a3set or {}).items()},
-            "cleaned": cl}
+            "combines": {t: dict(c) for t, c in (combines or {}).items() if c}, "cleaned": cl}
 
 
 def save_work(workdir: str, record: dict) -> str:

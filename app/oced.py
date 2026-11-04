@@ -85,6 +85,7 @@ with _engine_lock():
     _drop_stale_engine()
     from engine import run as er  # noqa: E402
     from engine import works as ew  # noqa: E402
+    from engine import sms_import as si  # noqa: E402
     from engine.clean import applied3s as a3  # noqa: E402
     from engine.clean import sms3sigma as sms  # noqa: E402
     from engine.clean import yield_clean as yc  # noqa: E402
@@ -130,6 +131,23 @@ BOUNDARY_TYPES = ["zip", "shp", "shx", "dbf", "prj", "cpg", "geojson", "json", "
 OUTLINE_RGB = [0, 229, 255]                      # the field boundary on the satellite image (cyan)
 TICKET_UNIT_LABEL = {"lb": "lb", "kg": "kg", "bu": "bu", "t": "t (1,000 kg)", "bu/ac": "bu/ac"}
 GROWER_USE = {"validate": "Validate only", "adjust": "Validate and adjust the yields"}
+# the combine factor (OCCD's, engine/clean/machines.py combine_factors): how it is computed
+CF_METHODS = ["auto", "cells", "track", "point", "machine"]
+CF_LABEL = {"auto": "Auto (recommended)", "cells": "Paired cells", "track": "Track × track", "point": "Point × point",
+            "machine": "Machine × machine"}
+CF_HELP = {
+    "auto": "Auto: the paired cells where the combines met on interleaved or mixed passes (the most conservative method "
+            "in the tests: never more than 5 % off); no factor where each combine cut its own block or they never "
+            "met - then only the grower's weight levels the field.",
+    "cells": "Paired cells: 30 m and 50 m squares where both combines cut neighbouring passes, proven at both sizes "
+             "and in both halves of the field. Green on interleaved and mixed passes, yellow in blocks.",
+    "track": "Track × track: every pair of adjacent passes (one of each combine) compares its yield along the common "
+             "edge, all pairs together. Green on interleaved and mixed passes, yellow in blocks.",
+    "point": "Point × point: every point against the nearest point of the other combine. Finds a real difference "
+             "more often on interleaved passes but is noisier: green interleaved, yellow mixed, red in blocks.",
+    "machine": "Machine × machine: the whole-field mean of each combine (Maldaner et al. 2016; the LSU AgCenter "
+               "normalisation). Right only when the combines alternated passes: green interleaved, yellow mixed, red "
+               "in blocks, where it mixes the machine with the ground each combine cut."}
 # the same for the columns of a vendor export, by the key yield_clean.detect_columns gives them
 DET_INFO = {"yield": ("Dry yield", "bu/ac", "RdYlGn"), "yield_wet": ("Wet yield", "bu/ac", "RdYlGn"),
             "moisture": ("Moisture", "%", "YlGnBu"), "speed_mph": ("Speed", "mph", "plasma"),
@@ -167,12 +185,12 @@ st.html(f"""<style>
 .stApp [class*="st-key-field_box_"] {{ background: #FFFFFF; border: 1px solid #C9D8EC; border-left: 5px solid {brand.NAVY};
   border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
 .oced-verdict {{ border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.95rem; border: 1px solid #C9D8EC; }}
-.stApp .st-key-res_cards [data-testid="stMetricValue"] {{ font-size: 1.65rem; }}
-.stApp .st-key-res_cards [data-testid="stMetricLabel"] p,
-.stApp .st-key-res_cards [data-testid="stMetricDelta"] div,
-.stApp .st-key-res_cards [data-testid="stMetricDelta"] p {{ white-space: normal; overflow: visible;
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricValue"] {{ font-size: 1.65rem; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricLabel"] p,
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] div,
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ white-space: normal; overflow: visible;
   text-overflow: clip; }}
-.stApp .st-key-res_cards [data-testid="stMetricDelta"] {{ height: auto; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] {{ height: auto; }}
 .oced-path {{ border-radius: 10px; padding: 0.55rem 0.9rem; font-size: 0.95rem; color: #1F2937; background: #F3F7FC;
   border: 1px solid #C9D8EC; border-left: 5px solid {brand.LIGHT_BLUE}; margin: 0.2rem 0 0.6rem; }}
 .oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
@@ -183,7 +201,7 @@ st.html(f"""<style>
 ss = st.session_state
 for k, v in {"workdir": None, "cands": None, "open_error": None, "open_exc": None, "open_request": None,
              "open_log": [], "units": {}, "datasets": {}, "cleaned": {}, "active": None, "boundary": {},
-             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None, "import_min": 5.0,
+             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None, "smsimp": None, "cfset": {},
              "work_saved_at": None, "work_msg": None}.items():
     ss.setdefault(k, v)
 
@@ -201,6 +219,7 @@ def start_over():
     for k in ("cands", "open_error", "open_exc", "open_request", "active"):
         ss[k] = None
     ss.open_log, ss.units, ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set = [], {}, {}, {}, {}, {}, {}
+    ss.cfset = {}
     ss.workdir = None
     ss.input_label = ss.work_saved = ss.work_saved_at = ss.work_msg = None
     for k in ("work_name", "work_name_for", "active_pick"):
@@ -676,7 +695,8 @@ def file_config(tag: str, sset: dict) -> dict:
     G = ss.grower.get(tag) or {}
     return {"sms3sigma": dict(sset), "boundary": (B["path"], tuple(B.get("feature") or ())) if B else None,
             "grower": {k: G.get(k) for k in ("weight", "unit", "basis", "moisture", "test_weight", "crop", "std_moisture",
-                                             "use", "area_ac")} if grower_ticket(G) or G.get("test_weight") else None}
+                                             "use", "area_ac")} if grower_ticket(G) or G.get("test_weight") else None,
+            "combines": combine_settings(tag) if ss.datasets.get(tag, {}).get("yield", True) else None}
 
 
 def settings_of(tag: str, sset: dict) -> dict:
@@ -686,7 +706,10 @@ def settings_of(tag: str, sset: dict) -> dict:
     total weight, the bushel weight (test weight), the crop and the standard moisture."""
     clip = bool(sset.get("clip", True))
     S3 = {k: v for k, v in sset.items()}
-    S = {"method": "sms3sigma", "tag": tag, "machines": {"harmonise": False}, "sms3sigma": S3}
+    CF = combine_settings(tag)
+    S = {"method": "sms3sigma", "tag": tag, "sms3sigma": S3,
+         "machines": {"harmonise": CF["on"], "method": CF["method"], "reference": CF["reference"],
+                      "max_factor": CF["max_pct"] / 100.0, "ticket_confirms": CF["ticket_confirms"]}}
     B = boundary_of(tag)
     if B is not None and clip:
         S["aoi"] = {"file": B["path"], "buffer_m": float(sms.DEFAULTS["clip_tolerance_m"]), "clip_output": True,
@@ -740,58 +763,78 @@ def dbf_drop_fields(dbf: str, names) -> list:
     return gone
 
 
-def import_as_sms(shp: str, tag: str, folder: str):
-    """SMS leaves out, when it imports a harvest, the readings with no dry yield or a dry yield below its import
-    minimum (5 bu/ac): the same here, with ss.import_min. Writes <folder>/<tag>_imported.shp with the kept records byte
-    for byte (every attribute as it was) and returns (path, n kept, n left out); the file itself when the minimum is 0,
-    nothing is below it, or the file has no dry yield column or no .prj."""
-    m = float(ss.get("import_min") or 0)
-    base = os.path.splitext(shp)[0]
-    if m <= 0 or not (os.path.exists(base + ".dbf") and os.path.exists(base + ".prj") and os.path.exists(base + ".shx")):
-        return shp, None, 0
-    import pyogrio
-    ycol = yc.detect_columns(list(pyogrio.read_info(shp)["fields"])).get("yield")
-    if not ycol:
-        return shp, None, 0
-    y = pd.to_numeric(pyogrio.read_dataframe(shp, columns=[ycol], read_geometry=False)[ycol],
-                      errors="coerce").to_numpy(float)
-    keep = np.isfinite(y) & (y >= m)
-    drop = int((~keep).sum())
-    if drop == 0:
-        return shp, int(len(y)), 0
+def import_settings() -> dict:
+    """The SMS import settings of the panel in step 1 (engine/sms_import.py), SMS's defaults where it is not set."""
+    try:
+        return si.settings(ss.get("smsimp") or {})
+    except ValueError:
+        return si.settings({})
+
+
+def data_crop(shp: str) -> str | None:
+    """The crop a point file names in its Product (or Crop) column, else None."""
+    try:
+        import pyogrio
+        cols = [c for c in pyogrio.read_info(shp)["fields"] if c.lower() in ("product", "crop")]
+        if not cols:
+            return None
+        v = pyogrio.read_dataframe(shp, columns=cols[:1], read_geometry=False, max_features=200)[cols[0]]
+        v = v.astype(str).replace({"": np.nan, "nan": np.nan, "None": np.nan}).dropna()
+        return str(v.mode().iloc[0]) if len(v) else None
+    except Exception:
+        return None
+
+
+def import_as_sms(shp: str, tag: str, folder: str, crop=None):
+    """The data as SMS imports it (its Processing Settings, the panel of step 1): engine/sms_import.apply writes
+    <folder>/<tag>_imported.shp (the kept records byte for byte, the recomputed cells patched). Returns (path, n
+    imported or None, the record of the import or None); the file itself when the import is off or changes nothing."""
+    S = import_settings()
+    if not S["on"]:
+        return shp, None, None
+    R = si.resolve(S, crop or data_crop(shp))
     os.makedirs(folder, exist_ok=True)
-    out = os.path.join(folder, f"{tag}_imported.shp")
-    yc.write_points(out, shp, None, np.flatnonzero(keep), [],
-                    byte_copy=(yc._read_shp(shp), yc._read_dbf(base + ".dbf")))
-    return out, int(keep.sum()), drop
+    rep = si.apply(shp, os.path.join(folder, f"{tag}_imported.shp"), R)
+    rec = {"settings": si.describe(R), "left_out": dict(rep["left_out"]), "n_all": int(rep["n_in"]),
+           "n_in": int(rep["n_out"]), "all_readings": shp, "changed": list(rep["changed"]), "notes": list(rep["notes"])}
+    return rep["path"], int(rep["n_out"]), rec
 
 
 def extract(cand, chosen_units, opts, kw, log):
-    """The chosen units as one shapefile per field, season and crop (engine.run.decode on each group)."""
+    """The chosen units as one shapefile per field, season and crop (engine.run.decode on each group), each imported
+    as SMS would import it (the decoder gets the product's weight to volume, dry moisture and shrink)."""
     groups = {}
     for u in chosen_units:
         groups.setdefault((u.field or "", u.year, str(u.crop or "").strip().lower()), []).append(u)
     made = {}
+    S_i = import_settings()
     for (field, year, crop), us in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0, kv[0][2])):
         tag = er.candidate_tag(cand, us)
         if tag in made:                                  # the same field and season in two crops
             tag = yc.sanitise_tag(f"{tag}_{crop or 'crop'}")[:60]
         ss.cleaned.pop(tag, None)                        # extracted again: its old cleaning no longer applies
         log(f"extracting {field or '(no field)'} {year or ''} ({len(us)} unit(s)) ...")
-        d = er.decode(cand, [u.id for u in us], opts, ss.workdir, log=log, tag=tag, **kw)
+        opts_g, R_i = opts, None
+        if S_i["on"]:
+            R_i = si.resolve(S_i, crop)
+            opts_g = dataclasses.replace(
+                opts, crop=S_i["product"] or opts.crop,
+                test_weight_lb_bu=R_i["test_weight_lb_bu"] if R_i["product"] else opts.test_weight_lb_bu,
+                std_moisture_pct=R_i["dry_moisture_pct"] if R_i["product"] else opts.std_moisture_pct,
+                shrink="symmetric" if S_i["expand_dry_moisture"] else "one_sided")
+        d = er.decode(cand, [u.id for u in us], opts_g, ss.workdir, log=log, tag=tag, **kw)
         d.pop("df", None)
         t = d["report"].get("totals") or {}
-        shp_i, n_i, drop = import_as_sms(d["shp"], d["tag"], os.path.join(ss.workdir, "decoded"))
-        if drop:
-            log(f"import as SMS: {drop:,} of {d['n']:,} readings with no dry yield or one below "
-                f"{float(ss.import_min):g} bu/ac left out ({n_i:,} imported)")
+        shp_i, n_i, rec = import_as_sms(d["shp"], d["tag"], os.path.join(ss.workdir, "decoded"),
+                                        crop=(R_i or {}).get("product") or crop)
+        if rec and rec["left_out"]:
+            log(f"import as SMS: {rec['n_all'] - rec['n_in']:,} of {rec['n_all']:,} readings left out ("
+                + ", ".join(f"{k} {v:,}" for k, v in rec["left_out"].items()) + f"); {rec['settings']}")
         made[d["tag"]] = {"tag": d["tag"], "shp": shp_i, "zip": d["zip"], "n": n_i if n_i is not None else d["n"],
                           "kind": "raw", "op": "harvest", "yield": True,
                           "label": f"{field or '(no field)'} · {year or 'no season'} · {crop or 'crop?'}",
                           "source": d["source"], "report": d["report"], "area_ac": t.get("area_ac"),
-                          "units": [u.label for u in us],
-                          "import_min": {"min_yield": float(ss.get("import_min") or 0), "left_out": drop,
-                                         "n_all": d["n"], "all_readings": d["shp"]}}
+                          "units": [u.label for u in us], "sms_import": rec}
     return made
 
 
@@ -938,7 +981,10 @@ def record_without_level(R: dict, dropped: list) -> dict:
     from engine.report.clean_report import make_report
     R2 = copy.deepcopy(R)
     R2["difm_ready_added_columns"] = [c for c in R2.get("difm_ready_added_columns") or [] if c not in dropped]
-    R2["yield_column_for_difm"] = (R2.get("columns") or {}).get("yield") or "Yld_Vol_Dr"
+    MF = ((R2.get("machines") or {}).get("factor_applied") or {}).values()
+    R2["yield_column_for_difm"] = ("Yld_Harm" if ("Yld_Harm" in R2["difm_ready_added_columns"]
+                                                and any(abs(float(v) - 1) > 1e-9 for v in MF))
+                                   else (R2.get("columns") or {}).get("yield") or "Yld_Vol_Dr")
     for k in ("level_column_for_difm", "level_symmetric_column_for_difm", "final_map"):
         R2.pop(k, None)
     figs = (R2.get("files") or {}).get("figures") or {}
@@ -966,7 +1012,8 @@ def work_record(name: str | None = None) -> dict:
     return ew.make_record(ss.workdir, name or ss.get("work_name") or ew.folder_name(ss.workdir),
                           input_label=ss.get("input_label"), active=ss.active, datasets=ss.datasets,
                           boundary=ss.boundary, grower=ss.grower, smsset=ss.get("smsset"), a3set=ss.a3set,
-                          cleaned=ss.cleaned, app_version=VERSION, created=(prev or {}).get("created"))
+                          cleaned=ss.cleaned, app_version=VERSION, created=(prev or {}).get("created"),
+                          combines=ss.get("cfset") or {})
 
 
 def save_current(quiet: bool = False):
@@ -1006,6 +1053,7 @@ def restore_work(wd: str):
     ss.grower = {t: G for t, G in (rec.get("grower") or {}).items() if t in ss.datasets}
     ss.a3set = {t: A for t, A in (rec.get("a3set") or {}).items() if t in ss.datasets}
     ss.smsset = rec.get("smsset")
+    ss.cfset = {t: c for t, c in (rec.get("combines") or {}).items() if t in ss.datasets}
     for t, B in (rec.get("boundary") or {}).items():
         if t not in ss.datasets:
             continue
@@ -1216,6 +1264,101 @@ def _d(x, ref, what):
     return None if (x is None or ref is None) else f"{x - ref:+.2f} bu/ac {what}"
 
 
+def combines_of(df: pd.DataFrame) -> tuple[list, str]:
+    """The combines a harvest point file names, as the engine finds them: ([{combine, readings, mean dry yield}],
+    where they come from). The machine column; else the sources SMS writes at the end of the dataset names, or
+    dataset names that are VINs; else one combine."""
+    det = yc.detect_columns([c for c in df.columns if c not in ("lon", "lat")])
+    key, basis = None, "one combine (no machine column, no combine in the dataset names)"
+    if det.get("machine"):
+        key, basis = df[det["machine"]].astype(str).to_numpy(), f"the machine column {det['machine']}"
+    elif det.get("dataset"):
+        dm = sms.dataset_machines(df[det["dataset"]])
+        if dm is not None:
+            key, basis = np.asarray(dm[0]).astype(str), "the dataset names"
+    if key is None:
+        return [], basis
+    y = pd.to_numeric(df[det["yield"]], errors="coerce") if det.get("yield") else pd.Series(np.nan, index=df.index)
+    g = pd.DataFrame({"combine": key, "y": y.to_numpy(float)}).groupby("combine")
+    rows = [{"combine": str(m), "readings": int(len(v)), "mean dry yield (bu/ac)": float(v["y"].mean())}
+            for m, v in g]
+    return (rows if len(rows) >= 2 else []), basis
+
+
+def combine_settings(tag: str) -> dict:
+    """The combine-factor settings of a file (off by default: the user decides, also with several combines)."""
+    c = dict(ss.cfset.get(tag) or {})
+    return {"on": bool(c.get("on", False)), "method": c.get("method") or "auto", "reference": c.get("reference") or "auto",
+            "max_pct": float(c.get("max_pct") or 10.0), "ticket_confirms": bool(c.get("ticket_confirms", True))}
+
+
+def seams_panel(C: dict | None):
+    """Beside the combine factor: the differences between neighbouring passes of different combines and of the same
+    combine, from the last cleaning of the file (R['machines']['seams'], a diagnostic that never changes the data)."""
+    st.markdown("**Passes side by side** · the last cleaning of this file")
+    SM = ((((C or {}).get("R") or {}).get("machines") or {}).get("seams")) or None
+    if not SM:
+        st.caption("Clean the file once: the differences between neighbouring passes of different combines and of the "
+                   "same combine appear here. Then decide on the factor and clean again.")
+        return
+    sc, db, da = SM["same_combine"], SM["different_combines"]["before"], SM["different_combines"]["after"]
+    moved = bool(SM["different_combines"].get("factor_moved_them"))
+    L_ = f"{float(SM.get('stretch_m') or 50):g} m"
+
+    def pct(x):
+        return "-" if x is None else f"{float(x):.2f} %"
+    cards = [{"label": "Different combines, side by side", "value": pct(db.get("median_pct")),
+              "delta": f"{db['pass_pairs']} pass pairs · {db['stretches']:,} stretches of {L_}",
+              "help": "The median difference between neighbouring passes of two different combines: in stretches of "
+                      f"{L_} along each pair of passes, how much the higher side reads above the lower one."
+                      + (" Before the combine factor." if moved else "")},
+             {"label": "Same combine, its own passes side by side", "value": pct(sc.get("median_pct")),
+              "delta": f"{sc['pass_pairs']} pass pairs · {sc['stretches']:,} stretches of {L_}",
+              "help": "The same measure between neighbouring passes of one combine: the field's own pass-to-pass "
+                      "difference (the ground, the direction of travel, the overlap, the flow delay)."}]
+    if moved:
+        cards.append({"label": "Different combines, after the factor", "value": pct(da.get("median_pct")),
+                      "delta": (f"{float(da['median_pct']) - float(db['median_pct']):+.2f} points by the factor"
+                                if da.get("median_pct") is not None and db.get("median_pct") is not None else None),
+                      "help": "The same measure after the combine factor of the last cleaning."})
+    card_row(cards, key="res_cards_seam")
+    final = da.get("median_pct") if moved else db.get("median_pct")
+    if not db["stretches"]:
+        tone, txt = ("#F3F7FC", "#00358E"), "The combines never harvested neighbouring passes: there is no seam between them."
+    elif not sc["stretches"] or final is None or sc.get("median_pct") is None:
+        tone, txt = ("#F3F7FC", "#00358E"), "No two passes of the same combine are neighbours: nothing to compare with."
+    elif float(final) <= float(sc["median_pct"]):
+        tone = ("#E8F7F0", "#00784D")
+        txt = (f"Between the combines {float(final):.2f} % ≤ the same combine's own {float(sc['median_pct']):.2f} %: the "
+               "difference between the combines is no larger than the field's own pass-to-pass difference, so it is not "
+               "a difference between the machines and a factor would not remove it.")
+    else:
+        tone = ("#FFF5E5", "#9A5B00")
+        txt = (f"Between the combines {float(final):.2f} % > the same combine's own {float(sc['median_pct']):.2f} % by "
+               f"{float(final) - float(sc['median_pct']):.2f} points: part of it may be a calibration difference between "
+               "the combines. The factor tests it on the passes side by side and applies it only where it is proven.")
+    if db["stretches"] and int(db.get("pass_pairs") or 0) < 5:
+        txt += f" Only {db['pass_pairs']} pass pair(s) of different combines are neighbours: too few to tell."
+    st.html(f'<div class="oced-verdict" style="background:{tone[0]};border-color:{tone[1]};color:#1F2937">'
+            f'{html.escape(txt)}</div>')
+    if SM.get("pairs"):
+        rows = []
+        for p_ in SM["pairs"]:
+            r_ = {"combines": f"{p_['a']} vs {p_['b']}", "pass pairs": p_["pass_pairs"],
+                  "difference (%)": p_["median_pct_before"], "first above second (%)": p_["a_over_b_pct_before"]}
+            if moved:
+                r_["difference after (%)"] = p_["median_pct_after"]
+                r_["first above second after (%)"] = p_["a_over_b_pct_after"]
+            rows.append(r_)
+        st.dataframe(pd.DataFrame(rows), hide_index=True,
+                     column_config={c: st.column_config.NumberColumn(format="%+.2f" if "above" in c else "%.2f")
+                                    for c in ("difference (%)", "first above second (%)", "difference after (%)",
+                                              "first above second after (%)")})
+        st.caption("Per pair of combines: the median difference of the stretches side by side, and how much the first "
+                   "combine reads above (+) or below (-) the second where they meet. On the kept readings; a diagnostic "
+                   "of the map that never changes the data.")
+
+
 def card_row(cards: list, key: str):
     """Cards side by side in one row, all the same width and height (st.columns + height='stretch'), the delta text
     under the value wrapping inside its card."""
@@ -1227,6 +1370,73 @@ def card_row(cards: list, key: str):
             with col:
                 st.metric(c["label"], c["value"], delta=c.get("delta"), delta_color="off", delta_arrow="off",
                           help=c.get("help"), border=True, height="stretch")
+
+
+STEP_SHORT = {"S0": "import check", "S1": "clip", "S2": "swath", "S3": "speed", "S4": "moisture", "S5": "yield"}
+
+
+def step_effects(tag: str, C: dict) -> list | None:
+    """How each step of an SMS 3-sigma cleaning moved the mean (plain) and the Average (SMS, total / area) of the dry
+    yield, from the flagged file (every reading with Keep, Rem_By = the step that removed it, Swath_Scl = the per-area
+    scale of S2, Dist_Opt x Wdth_Opt = its area after S2). Rows: raw data (the file as imported), then every step that
+    removed or changed something: {step, label, removed, mean, avg, d_mean, d_avg}; the last row is the clean file.
+    None for a planter / sprayer file or without the flagged file."""
+    R = C["R"]
+    fl = C.get("flagged_shp")
+    if C.get("kind") == "a3" or not fl or not os.path.exists(fl):
+        return None
+    f = read_points(fl, mtime(fl))
+    cc = yc.detect_columns([c for c in f.columns if c not in ("lon", "lat")])
+    ycol = (R.get("columns") or {}).get("yield") or cc.get("yield")
+    if not ycol or ycol not in f or "Rem_By" not in f:
+        return None
+    y = pd.to_numeric(f[ycol], errors="coerce").to_numpy(float)
+    sc = (pd.to_numeric(f["Swath_Scl"], errors="coerce").to_numpy(float) if "Swath_Scl" in f else np.ones(len(f)))
+    sc = np.where(np.isfinite(sc) & (sc > 0), sc, 1.0)
+    a0 = area_of(f)
+    a1 = a0
+    if a0 is not None and "Dist_Opt" in f and "Wdth_Opt" in f:
+        a1 = (pd.to_numeric(f["Dist_Opt"], errors="coerce").to_numpy(float)
+              * pd.to_numeric(f["Wdth_Opt"], errors="coerce").to_numpy(float) / 43560.0)
+    rem = f["Rem_By"].astype(object).where(f["Rem_By"].notna(), "").astype(str).to_numpy()
+
+    def stats(v, a, m):
+        v_, ok = v[m], np.isfinite(v[m])
+        mean = float(v_[ok].mean()) if ok.any() else None
+        avg = None
+        if a is not None:
+            aa = a[m]
+            g = ok & np.isfinite(aa) & (aa > 0)
+            avg = float((v_[g] * aa[g]).sum() / aa[g].sum()) if g.any() else None
+        return mean, avg
+    D = ss.datasets[tag]
+    rawdf = read_points(D["shp"], mtime(D["shp"]))
+    rcol = yc.detect_columns([c for c in rawdf.columns if c not in ("lon", "lat")]).get("yield")
+    rows = [{"step": "raw", "label": "raw data", "removed": None, "mean": _mean_of(rawdf, rcol),
+             "avg": avg_of(rawdf, rcol)}]
+    alive = np.ones(len(f), bool)
+    n_out = len(rawdf) - len(f)
+    if n_out > 0:                                     # the clip before S0: those readings are not in the flagged file
+        m_, a_ = stats(y, a0, alive)
+        rows.append({"step": "S1", "label": "S1 clip", "removed": int(n_out), "mean": m_, "avg": a_})
+    cur_y, cur_a = y, a0
+    for r in R.get("cascade") or []:
+        fid = str(r.get("filter") or "")
+        kill = (rem == fid) & alive
+        alive = alive & ~kill
+        swath = fid.startswith("S2")
+        if swath:
+            cur_y, cur_a = y * sc, a1
+        if not kill.any() and not swath:
+            continue
+        m_, a_ = stats(cur_y, cur_a, alive)
+        lab = f"{fid} {STEP_SHORT.get(fid[:2], r.get('name') or '')}".strip()
+        rows.append({"step": fid, "label": lab, "removed": int(kill.sum()), "mean": m_, "avg": a_})
+    for i, r in enumerate(rows):
+        prev = rows[i - 1] if i else None
+        r["d_mean"] = (r["mean"] - prev["mean"]) if (prev and r["mean"] is not None and prev["mean"] is not None) else None
+        r["d_avg"] = (r["avg"] - prev["avg"]) if (prev and r["avg"] is not None and prev["avg"] is not None) else None
+    return rows
 
 
 def result_cards(tag: str, C: dict, path_only: bool = False):
@@ -1274,13 +1484,20 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
     raw_a, cl_a = avg_of(raw, rcol), avg_of(cdf, ycol)
     if cl_m is None:
         return
+    # the combine factor (several combines, when switched on and proven): Yld_Harm = the cleaned yield x the factor
+    MF = {str(k): float(v) for k, v in ((R.get("machines") or {}).get("factor_applied") or {}).items()}
+    harm_on = "Yld_Harm" in cdf.columns and any(abs(v - 1) > 1e-9 for v in MF.values())
+    h_m, h_a = ((_mean_of(cdf, "Yld_Harm"), avg_of(cdf, "Yld_Harm")) if harm_on else (cl_m, cl_a))
+    fac_txt = ", ".join(f"{m} x {v:.4f}" for m, v in MF.items() if abs(v - 1) > 1e-9)
     fcol = R.get("yield_column_for_difm")
     fcol = fcol if (fcol and fcol in cdf.columns) else ycol
-    fin_m, fin_a = _mean_of(cdf, fcol), avg_of(cdf, fcol)
     Lf = L.get("factor_final", L.get("factor"))
-    adjusted = bool(C.get("adjusted")) and fcol != ycol and fin_m is not None
-    if not (L and adjusted):
-        fin_m, fin_a = cl_m, cl_a
+    adjusted = bool(C.get("adjusted")) and bool(L) and fcol not in (ycol, "Yld_Harm") and _mean_of(cdf, fcol) is not None
+    if adjusted:
+        fin_m, fin_a = _mean_of(cdf, fcol), avg_of(cdf, fcol)
+    else:
+        fin_m, fin_a = h_m, h_a
+        fcol = "Yld_Harm" if harm_on else ycol
     gro_ac = mon_ac = area_y = None
     if L:
         area_s = float(L.get("export_area_ac") or 0)
@@ -1288,7 +1505,7 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
         if area_y > 0:
             gro_ac = float(L["scale_ticket_bu"]) / area_y
             mon_ac = float(L["export_total_bu"]) / area_y
-    by_g = f"by the grower's data (x L {Lf:.4f})" if (L and adjusted) else None
+    by_g = f"by the grower's data (x L {Lf:.4f})" if adjusted else None
     if not path_only:
         cards = [kept, area_c]
         cards.append({"label": "Mean dry yield, cleaned", "value": f"{cl_m:,.2f} bu/ac",
@@ -1300,6 +1517,11 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
                           "delta": _d(cl_a, raw_a, f"by the cleaning (raw {raw_a:,.2f})" if raw_a is not None else ""),
                           "help": f"As the SMS summary: the Average of {ycol}, area-weighted (each reading's yield x "
                                   "its area, added up, divided by the area) = the total divided by the area."})
+        if harm_on:
+            cards.append({"label": "After the combine factor (Yld_Harm)", "value": f"{h_m:,.2f} bu/ac",
+                          "delta": _d(h_m, cl_m, "by the combine factor"),
+                          "help": f"The cleaned yield x the factor of each combine ({fac_txt}; the reference x 1). "
+                                  "The Combines tab has the decision of every combine."})
         if gro_ac is not None:
             ms = (R.get("moisture") or {}).get("standard_pct")
             at_std = L.get("ticket_bu_at_standard") is not None and ms is not None
@@ -1312,43 +1534,60 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
                           "help": f"{given}" + (f", brought to the standard moisture {float(ms):g} %" if at_std else "")
                                   + f": the grower's total over {area_y:,.2f} ac, against the monitor's total over the "
                                   "same acres on the same basis (the Grower's data tab has the details)."})
-        if L and adjusted:
+        if adjusted:
             cards.append({"label": f"Final yield, mean ({fcol})", "value": f"{fin_m:,.2f} bu/ac",
-                          "delta": _d(fin_m, cl_m, by_g),
-                          "help": f"The column to map: the cleaned yield x L = grower / monitor. The monitor's {ycol} "
-                                  "stays in the file as logged."})
+                          "delta": _d(fin_m, h_m, by_g),
+                          "help": f"The column to map: the cleaned yield" + (" x the combine factor" if harm_on else "")
+                                  + f" x L = grower / monitor. The monitor's {ycol} stays in the file as logged."})
             if fin_a is not None:
                 cards.append({"label": "Final yield, average (SMS)", "value": f"{fin_a:,.2f} bu/ac",
-                              "delta": _d(fin_a, cl_a, by_g),
+                              "delta": _d(fin_a, h_a, by_g),
                               "help": f"The SMS Average of {fcol} (area-weighted, the total divided by the area)."})
         elif L:
-            cards.append({"label": "Final yield (clean file)", "value": f"{cl_m:,.2f} bu/ac",
-                          "delta": "unchanged: validate only",
+            cards.append({"label": "Final yield (clean file)", "value": f"{fin_m:,.2f} bu/ac",
+                          "delta": "grower's data: validate only",
                           "help": "Validate only: the grower's data is compared, not applied; the clean file keeps the "
-                                  f"monitor's yields. Adjusting would multiply them by L = {Lf:.4f}."})
+                                  f"{'combine-factor' if harm_on else 'monitor'}'s yields. Adjusting would multiply "
+                                  f"them by L = {Lf:.4f}."})
         card_row(cards, key="res_cards")
 
-    def path(r, c, f):
+    eff = step_effects(tag, C) or []
+
+    def path(r, c, h, f, key="d_mean"):
+        parts = [f"{e['label']} {e[key]:+.2f}" for e in eff[1:] if e.get(key) is not None]
+        brk = f" <span style=\"color:#4B5563\">({', '.join(parts)})</span>" if parts else ""
         s_ = [f"raw data <b>{r:,.2f}</b>" if r is not None else "raw data",
-              f"cleaning {c - r:+.2f} &rarr; <b>{c:,.2f}</b>" if r is not None else f"cleaned <b>{c:,.2f}</b>"]
-        if L and adjusted and f is not None:
-            s_.append(f"grower's data &times; L {Lf:.4f} ({f - c:+.2f}) &rarr; <b>{f:,.2f} bu/ac</b>")
+              f"cleaning {c - r:+.2f}{brk} &rarr; <b>{c:,.2f}</b>" if r is not None else f"cleaned <b>{c:,.2f}</b>"]
+        if harm_on and h is not None:
+            s_.append(f"combine factor ({h - c:+.2f}) &rarr; <b>{h:,.2f}</b>")
+        else:
+            s_.append("no combine factor")
+        if adjusted and f is not None and h is not None:
+            s_.append(f"grower's data &times; L {Lf:.4f} ({f - h:+.2f}) &rarr; <b>{f:,.2f} bu/ac</b>")
         elif L:
-            s_.append(f"grower's data: validate only, not applied &rarr; <b>{c:,.2f} bu/ac</b>"
-                      + (f" (adjusting would give {c * float(Lf):,.2f})" if Lf else ""))
+            s_.append("grower's data: validate only, not applied"
+                      + (f" (adjusting would give {h * float(Lf):,.2f})" if (Lf and h is not None) else ""))
         else:
             s_.append("no grower's data")
         return " &rarr; ".join(s_)
-    lines = ["<b>What made the final yield</b>" + (f" (map {html.escape(fcol)})" if (L and adjusted) else ""),
-             "Mean (SMS Edit Legend): " + path(raw_m, cl_m, fin_m)]
+    lines = ["<b>What made the final yield</b>" + (f" (map {html.escape(fcol)})" if fcol != ycol else ""),
+             "Mean (SMS Edit Legend): " + path(raw_m, cl_m, h_m, fin_m)]
     if cl_a is not None:
-        lines.append("Average (SMS summary, total &divide; area): " + path(raw_a, cl_a, fin_a))
+        lines.append("Average (SMS summary, total &divide; area): " + path(raw_a, cl_a, h_a, fin_a, "d_avg"))
     note = ""
-    if L and adjusted and gro_ac is not None:
-        note = ("<br><span style=\"font-size:0.86rem;color:#4B5563\">L = grower / monitor is set on the totals of every "
-                "reading of the field (the scale weighed all the grain, the removed readings included), so the final "
-                "mean and average over the kept readings are near, not equal to, the grower's "
-                + f"{gro_ac:,.2f} bu/ac.</span>")
+    if harm_on:
+        note += ("<br><span style=\"font-size:0.86rem;color:#4B5563\">Combine factor: " + html.escape(fac_txt)
+                 + " (the Combines tab has the decision of every combine).</span>")
+    if adjusted and gro_ac is not None:
+        note += ("<br><span style=\"font-size:0.86rem;color:#4B5563\">L = grower / monitor is set on the totals of every "
+                 "reading of the field (the scale weighed all the grain, the removed readings included), so the final "
+                 "mean and average over the kept readings are near, not equal to, the grower's "
+                 + f"{gro_ac:,.2f} bu/ac.</span>")
+    if eff:
+        note += ("<br><span style=\"font-size:0.86rem;color:#4B5563\">The cleaning's change is the sum of its steps: "
+                 "each one is how much the mean or the Average moved when that step removed its readings (S2 also "
+                 "narrows the overlapping strips, which raises their bu/ac and lowers the area). The Steps tab "
+                 "has the table.</span>")
     st.html('<div class="oced-path">' + "<br>".join(lines) + note + "</div>")
 
 
@@ -1410,14 +1649,67 @@ with st.container(border=True, key="oced_step_1"):
                 request_open(("path", ss.path_in))
             else:
                 st.toast("Upload files or type a path first", icon=":material/info:")
-    _im = float(ss.get("import_min") or 0)
-    with st.expander(f"Import as SMS: readings with a dry yield below {_im:g} bu/ac left out" if _im > 0 else
-                     "Import as SMS: off, every reading kept", icon=":material/filter_alt:"):
-        st.number_input("SMS import minimum, dry yield (bu/ac)", 0.0, 50.0, step=1.0, key="import_min",
-                        help="SMS leaves out, when it imports a harvest, the readings with no dry yield or a dry "
-                             "yield below this minimum (5 bu/ac). OCED does the same as the data comes in: the map, "
-                             "the statistics and the cleaning start from the data as SMS would import it. 0 = keep "
-                             "every reading. Applies to the data opened or extracted after a change.")
+    # ---- Import as SMS: the Processing Settings SMS applies when it imports a harvest (engine/sms_import.py)
+    S_p = import_settings()
+    _pd = si.product_defaults(S_p["product"]) if S_p["product"] else None
+    with st.expander("Import as SMS (Processing Settings)" + ("" if S_p["on"] else ": off, the data as it is"),
+                     icon=":material/filter_alt:"):
+        si_on = st.toggle("Import the data as SMS would", value=True, key="si_on",
+                          help="SMS applies these settings when it imports a harvest: the yields computed with the "
+                               "product's weight to volume and dry moisture, the readings outside the yield volume "
+                               "limits left out. The map, the statistics and the cleaning then start from the data as "
+                               "SMS holds it. Applies to the data opened or extracted after a change.")
+        st.markdown("**Operation settings**")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            si_prod = st.selectbox("Physical product", [None] + sorted(common.CROPS), key="si_prod",
+                                   format_func=lambda c: "from the data" if c is None else c, disabled=not si_on)
+            si_tw = st.number_input("Weight to volume (lb/bu)", 1.0, 200.0, value=None, step=0.5, format="%.2f",
+                                    key="si_tw", disabled=not si_on,
+                                    placeholder=(f"{_pd[0]:.2f}" if _pd and _pd[0] else "product's: wheat 60, barley 48"))
+            si_dm = st.number_input("Dry moisture (%)", 0.0, 60.0, value=None, step=0.1, format="%.2f", key="si_dm",
+                                    disabled=not si_on,
+                                    placeholder=(f"{_pd[1]:.2f}" if _pd and _pd[1] is not None
+                                                 else "product's: wheat 13.5, barley 14.5"))
+            si_exp = st.checkbox("Expand dry moisture", key="si_exp", disabled=not si_on,
+                                 help="Off (SMS's default): grain drier than the dry moisture is not raised to it "
+                                      "(one-sided shrink). On: dry yield = wet x (100 - M) / (100 - dry moisture) both "
+                                      "ways.")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            si_ums = st.checkbox("Use manual swath", key="si_ums", disabled=not si_on)
+            si_msw = st.number_input("Manual swath width (ft)", 0.1, 300.0, 15.0, 0.5, format="%.2f", key="si_msw",
+                                     disabled=not (si_on and si_ums),
+                                     help="Replaces the logged width; the per-area values are scaled by logged / "
+                                          "manual (the grain mass is kept).")
+            si_umm = st.checkbox("Use manual moisture", key="si_umm", disabled=not si_on)
+            si_mm = st.number_input("Manual moisture (%)", 0.0, 80.0, value=None, step=0.1, format="%.2f", key="si_mm",
+                                    placeholder="= the dry moisture", disabled=not (si_on and si_umm))
+        st.markdown("**Filter settings**")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            si_min = st.number_input("Min. yield volume (bu/ac)", 0.0, 1e4, 5.0, 1.0, format="%.3f", key="si_min",
+                                     disabled=not si_on,
+                                     help="A reading with no dry yield or one below this is left out (SMS: 5.000).")
+            si_max = st.number_input("Max. yield volume (bu/ac)", 0.0, 1e5, value=None, step=10.0, format="%.2f",
+                                     key="si_max", disabled=not si_on,
+                                     placeholder=(f"{_pd[2]:.2f}" if _pd else "product's: wheat 300, barley 200"),
+                                     help="A reading above this is left out (SMS: wheat 300.00, barley 200.00).")
+        st.markdown("**Equipment settings**")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            si_sd = st.number_input("Start delay (s)", 0.0, 600.0, 0.0, 0.5, format="%.2f", key="si_sd",
+                                    disabled=not si_on, help="The first seconds of every pass left out.")
+            si_ed = st.number_input("Stop delay (s)", 0.0, 600.0, 0.0, 0.5, format="%.2f", key="si_ed",
+                                    disabled=not si_on, help="The last seconds of every pass left out.")
+            si_fs = st.number_input("Flow shift (s)", -600.0, 600.0, 0.0, 0.5, format="%.2f", key="si_fs",
+                                    disabled=not si_on,
+                                    help="The grain mass of a reading moved to the position logged that many seconds "
+                                         "earlier (positive) or later (negative).")
+        st.caption("SMS's defaults: wheat 60.00 lb/bu, 13.50 %, max 300.00 bu/ac; barley 48.00 lb/bu, 14.50 %, max "
+                   "200.00 bu/ac; another crop: its weight and moisture of the crop table, max 300.00; min 5.000 bu/ac, "
+                   "expand dry moisture off, no manual swath or moisture, delays and flow shift 0. Empty = the "
+                   "product's (the crop of the data unless a product is chosen).")
+    ss.smsimp = {"on": bool(si_on), "product": si_prod, "test_weight_lb_bu": si_tw, "dry_moisture_pct": si_dm,
+                 "expand_dry_moisture": bool(si_exp), "use_manual_swath": bool(si_ums), "manual_swath_ft": si_msw,
+                 "use_manual_moisture": bool(si_umm), "manual_moisture_pct": si_mm, "min_yield": si_min,
+                 "max_yield": si_max, "start_delay_s": si_sd, "stop_delay_s": si_ed, "flow_shift_s": si_fs}
     if ss.open_request:
         req, ss.open_request = ss.open_request, None
         with st.spinner("Unpacking and recognising the input ..."):
@@ -1473,18 +1765,9 @@ with st.container(border=True, key="oced_step_1"):
                 groups = sorted({(u.field or "(no field)", u.year) for u in chosen}, key=lambda g: (g[0], g[1] or 0))
                 fid = cand["decoder"]
                 dflt = detect.default_options(fid)
-                with st.expander("Decoding options (crop, test weight, standard moisture, dry yield)",
-                                 icon=":material/tune:"):
-                    with st.container(horizontal=True, vertical_alignment="bottom"):
-                        crop = st.selectbox("Crop", [FROM_MONITOR] + list(common.CROPS), key=f"crop_{CK}")
-                        tw = st.number_input("Test weight (lb/bu)", min_value=1.0, max_value=100.0, value=None,
-                                             step=0.5, key=f"tw_{CK}", placeholder="monitor / crop table")
-                        sm = st.number_input("Standard moisture (%)", min_value=0.0, max_value=40.0, value=None,
-                                             step=0.5, key=f"sm_{CK}", placeholder="monitor / crop table")
-                        shrink = st.segmented_control("Dry yield", ["one_sided", "symmetric"], default=dflt.shrink,
-                                                      required=True, key=f"shrink_{CK}",
-                                                      format_func={"one_sided": "One-sided",
-                                                                   "symmetric": "Symmetric"}.get)
+                with st.expander("Decoding options of this format", icon=":material/tune:"):
+                    st.caption("The product, the weight to volume, the dry moisture and the dry yield (expand dry "
+                               "moisture) are the SMS import settings above.")
                     kw = {}
                     if fid == "cnh_cn1":
                         kw["calibration"] = st.segmented_control(
@@ -1497,15 +1780,14 @@ with st.container(border=True, key="oced_step_1"):
                                                                  1.0, key=f"fd_{CK}")
                             kw["moisture_delay_s"] = st.number_input("Moisture delay (s)", 0.0, 60.0,
                                                                      gs3.MOISTURE_DELAY_S, 1.0, key=f"md_{CK}")
-                    st.caption("Empty = the monitor's own values (else the crop table). The vendor's convention for "
-                               f"the dry yield of this format: {dflt.shrink.replace('_', '-')}.")
+                    st.caption("With the SMS import off: the monitor's own weight and moisture (else the crop table) "
+                               f"and the vendor's dry yield convention, {dflt.shrink.replace('_', '-')}.")
                 with st.container(key="run_go"):
                     go = st.button(f"Extract {len(groups)} file" + ("s" if len(groups) != 1 else "") if groups
                                    else "Extract", type="primary",
                                    icon=":material/file_export:", disabled=not chosen, key=f"extract_{CK}")
                 if go:
-                    opts = dataclasses.replace(dflt, crop=None if crop == FROM_MONITOR else crop,
-                                               test_weight_lb_bu=tw, std_moisture_pct=sm, shrink=shrink)
+                    opts = dataclasses.replace(dflt)
                     with st.status("Extracting ...", expanded=True) as status:
                         try:
                             made = extract(cand, chosen, opts, kw, status.text)
@@ -1528,15 +1810,13 @@ with st.container(border=True, key="oced_step_1"):
             tag = er.candidate_tag(cand)
             if tag not in ss.datasets:
                 n0 = int(cand.get("n") or 0)
-                shp_i, n_i, drop = (import_as_sms(cand["path"], tag, os.path.join(ss.workdir, "imported"))
-                                    if cand.get("yield", True) else (cand["path"], None, 0))
+                shp_i, n_i, rec = (import_as_sms(cand["path"], tag, os.path.join(ss.workdir, "imported"))
+                                   if cand.get("yield", True) else (cand["path"], None, None))
                 ss.datasets[tag] = {"tag": tag, "shp": shp_i, "zip": None, "n": n_i if n_i is not None else n0,
                                     "kind": "export", "label": os.path.basename(cand.get("source_path") or cand["path"]),
                                     "op": cand.get("operation") or "harvest", "yield": bool(cand.get("yield", True)),
                                     "source": None, "report": None, "area_ac": None, "units": [],
-                                    "import_min": ({"min_yield": float(ss.get("import_min") or 0), "left_out": drop,
-                                                    "n_all": n0, "all_readings": cand["path"]}
-                                                   if cand.get("yield", True) else None)}
+                                    "sms_import": rec}
                 ss.active = tag
             st.caption("A point export is used as it is: its attributes are the vendor's columns."
                        + ("" if cand.get("yield", True) else " Not a yield file: it is cleaned with the 3-sigma of the "
@@ -1568,16 +1848,22 @@ with st.container(border=True, key="oced_step_2"):
     with st.container(horizontal=True):
         st.metric("Operation", a3.OPERATION_LABEL.get(D.get("op") or "harvest", "Point data").split(" (")[0],
                   border=True, help=a3.OPERATION_LABEL.get(D.get("op") or "harvest"))
-        IM = D.get("import_min") or {}
+        IM = D.get("sms_import") or {}
+        if not IM and D.get("import_min"):             # a work saved with the first import (the minimum only)
+            o = D["import_min"]
+            IM = {"left_out": ({"below the min. yield volume": int(o.get("left_out") or 0)} if o.get("left_out") else {}),
+                  "n_all": o.get("n_all"), "settings": f"min. yield volume {float(o.get('min_yield') or 0):g} bu/ac"}
+        n_left = sum(int(v) for v in (IM.get("left_out") or {}).values())
         st.metric("Readings", f"{len(df0):,}", border=True, delta_color="off", delta_arrow="off",
-                  delta=(f"{int(IM['left_out']):,} below {float(IM['min_yield']):g} bu/ac left out at import"
-                         if IM.get("left_out") else None),
-                  help=(f"As SMS imports a harvest: {int(IM['n_all']):,} readings in the data, "
-                        f"{int(IM['left_out']):,} with no dry yield or one below {float(IM['min_yield']):g} bu/ac "
-                        "left out (the SMS import minimum, step 1). The extracted points with every reading stay "
-                        "downloadable below." if IM.get("left_out") else
-                        (f"Every reading has a dry yield of at least {float(IM['min_yield']):g} bu/ac: nothing left "
-                         "out at import." if IM else None)))
+                  delta=f"{n_left:,} left out at import" if n_left else None,
+                  help=(f"Imported as SMS: {int(IM.get('n_all') or 0):,} readings in the data"
+                        + ("; left out: " + ", ".join(f"{k} {int(v):,}" for k, v in IM["left_out"].items())
+                           if n_left else "; none left out")
+                        + (f"; recomputed: {', '.join(IM['changed'])}" if IM.get("changed") else "")
+                        + f". Settings: {IM.get('settings')}."
+                        + (" " + " ".join(IM["notes"]) if IM.get("notes") else "")
+                        + (" The extracted points with every reading stay downloadable below." if n_left else "")
+                        if IM else "Not imported as SMS: the data as it is (step 1)."))
         if not D.get("yield", True) and OPX["rates"]:
             r0 = OPX["rates"][0]
             rv = pd.to_numeric(df0[r0], errors="coerce")
@@ -1625,6 +1911,7 @@ with st.container(border=True, key="oced_step_2"):
 # ------------------------------------------------------------------------------------------------ 3 SMS 3-sigma
 with st.container(border=True, key="oced_step_3"):
     IS_Y = bool(D.get("yield", True))
+    seam_box = None
     D0 = sms.DEFAULTS
     if IS_Y:
         brand.step_header(3, "Cleaning: SMS 3-sigma", "The sequence of Ag Leader SMS Advanced, with the field boundary "
@@ -1662,6 +1949,50 @@ with st.container(border=True, key="oced_step_3"):
                 "min_yield": float(min_yield), "clip": bool(clip), "swath": bool(swath), "speed": bool(speed),
                 "moisture": bool(moist), "yield": bool(yld)}
         ss.smsset = dict(sset)
+        # ---- several combines: the combine factor, switched on by the user, beside the passes side by side
+        TK = key_of(ss.active)
+        MCH, mbasis = combines_of(df0)
+        CF0 = combine_settings(ss.active)
+        with st.container(key=f"field_box_m_{TK}"):
+            st.markdown(f"**Several combines: the combine factor** · `{ss.active}`")
+            c_l, c_r = st.columns([1, 1.15], gap="medium")
+            with c_l:
+                cf_on = st.toggle("Apply the combine factor", value=CF0["on"] and len(MCH) >= 2, key=f"cf_on_{TK}",
+                                  disabled=len(MCH) < 2,
+                                  help="Off by default, also with several combines: you decide, from the differences "
+                                       "of the passes side by side (at the right). It runs after the 3-sigma steps on "
+                                       "the kept readings and applies a factor to a combine only where the passes side "
+                                       "by side prove it (Yld_Harm = the cleaned yield x the factor).")
+                cf_m = st.segmented_control("How to compute the factor", CF_METHODS, default=CF0["method"],
+                                            required=True, key=f"cf_m_{TK}", format_func=CF_LABEL.get,
+                                            disabled=not cf_on) or "auto"
+                st.caption(CF_HELP[cf_m])
+                names = [r["combine"] for r in MCH]
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    refs = ["auto"] + names
+                    cf_ref = st.selectbox("Reference combine", refs,
+                                          index=refs.index(CF0["reference"]) if CF0["reference"] in refs else 0,
+                                          key=f"cf_ref_{TK}", disabled=not cf_on or len(names) < 2,
+                                          format_func=lambda m: "auto (the most kept readings)" if m == "auto" else m)
+                    cf_max = st.number_input("Max factor (%)", 1.0, 50.0, CF0["max_pct"], 1.0, key=f"cf_max_{TK}",
+                                             disabled=not cf_on,
+                                             help="A proven difference larger than this is reported but not applied, "
+                                                  "unless the grower's weight confirms it.")
+                cf_tc = st.toggle("The grower's weight may confirm a factor above the max", value=CF0["ticket_confirms"],
+                                  key=f"cf_tc_{TK}", disabled=not cf_on,
+                                  help="Applied when the monitor total with the factor closes with the grower's weight "
+                                       "(within 1 %) and without it does not (more than 3 %).")
+                if MCH:
+                    st.dataframe(pd.DataFrame(MCH), hide_index=True,
+                                 column_config={"readings": st.column_config.NumberColumn(format="%d"),
+                                                "mean dry yield (bu/ac)": st.column_config.NumberColumn(format="%.2f")})
+                    st.caption(f"{len(MCH)} combines, from {mbasis}.")
+                else:
+                    st.caption(f"One combine in this file ({mbasis}): nothing to harmonise.")
+            with c_r:
+                seam_box = st.container()        # filled after the cleaning of this run (below)
+        ss.cfset[ss.active] = {"on": bool(cf_on) and len(MCH) >= 2, "method": cf_m, "reference": cf_ref,
+                               "max_pct": float(cf_max), "ticket_confirms": bool(cf_tc)}
     else:
         brand.step_header(3, "Cleaning: 3-sigma", "The SMS 3-sigma rule on the attributes you choose, with the field "
                                                   "boundary")
@@ -1853,6 +2184,9 @@ with st.container(border=True, key="oced_step_3"):
                 st.exception(e)
     if todo and any(t in ss.cleaned for t in todo):
         save_current(quiet=True)
+    if seam_box is not None:
+        with seam_box:
+            seams_panel(ss.cleaned.get(ss.active))
     C = ss.cleaned.get(ss.active)
     if C and os.path.exists(C["shp"]):
         R = C["R"]
@@ -1882,7 +2216,9 @@ with st.container(border=True, key="oced_step_3"):
                 st.metric("Monitor vs grower", f"{CL['diff_pct']:+.2f} %", border=True,
                           help="The monitor's total against the grower's weight on the same basis: + = the monitor "
                                f"read more than the grower weighed (L = grower / monitor = {L['factor']:.4f}).")
-        tab_names = ["Steps", "Limits", "Clean map", "Removed points"] + (["Grower's data"] if L else [])
+        RM = R.get("machines") if not A3 else None
+        tab_names = (["Steps", "Limits", "Clean map", "Removed points"] + (["Grower's data"] if L else [])
+                     + (["Combines"] if RM else []))
         tabs_ = st.tabs(tab_names)
         t_steps, t_lim, t_clean, t_rem = tabs_[:4]
         with t_steps:
@@ -1898,6 +2234,23 @@ with st.container(border=True, key="oced_step_3"):
                                                      "removed": p["removed"], "remaining": p["remaining"]}
                                                     for p in pre]), steps_df], ignore_index=True)
             st.dataframe(steps_df, hide_index=True)
+            eff_ = step_effects(ss.active, C)
+            if eff_:
+                st.markdown("**How each step moved the dry yield** (bu/ac)")
+                st.dataframe(pd.DataFrame([{"step": e["label"], "readings removed": e["removed"],
+                                            "mean after": e["mean"], "change of the mean": e["d_mean"],
+                                            "average after (SMS)": e["avg"], "change of the average": e["d_avg"]}
+                                           for e in eff_]), hide_index=True,
+                             column_config={"readings removed": st.column_config.NumberColumn(format="%d"),
+                                            "mean after": st.column_config.NumberColumn(format="%.2f"),
+                                            "change of the mean": st.column_config.NumberColumn(format="%+.2f"),
+                                            "average after (SMS)": st.column_config.NumberColumn(format="%.2f"),
+                                            "change of the average": st.column_config.NumberColumn(format="%+.2f")})
+                st.caption("Mean = the plain mean of the readings still there (SMS Edit Legend); average = the SMS "
+                           "summary's, the total divided by the area. Each change is that step alone; together "
+                           "they make the cleaning's change from the raw data to the clean file. S2 removes the "
+                           "fully overlapped strips and narrows the others, so their bu/ac rise and their area "
+                           "falls.")
             if C.get("boundary") and not A3:
                 st.caption("S1 runs first here: the readings outside the boundary are set aside before S0, so the "
                            "monitor total that the grower's weight is compared with is the field's. SMS clips after "
@@ -1960,7 +2313,7 @@ with st.container(border=True, key="oced_step_3"):
                            "step that removed them." + (" The readings outside the boundary (S1) are not drawn; the "
                                                         "cyan line is the boundary." if C.get("boundary") else ""))
         if L:
-            with tabs_[4]:
+            with tabs_[tab_names.index("Grower's data")]:
                 result_cards(ss.active, C, path_only=True)
                 area = float(L.get("export_area_ac") or 0)
                 mon, gro = float(L["export_total_bu"]), float(L["scale_ticket_bu"])
@@ -2008,6 +2361,38 @@ with st.container(border=True, key="oced_step_3"):
                 st.caption(" ".join(facts))
                 for w in [w for w in R.get("warnings") or [] if "ticket" in w.lower() or "level" in w.lower()]:
                     st.warning(w, icon=":material/warning:")
+
+        if RM:
+            with tabs_[tab_names.index("Combines")]:
+                fa = RM.get("factor_applied") or {}
+                means = RM.get("means") or {}
+                light = RM.get("light") or {}
+                used = RM.get("method_used") or {}
+                lay = RM.get("layout_class") or {}
+                rows_c = []
+                for m in sorted(set(fa) | set(means)):
+                    mm = means.get(m) or {}
+                    lc = lay.get(m) or {}
+                    rows_c.append({"combine": m, "readings": mm.get("n"), "kept": mm.get("n_kept"),
+                                   "mean cleaned (bu/ac)": mm.get("cleaned_map_mean"), "factor": fa.get(m),
+                                   "method": used.get(m) or ("reference" if m == RM.get("reference") else ""),
+                                   "layout": (lc.get("local") or "") if isinstance(lc, dict) else str(lc),
+                                   "light": {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(light.get(m), ""),
+                                   "decision": (RM.get("decision") or {}).get(m, "")})
+                st.dataframe(pd.DataFrame(rows_c), hide_index=True,
+                             column_config={"readings": st.column_config.NumberColumn(format="%d"),
+                                            "kept": st.column_config.NumberColumn(format="%d"),
+                                            "mean cleaned (bu/ac)": st.column_config.NumberColumn(format="%.2f"),
+                                            "factor": st.column_config.NumberColumn(format="%.4f"),
+                                            "decision": st.column_config.TextColumn(width="large")})
+                st.caption("The combine factor of this cleaning: " + ("switched on" if ((C.get("config") or {}).get(
+                    "combines") or {}).get("on") else "switched off (the factor of every combine is 1)") + ". Combines "
+                           f"from {RM.get('basis') or 'the data'}; reference {RM.get('reference') or '-'}. Layout = how "
+                           "the combine shared the field with the reference (interleaved, mixed, blocks); light = how "
+                           "far the method can be trusted on that layout.")
+                SMx = RM.get("seams") or {}
+                if SMx.get("text"):
+                    st.caption(SMx["text"])
 
 # ------------------------------------------------------------------------------------------------ 4 clean shapefiles
 with st.container(border=True, key="oced_step_4"):

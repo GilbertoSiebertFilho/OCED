@@ -29,6 +29,11 @@ to the newest version of this repository (branch `main`), keeping a backup and r
    - *Point exports:* yield points from SMS or Operations Center (shapefile, or `.kml` / `.kmz`), the **as-applied
      points of planters and sprayers** (shapefile), or any other point shapefile of a machine. What a file is
      (harvest, seeding, application, other points) is read from its columns.
+   - *Import as SMS:* the data comes in as SMS Advanced imports a harvest (its Processing Settings, editable in
+     step 1): the product's weight to volume and dry moisture (wheat 60 lb/bu and 13.5 %, barley 48 lb/bu and
+     14.5 %, else the crop table), expand dry moisture off (one-sided), manual swath and moisture off, the readings
+     below 5 bu/ac or above the product's maximum (wheat 300, barley 200 bu/ac) left out, start / stop delay and
+     flow shift 0 s (`engine/sms_import.py`).
 2. **Map and attributes.** One button per attribute colours the map over the satellite image (the strips the header
    swept, or the points), with the legend, the statistics, the histogram, the table of every attribute and the first
    records. The field boundary, once given, is drawn on the map.
@@ -36,7 +41,11 @@ to the newest version of this repository (branch `main`), keeping a backup and r
    - *Harvest:* the SMS 3-sigma sequence as SMS Advanced runs it: S0 import check (no position, no yield, dry yield
      below 5 bu/ac), **S1 Clip To Field Boundary**, S2 Optimize Swath Widths (overlapping strips removed or narrowed,
      per-area values scaled), S3 speed, S4 moisture and S5 dry yield within mean ± 3 SD of the points still alive,
-     another yield pass while the SD falls by more than 25 %. No combine factor between harvesters.
+     another yield pass while the SD falls by more than 25 %. **Several combines:** the combine factor of OCCD
+     (paired cells, track × track, point × point or machine × machine, chosen from how the combines shared the
+     field) is off until the user switches it on; beside the switch, the median difference between neighbouring
+     passes of different combines and of the same combine (from the last cleaning), to decide. The cards above the
+     clean map and the Steps tab show how each step moved the mean and the SMS Average.
      **The grower's data** of the field (total weight with its unit — lb, kg, bu or t — or the yield per acre in
      bu/ac with the acres it is over, by default the boundary's area; the basis, the grain moisture on the ticket, the
      bushel weight) **validate** the yields: the monitor's total against the grower's on the same
@@ -74,6 +83,7 @@ data, the cleaning (kept, removed %, L) and the outputs; a file name shows that 
 | `engine/clean/aoi.py` | the field boundary: read any polygon file, choose the field, inside / outside |
 | `engine/clean/sessions.py`, `machines.py`, `references.py` | moisture basis and harvest sessions, machines, the literature cited by the report |
 | `engine/clean/applied3s.py` | the 3-sigma cleaning of planter, sprayer and other point files |
+| `engine/sms_import.py` | import as SMS: the Processing Settings of SMS's Grain Harvest import, per product |
 | `engine/works.py` | saved works: `oced_work.json` per work folder (save, open, list; older folders rebuilt from their files) |
 | `engine/report/` | the PDF reports (`clean_report.py` for harvest files, `applied_report.py` for the others) |
 | `engine/run.py` | the API from the files to the clean shapefile (`open_input`, `list_units`, `decode`, `clean`) and a command line (`python -m engine.run --help`) |

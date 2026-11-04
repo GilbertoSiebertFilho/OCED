@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import glob
+import json
 import os
 import shutil
 import sys
@@ -103,7 +104,8 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     low = int((~np.isfinite(y) | (y < 5)).sum())
     assert low > 0
     rd = next(m for m in at.metric if m.label == "Readings")
-    assert rd.value == f"{field['n'] - low:,}" and f"{low:,} below 5 bu/ac left out at import" in rd.delta
+    assert rd.value == f"{field['n'] - low:,}" and rd.delta == f"{low:,} left out at import"
+    assert "below the min. yield volume" in rd.help and "weight to volume" in rd.help
     # step 2: the attribute buttons, one per attribute, dry yield first
     pills = _by_key(at.button_group, "attr_raw_")
     assert pills.value == "Yld_Vol_Dr"
@@ -130,6 +132,9 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     labels = [m.label for m in at.metric]
     assert "Mean dry yield, cleaned" in labels and any(x.startswith("Grower's yield") for x in labels)
     assert "Average dry yield, cleaned (SMS)" in labels and "Average dry yield (SMS)" in labels
+    # the combine factor: off by default; with one combine it cannot be switched on
+    cf = _by_key(at.toggle, "cf_on_")
+    assert cf.value is False and cf.disabled
     stats = [d.value for d in at.dataframe if "statistic" in d.value.columns]
     assert stats and any("average (SMS, area-weighted)" in list(t["statistic"]) for t in stats)
     final = next(m for m in at.metric if m.label.startswith("Final yield"))
@@ -137,7 +142,7 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
         assert final.label.startswith("Final yield, mean (Yld_") and "by the grower's data" in final.delta
         assert "Final yield, average (SMS)" in labels
     else:
-        assert final.label == "Final yield (clean file)" and final.delta == "unchanged: validate only"
+        assert final.label == "Final yield (clean file)" and final.delta == "grower's data: validate only"
     clean = glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_clean.shp"))
     assert len(clean) == 1
     cols = list(pyogrio.read_info(clean[0])["fields"])
@@ -323,3 +328,64 @@ def test_app_save_and_open_a_work(field, tmp_path, monkeypatch):
     assert any("Synthetic_boundary.geojson" in s.value for s in at.success)
     assert _by_key(at.number_input, "gw_w_").value == 110_000.0
     assert not any("settings, the boundary or the grower's data changed" in w.value for w in at.warning)
+
+
+def test_sms_import_settings(field, tmp_path):
+    """engine/sms_import.py: SMS's defaults per product, an SMS-like file passes untouched, the settings act."""
+    from engine import sms_import as si
+    R = si.resolve(si.settings(), "Barley - Fall")
+    assert (R["product"], R["test_weight_lb_bu"], R["dry_moisture_pct"], R["max_yield"]) == ("barley", 48.0, 14.5, 200.0)
+    W = si.resolve(si.settings(), "crop 48 (wheat?)")
+    assert (W["test_weight_lb_bu"], W["dry_moisture_pct"], W["max_yield"], W["min_yield"]) == (60.0, 13.5, 300.0, 5.0)
+    assert not W["expand_dry_moisture"] and not W["use_manual_swath"] and W["manual_swath_ft"] == 15.0
+    assert W["manual_moisture_pct"] == 13.5 and W["flow_shift_s"] == 0.0
+    with pytest.raises(ValueError):
+        si.settings({"max_yield": -1})
+    d = pyogrio.read_dataframe(field["shp"], read_geometry=False)
+    y = d["Yld_Vol_Dr"].astype(float)
+    low = int((~np.isfinite(y) | (y < 5)).sum())
+    tw = float(np.nanmedian(d["Yld_Mass_W"].astype(float) / d["Yld_Vol_We"].astype(float)))
+    # the file's own weight and moisture: nothing recomputed, only the readings below the minimum left out
+    same = si.resolve(si.settings({"test_weight_lb_bu": tw, "dry_moisture_pct": 15.5, "max_yield": 1e4}), None)
+    rep = si.apply(field["shp"], str(tmp_path / "a_imported.shp"), same)
+    assert rep["n_out"] == field["n"] - low and rep["left_out"].get("below the min. yield volume", 0) +         rep["left_out"].get("no yield", 0) == low
+    # a manual swath of twice the width halves the per-area values, the grain mass kept
+    w0 = float(np.nanmedian(d["Swth_Wdth_"].astype(float)))
+    two = si.resolve(si.settings({"test_weight_lb_bu": tw, "dry_moisture_pct": 15.5, "use_manual_swath": True,
+                                  "manual_swath_ft": 2 * w0, "min_yield": None, "max_yield": 1e4}), None)
+    rep2 = si.apply(field["shp"], str(tmp_path / "b_imported.shp"), two)
+    e = pyogrio.read_dataframe(rep2["path"], read_geometry=False)
+    assert "Swth_Wdth_" in rep2["changed"] and np.allclose(e["Swth_Wdth_"].astype(float), 2 * w0)
+    ok = (d["Swth_Wdth_"].astype(float) == w0).to_numpy()
+    assert np.allclose(e["Yld_Mass_W"].astype(float).to_numpy()[ok], d["Yld_Mass_W"].astype(float).to_numpy()[ok] / 2,
+                       rtol=1e-3, atol=0.01)
+
+
+def test_app_two_combines_factor(field, tmp_path, monkeypatch):
+    """Two combines: the factor is off until switched on; the passes side by side appear after a cleaning; with the
+    factor on the cleaning runs it and the Combines tab shows the decision of every combine."""
+    import geopandas as gpd
+    from streamlit.testing.v1 import AppTest
+    g = gpd.read_file(field["shp"])
+    g["Machine"] = np.where((np.arange(len(g)) // 60) % 2 == 0, "COMBINE-A", "COMBINE-B")
+    two = str(tmp_path / "two_combines.shp")
+    g.to_file(two)
+    monkeypatch.setenv("OCED_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_file(APP, default_timeout=900)
+    at.run()
+    at.text_input(key="path_in").input(two)
+    at.button(key="open_btn").click().run()
+    assert not at.exception, at.exception
+    cf = _by_key(at.toggle, "cf_on_")
+    assert cf.value is False and not cf.disabled                 # off by default, the user decides
+    at.button(key="clean_one").click().run()
+    assert not at.exception, at.exception
+    labels = [m.label for m in at.metric]
+    assert "Different combines, side by side" in labels and "Same combine, its own passes side by side" in labels
+    _by_key(at.toggle, "cf_on_").set_value(True).run()
+    at.button(key="clean_one").click().run()
+    assert not at.exception, at.exception
+    assert "Combines" in [t.label for t in at.tabs]
+    rec = json.load(open(glob.glob(str(tmp_path / "ws" / "*" / "clean" / "*" / "*_cleaning.json"))[0], encoding="utf-8"))
+    assert rec["settings"]["machines"]["harmonise"] is True and set(rec["machines"]["factor_applied"]) == {
+        "COMBINE-A", "COMBINE-B"}
