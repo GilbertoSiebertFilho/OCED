@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 
+import numpy as np
 import pyogrio
 import pytest
 
@@ -97,6 +98,12 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     at.text_input(key="path_in").input(field["shp"])
     at.button(key="open_btn").click().run()
     assert not at.exception, at.exception
+    # import as SMS: the readings with no dry yield or one below 5 bu/ac are left out as the data comes in
+    y = pyogrio.read_dataframe(field["shp"], read_geometry=False)["Yld_Vol_Dr"].astype(float)
+    low = int((~np.isfinite(y) | (y < 5)).sum())
+    assert low > 0
+    rd = next(m for m in at.metric if m.label == "Readings")
+    assert rd.value == f"{field['n'] - low:,}" and f"{low:,} below 5 bu/ac left out at import" in rd.delta
     # step 2: the attribute buttons, one per attribute, dry yield first
     pills = _by_key(at.button_group, "attr_raw_")
     assert pills.value == "Yld_Vol_Dr"

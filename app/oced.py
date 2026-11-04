@@ -167,6 +167,12 @@ st.html(f"""<style>
 .stApp [class*="st-key-field_box_"] {{ background: #FFFFFF; border: 1px solid #C9D8EC; border-left: 5px solid {brand.NAVY};
   border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
 .oced-verdict {{ border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.95rem; border: 1px solid #C9D8EC; }}
+.stApp .st-key-res_cards [data-testid="stMetricValue"] {{ font-size: 1.65rem; }}
+.stApp .st-key-res_cards [data-testid="stMetricLabel"] p,
+.stApp .st-key-res_cards [data-testid="stMetricDelta"] div,
+.stApp .st-key-res_cards [data-testid="stMetricDelta"] p {{ white-space: normal; overflow: visible;
+  text-overflow: clip; }}
+.stApp .st-key-res_cards [data-testid="stMetricDelta"] {{ height: auto; }}
 .oced-path {{ border-radius: 10px; padding: 0.55rem 0.9rem; font-size: 0.95rem; color: #1F2937; background: #F3F7FC;
   border: 1px solid #C9D8EC; border-left: 5px solid {brand.LIGHT_BLUE}; margin: 0.2rem 0 0.6rem; }}
 .oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
@@ -177,7 +183,7 @@ st.html(f"""<style>
 ss = st.session_state
 for k, v in {"workdir": None, "cands": None, "open_error": None, "open_exc": None, "open_request": None,
              "open_log": [], "units": {}, "datasets": {}, "cleaned": {}, "active": None, "boundary": {},
-             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None,
+             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None, "import_min": 5.0,
              "work_saved_at": None, "work_msg": None}.items():
     ss.setdefault(k, v)
 
@@ -734,6 +740,32 @@ def dbf_drop_fields(dbf: str, names) -> list:
     return gone
 
 
+def import_as_sms(shp: str, tag: str, folder: str):
+    """SMS leaves out, when it imports a harvest, the readings with no dry yield or a dry yield below its import
+    minimum (5 bu/ac): the same here, with ss.import_min. Writes <folder>/<tag>_imported.shp with the kept records byte
+    for byte (every attribute as it was) and returns (path, n kept, n left out); the file itself when the minimum is 0,
+    nothing is below it, or the file has no dry yield column or no .prj."""
+    m = float(ss.get("import_min") or 0)
+    base = os.path.splitext(shp)[0]
+    if m <= 0 or not (os.path.exists(base + ".dbf") and os.path.exists(base + ".prj") and os.path.exists(base + ".shx")):
+        return shp, None, 0
+    import pyogrio
+    ycol = yc.detect_columns(list(pyogrio.read_info(shp)["fields"])).get("yield")
+    if not ycol:
+        return shp, None, 0
+    y = pd.to_numeric(pyogrio.read_dataframe(shp, columns=[ycol], read_geometry=False)[ycol],
+                      errors="coerce").to_numpy(float)
+    keep = np.isfinite(y) & (y >= m)
+    drop = int((~keep).sum())
+    if drop == 0:
+        return shp, int(len(y)), 0
+    os.makedirs(folder, exist_ok=True)
+    out = os.path.join(folder, f"{tag}_imported.shp")
+    yc.write_points(out, shp, None, np.flatnonzero(keep), [],
+                    byte_copy=(yc._read_shp(shp), yc._read_dbf(base + ".dbf")))
+    return out, int(keep.sum()), drop
+
+
 def extract(cand, chosen_units, opts, kw, log):
     """The chosen units as one shapefile per field, season and crop (engine.run.decode on each group)."""
     groups = {}
@@ -749,11 +781,17 @@ def extract(cand, chosen_units, opts, kw, log):
         d = er.decode(cand, [u.id for u in us], opts, ss.workdir, log=log, tag=tag, **kw)
         d.pop("df", None)
         t = d["report"].get("totals") or {}
-        made[d["tag"]] = {"tag": d["tag"], "shp": d["shp"], "zip": d["zip"], "n": d["n"], "kind": "raw",
-                          "op": "harvest", "yield": True,
+        shp_i, n_i, drop = import_as_sms(d["shp"], d["tag"], os.path.join(ss.workdir, "decoded"))
+        if drop:
+            log(f"import as SMS: {drop:,} of {d['n']:,} readings with no dry yield or one below "
+                f"{float(ss.import_min):g} bu/ac left out ({n_i:,} imported)")
+        made[d["tag"]] = {"tag": d["tag"], "shp": shp_i, "zip": d["zip"], "n": n_i if n_i is not None else d["n"],
+                          "kind": "raw", "op": "harvest", "yield": True,
                           "label": f"{field or '(no field)'} · {year or 'no season'} · {crop or 'crop?'}",
                           "source": d["source"], "report": d["report"], "area_ac": t.get("area_ac"),
-                          "units": [u.label for u in us]}
+                          "units": [u.label for u in us],
+                          "import_min": {"min_yield": float(ss.get("import_min") or 0), "left_out": drop,
+                                         "n_all": d["n"], "all_readings": d["shp"]}}
     return made
 
 
@@ -1178,10 +1216,23 @@ def _d(x, ref, what):
     return None if (x is None or ref is None) else f"{x - ref:+.2f} bu/ac {what}"
 
 
+def card_row(cards: list, key: str):
+    """Cards side by side in one row, all the same width and height (st.columns + height='stretch'), the delta text
+    under the value wrapping inside its card."""
+    cards = [c for c in cards if c]
+    if not cards:
+        return
+    with st.container(key=key):
+        for col, c in zip(st.columns(len(cards), gap="small"), cards):
+            with col:
+                st.metric(c["label"], c["value"], delta=c.get("delta"), delta_color="off", delta_arrow="off",
+                          help=c.get("help"), border=True, height="stretch")
+
+
 def result_cards(tag: str, C: dict, path_only: bool = False):
-    """Above the clean map: the key numbers of the cleaning (cards, as in step 2) and what made the final yield: the
-    raw readings, what the cleaning changed, then what the grower's data changed (applied with 'adjust', only
-    compared with 'validate'). Each yield as the plain mean of the readings (SMS Edit Legend) and as the Average of
+    """Above the clean map: the key numbers of the cleaning (one row of cards, as in step 2) and what made the final
+    yield: the raw readings, what the cleaning changed, then what the grower's data changed (applied with 'adjust',
+    only compared with 'validate'). Each yield as the plain mean of the readings (SMS Edit Legend) and as the Average of
     the SMS summary (total / area, area-weighted)."""
     R = C["R"]
     L = R.get("level") or {}
@@ -1192,6 +1243,11 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
     raw = read_points(D["shp"], mtime(D["shp"]))
     a_ = area_of(cdf)
     area = float(a_[np.isfinite(a_)].sum()) or None if a_ is not None else None
+    kept = {"label": "Readings kept", "value": f"{R['n_kept']:,}",
+            "help": f"Of the {R['n_in']:,} readings" + (" inside the boundary" if C.get("boundary") else "") + "."}
+    area_c = ({"label": "Area of the kept readings", "value": f"{area:,.2f} ac",
+               "help": "Distance x width of the kept readings" + ("" if A3 else ", after S2 narrowed the overlapping "
+                                                                       "strips") + "."} if area else None)
     if A3:
         col = R.get("main")
         unit = (R.get("units") or {}).get(col) if isinstance(R.get("units"), dict) else None
@@ -1200,20 +1256,16 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
         if path_only or cl_m is None:
             return
         raw_a, cl_a = (avg_of(raw, col), avg_of(cdf, col)) if per_area(unit) else (None, None)
-        with st.container(horizontal=True):
-            st.metric("Readings kept", f"{R['n_kept']:,}", border=True, help=f"Of the {R['n_in']:,} readings cleaned.")
-            if area:
-                st.metric("Area of the kept readings", f"{area:,.2f} ac", border=True,
-                          help="Distance x width of the kept readings.")
-            st.metric(f"Mean {col}, cleaned", f"{cl_m:,.2f} {unit}".strip(), border=True, delta_color="off",
-                      delta=(f"{cl_m - raw_m:+.2f} {unit} vs the raw {raw_m:,.2f}".replace("  ", " ")
-                             if raw_m is not None else None), delta_arrow="off",
-                      help="The plain mean of the kept readings (as SMS Edit Legend).")
-            if cl_a is not None:
-                st.metric(f"Average {col}, cleaned (SMS)", f"{cl_a:,.2f} {unit}".strip(), border=True, delta_color="off",
-                          delta=(f"{cl_a - raw_a:+.2f} {unit} vs the raw {raw_a:,.2f}".replace("  ", " ")
-                                 if raw_a is not None else None), delta_arrow="off",
-                          help="As the SMS summary: the area-weighted average, the total divided by the area.")
+        card_row([kept, area_c,
+                  {"label": f"Mean {col}, cleaned", "value": f"{cl_m:,.2f} {unit}".strip(),
+                   "delta": (f"{cl_m - raw_m:+.2f} {unit} vs the raw {raw_m:,.2f}".replace("  ", " ")
+                             if raw_m is not None else None),
+                   "help": "The plain mean of the kept readings (as SMS Edit Legend)."},
+                  {"label": f"Average {col}, cleaned (SMS)", "value": f"{cl_a:,.2f} {unit}".strip(),
+                   "delta": (f"{cl_a - raw_a:+.2f} {unit} vs the raw {raw_a:,.2f}".replace("  ", " ")
+                             if raw_a is not None else None),
+                   "help": "As the SMS summary: the area-weighted average, the total divided by the area."}
+                  if cl_a is not None else None], key="res_cards")
         return
     cc = yc.detect_columns([c for c in cdf.columns if c not in ("lon", "lat")])
     ycol = (R.get("columns") or {}).get("yield") or cc.get("yield")
@@ -1238,52 +1290,46 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
             mon_ac = float(L["export_total_bu"]) / area_y
     by_g = f"by the grower's data (x L {Lf:.4f})" if (L and adjusted) else None
     if not path_only:
-        with st.container(horizontal=True):
-            st.metric("Readings kept", f"{R['n_kept']:,}", border=True,
-                      help=f"Of the {R['n_in']:,} readings" + (" inside the boundary" if C.get("boundary") else "") + ".")
-            if area:
-                st.metric("Area of the kept readings", f"{area:,.2f} ac", border=True,
-                          help="Distance x width of the kept readings, after S2 narrowed the overlapping strips.")
-            if gro_ac is not None:
-                ms = (R.get("moisture") or {}).get("standard_pct")
-                at_std = L.get("ticket_bu_at_standard") is not None and ms is not None
-                given = (f"{er.ticket_label({'value': L.get('ticket_value'), 'unit': L.get('ticket_unit')})} as given"
-                         + (f" at {float(L['ticket_moisture_pct']):g} % moisture" if L.get("ticket_moisture_pct") is not None
-                            else ""))
-                st.metric("Grower's yield" + (f", at {float(ms):g} %" if at_std else ""), f"{gro_ac:,.2f} bu/ac",
-                          border=True, delta_color="off", delta_arrow="off",
-                          delta=f"monitor {mon_ac:,.2f} bu/ac ({CL.get('diff_pct', 0):+.2f} %)",
-                          help=f"{given}" + (f", brought to the standard moisture {float(ms):g} %" if at_std else "")
-                               + f": the grower's total over {area_y:,.2f} ac, against the monitor's total over the same "
-                               "acres on the same basis (the Grower's data tab has the details).")
-        with st.container(horizontal=True):
-            st.metric("Mean dry yield, cleaned", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off", delta_arrow="off",
-                      delta=_d(cl_m, raw_m, f"by the cleaning (raw {raw_m:,.2f})" if raw_m is not None else ""),
-                      help=f"The plain mean of {ycol} over the kept readings (as SMS Edit Legend): the monitor's yield "
-                           "after the clip and the 3-sigma steps. Raw = every reading of the file (step 2).")
-            if cl_a is not None:
-                st.metric("Average dry yield, cleaned (SMS)", f"{cl_a:,.2f} bu/ac", border=True, delta_color="off",
-                          delta_arrow="off",
-                          delta=_d(cl_a, raw_a, f"by the cleaning (raw {raw_a:,.2f})" if raw_a is not None else ""),
-                          help=f"As the SMS summary: the Average of {ycol}, area-weighted (each reading's yield x its "
-                               "area, added up, divided by the area) = the total divided by the area.")
-            if L and adjusted:
-                st.metric(f"Final yield, mean ({fcol})", f"{fin_m:,.2f} bu/ac", border=True, delta_color="off",
-                          delta_arrow="off", delta=_d(fin_m, cl_m, by_g),
-                          help=f"The column to map: the cleaned yield x L = grower / monitor. The monitor's {ycol} "
-                               "stays in the file as logged.")
-                if fin_a is not None:
-                    st.metric(f"Final yield, average (SMS)", f"{fin_a:,.2f} bu/ac", border=True, delta_color="off",
-                              delta_arrow="off", delta=_d(fin_a, cl_a, by_g),
-                              help=f"The SMS Average of {fcol} (area-weighted, the total divided by the area).")
-            elif L:
-                st.metric("Final yield (clean file)", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off",
-                          delta_arrow="off", delta="unchanged: validate only",
-                          help="Validate only: the grower's data is compared, not applied; the clean file keeps the "
-                               f"monitor's yields. Adjusting would multiply them by L = {Lf:.4f}.")
+        cards = [kept, area_c]
+        cards.append({"label": "Mean dry yield, cleaned", "value": f"{cl_m:,.2f} bu/ac",
+                      "delta": _d(cl_m, raw_m, f"by the cleaning (raw {raw_m:,.2f})" if raw_m is not None else ""),
+                      "help": f"The plain mean of {ycol} over the kept readings (as SMS Edit Legend): the monitor's "
+                              "yield after the clip and the 3-sigma steps. Raw = every reading of the file (step 2)."})
+        if cl_a is not None:
+            cards.append({"label": "Average dry yield, cleaned (SMS)", "value": f"{cl_a:,.2f} bu/ac",
+                          "delta": _d(cl_a, raw_a, f"by the cleaning (raw {raw_a:,.2f})" if raw_a is not None else ""),
+                          "help": f"As the SMS summary: the Average of {ycol}, area-weighted (each reading's yield x "
+                                  "its area, added up, divided by the area) = the total divided by the area."})
+        if gro_ac is not None:
+            ms = (R.get("moisture") or {}).get("standard_pct")
+            at_std = L.get("ticket_bu_at_standard") is not None and ms is not None
+            given = (f"{er.ticket_label({'value': L.get('ticket_value'), 'unit': L.get('ticket_unit')})} as given"
+                     + (f" at {float(L['ticket_moisture_pct']):g} % moisture" if L.get("ticket_moisture_pct") is not None
+                        else ""))
+            cards.append({"label": "Grower's yield" + (f", at {float(ms):g} %" if at_std else ""),
+                          "value": f"{gro_ac:,.2f} bu/ac",
+                          "delta": f"monitor {mon_ac:,.2f} bu/ac ({CL.get('diff_pct', 0):+.2f} %)",
+                          "help": f"{given}" + (f", brought to the standard moisture {float(ms):g} %" if at_std else "")
+                                  + f": the grower's total over {area_y:,.2f} ac, against the monitor's total over the "
+                                  "same acres on the same basis (the Grower's data tab has the details)."})
+        if L and adjusted:
+            cards.append({"label": f"Final yield, mean ({fcol})", "value": f"{fin_m:,.2f} bu/ac",
+                          "delta": _d(fin_m, cl_m, by_g),
+                          "help": f"The column to map: the cleaned yield x L = grower / monitor. The monitor's {ycol} "
+                                  "stays in the file as logged."})
+            if fin_a is not None:
+                cards.append({"label": "Final yield, average (SMS)", "value": f"{fin_a:,.2f} bu/ac",
+                              "delta": _d(fin_a, cl_a, by_g),
+                              "help": f"The SMS Average of {fcol} (area-weighted, the total divided by the area)."})
+        elif L:
+            cards.append({"label": "Final yield (clean file)", "value": f"{cl_m:,.2f} bu/ac",
+                          "delta": "unchanged: validate only",
+                          "help": "Validate only: the grower's data is compared, not applied; the clean file keeps the "
+                                  f"monitor's yields. Adjusting would multiply them by L = {Lf:.4f}."})
+        card_row(cards, key="res_cards")
 
     def path(r, c, f):
-        s_ = [f"raw readings <b>{r:,.2f}</b>" if r is not None else "raw readings",
+        s_ = [f"raw data <b>{r:,.2f}</b>" if r is not None else "raw data",
               f"cleaning {c - r:+.2f} &rarr; <b>{c:,.2f}</b>" if r is not None else f"cleaned <b>{c:,.2f}</b>"]
         if L and adjusted and f is not None:
             s_.append(f"grower's data &times; L {Lf:.4f} ({f - c:+.2f}) &rarr; <b>{f:,.2f} bu/ac</b>")
@@ -1364,6 +1410,14 @@ with st.container(border=True, key="oced_step_1"):
                 request_open(("path", ss.path_in))
             else:
                 st.toast("Upload files or type a path first", icon=":material/info:")
+    _im = float(ss.get("import_min") or 0)
+    with st.expander(f"Import as SMS: readings with a dry yield below {_im:g} bu/ac left out" if _im > 0 else
+                     "Import as SMS: off, every reading kept", icon=":material/filter_alt:"):
+        st.number_input("SMS import minimum, dry yield (bu/ac)", 0.0, 50.0, step=1.0, key="import_min",
+                        help="SMS leaves out, when it imports a harvest, the readings with no dry yield or a dry "
+                             "yield below this minimum (5 bu/ac). OCED does the same as the data comes in: the map, "
+                             "the statistics and the cleaning start from the data as SMS would import it. 0 = keep "
+                             "every reading. Applies to the data opened or extracted after a change.")
     if ss.open_request:
         req, ss.open_request = ss.open_request, None
         with st.spinner("Unpacking and recognising the input ..."):
@@ -1473,10 +1527,16 @@ with st.container(border=True, key="oced_step_1"):
                     er.use_candidate(cand, ss.workdir, log=ss.open_log.append)
             tag = er.candidate_tag(cand)
             if tag not in ss.datasets:
-                ss.datasets[tag] = {"tag": tag, "shp": cand["path"], "zip": None, "n": int(cand.get("n") or 0),
+                n0 = int(cand.get("n") or 0)
+                shp_i, n_i, drop = (import_as_sms(cand["path"], tag, os.path.join(ss.workdir, "imported"))
+                                    if cand.get("yield", True) else (cand["path"], None, 0))
+                ss.datasets[tag] = {"tag": tag, "shp": shp_i, "zip": None, "n": n_i if n_i is not None else n0,
                                     "kind": "export", "label": os.path.basename(cand.get("source_path") or cand["path"]),
                                     "op": cand.get("operation") or "harvest", "yield": bool(cand.get("yield", True)),
-                                    "source": None, "report": None, "area_ac": None, "units": []}
+                                    "source": None, "report": None, "area_ac": None, "units": [],
+                                    "import_min": ({"min_yield": float(ss.get("import_min") or 0), "left_out": drop,
+                                                    "n_all": n0, "all_readings": cand["path"]}
+                                                   if cand.get("yield", True) else None)}
                 ss.active = tag
             st.caption("A point export is used as it is: its attributes are the vendor's columns."
                        + ("" if cand.get("yield", True) else " Not a yield file: it is cleaned with the 3-sigma of the "
@@ -1508,7 +1568,16 @@ with st.container(border=True, key="oced_step_2"):
     with st.container(horizontal=True):
         st.metric("Operation", a3.OPERATION_LABEL.get(D.get("op") or "harvest", "Point data").split(" (")[0],
                   border=True, help=a3.OPERATION_LABEL.get(D.get("op") or "harvest"))
-        st.metric("Readings", f"{len(df0):,}", border=True)
+        IM = D.get("import_min") or {}
+        st.metric("Readings", f"{len(df0):,}", border=True, delta_color="off", delta_arrow="off",
+                  delta=(f"{int(IM['left_out']):,} below {float(IM['min_yield']):g} bu/ac left out at import"
+                         if IM.get("left_out") else None),
+                  help=(f"As SMS imports a harvest: {int(IM['n_all']):,} readings in the data, "
+                        f"{int(IM['left_out']):,} with no dry yield or one below {float(IM['min_yield']):g} bu/ac "
+                        "left out (the SMS import minimum, step 1). The extracted points with every reading stay "
+                        "downloadable below." if IM.get("left_out") else
+                        (f"Every reading has a dry yield of at least {float(IM['min_yield']):g} bu/ac: nothing left "
+                         "out at import." if IM else None)))
         if not D.get("yield", True) and OPX["rates"]:
             r0 = OPX["rates"][0]
             rv = pd.to_numeric(df0[r0], errors="coerce")
