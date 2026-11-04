@@ -167,6 +167,8 @@ st.html(f"""<style>
 .stApp [class*="st-key-field_box_"] {{ background: #FFFFFF; border: 1px solid #C9D8EC; border-left: 5px solid {brand.NAVY};
   border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
 .oced-verdict {{ border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.95rem; border: 1px solid #C9D8EC; }}
+.oced-path {{ border-radius: 10px; padding: 0.55rem 0.9rem; font-size: 0.95rem; color: #1F2937; background: #F3F7FC;
+  border: 1px solid #C9D8EC; border-left: 5px solid {brand.LIGHT_BLUE}; margin: 0.2rem 0 0.6rem; }}
 .oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
   color: #1F2937; }}
 .oced-bar {{ flex: 1; height: 14px; border-radius: 7px; border: 1px solid #C9D8EC; }}
@@ -1131,6 +1133,119 @@ def action_tree():
             st.code(ss.workdir, language=None, wrap_lines=True)
 
 
+def _mean_of(df: pd.DataFrame, col) -> float | None:
+    """The plain mean of a column's finite values (as the map statistics show it), None without values."""
+    if not col or col not in df:
+        return None
+    v = pd.to_numeric(df[col], errors="coerce").to_numpy(float)
+    v = v[np.isfinite(v)]
+    return float(v.mean()) if len(v) else None
+
+
+def result_cards(tag: str, C: dict, path_only: bool = False):
+    """Above the clean map: the key numbers of the cleaning (cards, as in step 2) and one line on what made the final
+    yield: the raw readings, what the cleaning changed, then what the grower's data changed (applied with 'adjust',
+    only compared with 'validate')."""
+    R = C["R"]
+    L = R.get("level") or {}
+    CL = L.get("closure") or {}
+    A3 = C.get("kind") == "a3"
+    D = ss.datasets[tag]
+    cdf = read_points(C["shp"], mtime(C["shp"]))
+    raw = read_points(D["shp"], mtime(D["shp"]))
+    cc = yc.detect_columns([c for c in cdf.columns if c not in ("lon", "lat")])
+    area = None
+    if cc.get("distance_ft") and cc.get("width_ft"):
+        a = (pd.to_numeric(cdf[cc["distance_ft"]], errors="coerce")
+             * pd.to_numeric(cdf[cc["width_ft"]], errors="coerce")).to_numpy(float) / 43560.0
+        area = float(a[np.isfinite(a)].sum()) or None
+    if A3:
+        col = R.get("main")
+        unit = (R.get("units") or {}).get(col) if isinstance(R.get("units"), dict) else None
+        unit = unit or (ATTR_INFO.get(col) or ("", "", ""))[1] or ""
+        raw_m, cl_m = _mean_of(raw, col), _mean_of(cdf, col)
+        if path_only or cl_m is None:
+            return
+        with st.container(horizontal=True):
+            st.metric("Readings kept", f"{R['n_kept']:,}", border=True, help=f"Of the {R['n_in']:,} readings cleaned.")
+            if area:
+                st.metric("Area of the kept readings", f"{area:,.2f} ac", border=True,
+                          help="Distance x width of the kept readings.")
+            st.metric(f"Mean {col}, cleaned", f"{cl_m:,.2f} {unit}".strip(), border=True, delta_color="off",
+                      delta=(f"{cl_m - raw_m:+.2f} {unit} vs the raw {raw_m:,.2f}".replace("  ", " ")
+                             if raw_m is not None else None), delta_arrow="off")
+        return
+    ycol = (R.get("columns") or {}).get("yield") or cc.get("yield")
+    rcol = yc.detect_columns([c for c in raw.columns if c not in ("lon", "lat")]).get("yield")
+    raw_m, cl_m = _mean_of(raw, rcol), _mean_of(cdf, ycol)
+    if cl_m is None:
+        return
+    fcol = R.get("yield_column_for_difm")
+    fcol = fcol if (fcol and fcol in cdf.columns) else ycol
+    fin_m = _mean_of(cdf, fcol)
+    Lf = L.get("factor_final", L.get("factor"))
+    adjusted = bool(C.get("adjusted")) and fcol != ycol and fin_m is not None
+    gro_ac = mon_ac = None
+    if L:
+        area_s = float(L.get("export_area_ac") or 0)
+        area_y = float(L.get("ticket_area_ac") or 0) if L.get("ticket_unit") == "bu/ac" else area_s
+        if area_y > 0:
+            gro_ac = float(L["scale_ticket_bu"]) / area_y
+            mon_ac = float(L["export_total_bu"]) / area_y
+    if not path_only:
+        with st.container(horizontal=True):
+            st.metric("Readings kept", f"{R['n_kept']:,}", border=True,
+                      help=f"Of the {R['n_in']:,} readings" + (" inside the boundary" if C.get("boundary") else "") + ".")
+            if area:
+                st.metric("Area of the kept readings", f"{area:,.2f} ac", border=True,
+                          help="Distance x width of the kept readings, after S2 narrowed the overlapping strips.")
+            st.metric("Mean dry yield, cleaned", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off", delta_arrow="off",
+                      delta=(f"{cl_m - raw_m:+.2f} bu/ac by the cleaning (raw {raw_m:,.2f})" if raw_m is not None
+                             else None),
+                      help=f"The mean of {ycol} over the kept readings: the monitor's yield after the clip and the "
+                           "3-sigma steps. The raw figure is the mean of every reading of the file (step 2).")
+            if gro_ac is not None:
+                ms = (R.get("moisture") or {}).get("standard_pct")
+                at_std = L.get("ticket_bu_at_standard") is not None and ms is not None
+                given = (f"{er.ticket_label({'value': L.get('ticket_value'), 'unit': L.get('ticket_unit')})} as given"
+                         + (f" at {float(L['ticket_moisture_pct']):g} % moisture" if L.get("ticket_moisture_pct") is not None
+                            else ""))
+                st.metric("Grower's yield" + (f", at {float(ms):g} %" if at_std else ""), f"{gro_ac:,.2f} bu/ac",
+                          border=True, delta_color="off", delta_arrow="off",
+                          delta=f"monitor {mon_ac:,.2f} bu/ac ({CL.get('diff_pct', 0):+.2f} %)",
+                          help=f"{given}" + (f", brought to the standard moisture {float(ms):g} %" if at_std else "")
+                               + f": the grower's total over {area_y:,.2f} ac, against the monitor's total over the same "
+                               "acres on the same basis (the Grower's data tab has the details).")
+            if L and adjusted:
+                st.metric(f"Final yield ({fcol})", f"{fin_m:,.2f} bu/ac", border=True, delta_color="off",
+                          delta_arrow="off", delta=f"{fin_m - cl_m:+.2f} bu/ac by the grower's data (x L {Lf:.4f})",
+                          help=f"The column to map: the cleaned yield x L = grower / monitor. The monitor's {ycol} "
+                               "stays in the file as logged.")
+            elif L:
+                st.metric("Final yield (clean file)", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off",
+                          delta_arrow="off", delta="unchanged: validate only",
+                          help="Validate only: the grower's data is compared, not applied; the clean file keeps the "
+                               f"monitor's yields. Adjusting would multiply them by L = {Lf:.4f}.")
+    steps_ = [f"raw readings <b>{raw_m:,.2f}</b>" if raw_m is not None else "raw readings",
+              f"cleaning {cl_m - raw_m:+.2f} &rarr; <b>{cl_m:,.2f}</b>" if raw_m is not None
+              else f"cleaned <b>{cl_m:,.2f}</b>"]
+    if L and adjusted:
+        steps_.append(f"grower's data &times; L {Lf:.4f} ({fin_m - cl_m:+.2f}) &rarr; <b>{fin_m:,.2f} bu/ac</b> "
+                      f"(map {html.escape(fcol)})")
+    elif L:
+        steps_.append(f"grower's data: validate only, not applied &rarr; <b>{cl_m:,.2f} bu/ac</b> in the clean file "
+                      f"(adjusting would give {cl_m * float(Lf):,.2f} bu/ac)" if Lf else "grower's data: validate only")
+    else:
+        steps_.append("no grower's data")
+    note = ""
+    if L and adjusted and gro_ac is not None:
+        note = ("<br><span style=\"font-size:0.86rem;color:#4B5563\">L = grower / monitor is set on the totals of every "
+                "reading of the field (the scale weighed all the grain, the removed readings included), so the final "
+                "mean over the kept readings is near, not equal to, the grower's " + f"{gro_ac:,.2f} bu/ac.</span>")
+    st.html('<div class="oced-path"><b>What made the final yield</b> (mean bu/ac): ' + " &rarr; ".join(steps_)
+            + note + "</div>")
+
+
 def all_clean_zip() -> str | None:
     C = {t: c for t, c in ss.cleaned.items() if os.path.exists(c["shp"])}
     if not C:
@@ -1664,6 +1779,7 @@ with st.container(border=True, key="oced_step_3"):
                            + str(((R if A3 else (R.get("sms3sigma") or {})).get("grouping") or {}).get("rule", ""))
                            + ".")
         with t_clean:
+            result_cards(ss.active, C)
             cols_clean = read_points(C["shp"], mtime(C["shp"])).columns
             explorer(C["shp"], key=f"clean_{key_of(C['shp'])}", height=480,
                      default=(R["main"] if A3 else "Yld_Level" if C.get("adjusted") and "Yld_Level" in cols_clean else
@@ -1706,6 +1822,7 @@ with st.container(border=True, key="oced_step_3"):
                                                         "cyan line is the boundary." if C.get("boundary") else ""))
         if L:
             with tabs_[4]:
+                result_cards(ss.active, C, path_only=True)
                 area = float(L.get("export_area_ac") or 0)
                 mon, gro = float(L["export_total_bu"]), float(L["scale_ticket_bu"])
                 # a grower's yield per acre: both means over the grower's acres, so the grower's column shows the

@@ -119,6 +119,14 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     tabs = [t.label for t in at.tabs]
     assert "Grower's data" in tabs
     assert any(m.label == "Clipped (S1)" and m.value == f"{field['n'] - field['n_inside']:,}" for m in at.metric)
+    # above the clean map: the key numbers and what the grower's data did to the final yield
+    labels = [m.label for m in at.metric]
+    assert "Mean dry yield, cleaned" in labels and any(x.startswith("Grower's yield") for x in labels)
+    final = next(m for m in at.metric if m.label.startswith("Final yield"))
+    if use == "adjust":
+        assert final.label.startswith("Final yield (Yld_") and "by the grower's data" in final.delta
+    else:
+        assert final.label == "Final yield (clean file)" and final.delta == "unchanged: validate only"
     clean = glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_clean.shp"))
     assert len(clean) == 1
     cols = list(pyogrio.read_info(clean[0])["fields"])
