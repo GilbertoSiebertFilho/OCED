@@ -190,7 +190,20 @@ st.html(f"""<style>
 .stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] div,
 .stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ white-space: normal; overflow: visible;
   text-overflow: clip; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] {{ height: auto; }}
+/* the cards above the clean map: the titles take two lines in every card, so the values line up; the note
+   under the value is a small box (not the rounded pill of st.metric) whose text wraps inside it */
+/* one row on a wide screen; on a narrower one the cards wrap, every card keeping the same width (a grid of
+   equal tracks of at least 175 px) */
+.stApp [class*="st-key-res_cards"] [data-testid="stHorizontalBlock"] {{ display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); grid-auto-rows: 1fr; gap: 0.75rem; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stColumn"] {{ width: auto !important; min-width: 0 !important;
+  flex: none !important; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricLabel"] {{ min-height: 2.45rem; align-items: flex-start; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] {{ display: block; width: 100%; height: auto;
+  box-sizing: border-box; margin-top: 0.4rem; padding: 0.3rem 0.55rem; border-radius: 6px; background: #F3F7FC;
+  border-left: 3px solid {brand.LIGHT_BLUE}; color: #4B5563; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ margin: 0; font-size: 0.8rem; line-height: 1.35;
+  white-space: normal; overflow: visible; text-overflow: clip; }}
 .oced-path {{ border-radius: 10px; padding: 0.55rem 0.9rem; font-size: 0.95rem; color: #1F2937; background: #F3F7FC;
   border: 1px solid #C9D8EC; border-left: 5px solid {brand.LIGHT_BLUE}; margin: 0.2rem 0 0.6rem; }}
 .oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
