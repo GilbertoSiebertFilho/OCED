@@ -495,10 +495,38 @@ def attribute_table(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def explorer(shp: str, key: str, title: str = "", height: int = 520, default: str | None = None, outline=None):
+def corrected_column(C: dict, cols, ycol) -> tuple[str, str] | None:
+    """The column of the clean file that carries the correction factors, and how it was made: Yld_Level (or the
+    symmetric Yld_Lvl_Sy) = the clean dry yield x the combine factor x L when the yields were adjusted to the grower's
+    weight; Yld_Harm = the clean dry yield x the combine factor when only that was applied. None without a factor."""
+    R = C["R"]
+    L = R.get("level") or {}
+    MF = {str(k): float(v) for k, v in ((R.get("machines") or {}).get("factor_applied") or {}).items()}
+    harm_on = "Yld_Harm" in cols and any(abs(v - 1) > 1e-9 for v in MF.values())
+    fac = ", ".join((f"{m} x {v:.4f}" if abs(v - 1) > 1e-9 else f"{m} x 1 (reference)") for m, v in MF.items())
+    fcol = R.get("yield_column_for_difm")
+    Lf = L.get("factor_final", L.get("factor"))
+    if C.get("adjusted") and fcol in cols and fcol not in (ycol, "Yld_Harm") and Lf is not None:
+        base = "the clean symmetric dry yield (Yld_Dry_Sy)" if fcol == "Yld_Lvl_Sy" else "the clean dry yield"
+        given = er.ticket_label({"value": L.get("ticket_value"), "unit": L.get("ticket_unit")}) if L.get("ticket_value") else ""
+        return fcol, (f"{fcol} = {base}" + (f" x the combine factor ({fac})" if harm_on else "")
+                      + f" x L {float(Lf):.4f} (the grower's {given}" + (f" over {float(L['ticket_area_ac']):,.2f} ac"
+                                                                        if L.get("ticket_area_ac") else "")
+                      + "). Its own colour scale; the column at the right of the statistics is the change against the "
+                        "clean map.")
+    if harm_on:
+        return "Yld_Harm", (f"Yld_Harm = the clean dry yield x the combine factor ({fac}). Its own colour scale; the "
+                            "column at the right of the statistics is the change against the clean map.")
+    return None
+
+
+def explorer(shp: str, key: str, title: str = "", height: int = 520, default: str | None = None, outline=None,
+             fixed: str | None = None, base_col: str | None = None, extras: bool = True):
     """The map of a point file coloured by the attribute chosen on the buttons, with its legend, statistics and
     histogram beside it, and the attribute table and the first records below. outline: the field boundary (rings of
-    [lon, lat]) drawn over the strips."""
+    [lon, lat]) drawn over the strips. fixed: one column, no buttons; base_col: a column of the same file whose
+    statistics every statistic is compared with (the column "change"); extras False: no attribute table and first
+    records."""
     if not shp or not os.path.exists(shp):
         st.error("The file is no longer on disk.", icon=":material/error:")
         return
@@ -512,9 +540,12 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
     akey = f"attr_{key}"
     if ss.get(akey) not in names:
         ss[akey] = default if default in names else names[0]
-    with st.container(key=f"attr_box_{key}"):
-        pick = st.pills("Attribute on the map", names, selection_mode="single", key=akey,
-                        format_func=lambda c: info[c][1] + (f" ({info[c][2]})" if info[c][2] else ""))
+    if fixed is not None and fixed in names:
+        pick = fixed
+    else:
+        with st.container(key=f"attr_box_{key}"):
+            pick = st.pills("Attribute on the map", names, selection_mode="single", key=akey,
+                            format_func=lambda c: info[c][1] + (f" ({info[c][2]})" if info[c][2] else ""))
     col = pick or names[0]
     _, label, unit, cmap = info[col]
     kind = "cat" if cmap == "cat" else "time" if cmap == "time" else "num"
@@ -590,8 +621,28 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
                 av = avg_of(df, col) if per_area(unit) else None
                 if av is not None:
                     rows_.insert(4, ("average (SMS, area-weighted)", fmt_value(av, unit)))
-            st.dataframe(pd.DataFrame(rows_, columns=["statistic", "value"]), hide_index=True,
-                         height=36 * (len(rows_) + 1) + 3)
+            if base_col and kind == "num" and base_col in df:
+                vb, _, _ = values_of(df, base_col, "num")
+                Sb = stats_of(vb)
+                ref = {"minimum": Sb.get("min"), "2nd percentile": Sb.get("p2"), "mean": Sb.get("mean"),
+                       "median": Sb.get("median"), "98th percentile": Sb.get("p98"), "maximum": Sb.get("max"),
+                       "SD": Sb.get("sd"), "average (SMS, area-weighted)": avg_of(df, base_col)}
+                cur = {"minimum": S.get("min"), "2nd percentile": S.get("p2"), "mean": S.get("mean"),
+                       "median": S.get("median"), "98th percentile": S.get("p98"), "maximum": S.get("max"),
+                       "SD": S.get("sd"), "average (SMS, area-weighted)": avg_of(df, col)}
+
+                def chg(k):
+                    if k == "CV" and S.get("cv") and Sb.get("cv"):
+                        return f"{S['cv'] - Sb['cv']:+.2f} points"
+                    a, b = cur.get(k), ref.get(k)
+                    if a is None or b is None or not np.isfinite(a) or not np.isfinite(b):
+                        return ""
+                    return f"{a - b:+.2f} {unit}".strip() + (f" ({100 * (a - b) / b:+.2f} %)" if b else "")
+                tbl = pd.DataFrame([(k, v_, chg(k)) for k, v_ in rows_],
+                                   columns=["statistic", "value", "change vs the clean map"])
+            else:
+                tbl = pd.DataFrame(rows_, columns=["statistic", "value"])
+            st.dataframe(tbl, hide_index=True, height=36 * (len(rows_) + 1) + 3)
             f = v[np.isfinite(v)]
             if len(f) > 1 and kind == "num" and S["p98"] > S["p2"]:
                 import altair as alt
@@ -608,6 +659,8 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
                 st.caption("Values beyond the scale are counted in the end bars.")
         else:
             st.caption("No point has a value.")
+    if not extras:
+        return
     with st.expander(f"The attributes of this file ({len(df.columns) - 2} columns)", icon=":material/table_view:"):
         st.dataframe(attribute_table(df), hide_index=True,
                      column_config={"points with a value": st.column_config.NumberColumn(format="%d")})
@@ -2289,10 +2342,21 @@ with st.container(border=True, key="oced_step_3"):
         with t_clean:
             result_cards(ss.active, C)
             cols_clean = read_points(C["shp"], mtime(C["shp"])).columns
+            ycol0 = (R.get("columns") or {}).get("yield") or "Yld_Vol_Dr"
+            ycol0 = ycol0 if ycol0 in cols_clean else ("Yld_Vol_Dr" if "Yld_Vol_Dr" in cols_clean else None)
+            corr = None if A3 else corrected_column(C, cols_clean, ycol0)
+            if corr:
+                st.markdown("##### The clean map")
+                st.caption("The monitor's yield after the import as SMS and the cleaning, no correction factor.")
             explorer(C["shp"], key=f"clean_{key_of(C['shp'])}", height=480,
-                     default=(R["main"] if A3 else "Yld_Level" if C.get("adjusted") and "Yld_Level" in cols_clean else
-                              "Yld_Vol_Dr" if "Yld_Vol_Dr" in cols_clean else None),
+                     default=(R["main"] if A3 else ycol0),
                      outline=C["boundary"]["outline"] if C.get("boundary") else None)
+            if corr:
+                st.divider()
+                st.markdown("##### After the correction factors")
+                st.caption(corr[1])
+                explorer(C["shp"], key=f"corr_{key_of(C['shp'])}", height=480, fixed=corr[0], base_col=ycol0,
+                         extras=False, outline=C["boundary"]["outline"] if C.get("boundary") else None)
         with t_rem:
             fl = C.get("flagged_shp")
             if fl and os.path.exists(fl):

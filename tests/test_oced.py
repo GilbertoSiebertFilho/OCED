@@ -138,11 +138,15 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     stats = [d.value for d in at.dataframe if "statistic" in d.value.columns]
     assert stats and any("average (SMS, area-weighted)" in list(t["statistic"]) for t in stats)
     final = next(m for m in at.metric if m.label.startswith("Final yield"))
+    changes = [d.value for d in at.dataframe if "change vs the clean map" in d.value.columns]
     if use == "adjust":
         assert final.label.startswith("Final yield, mean (Yld_") and "by the grower's data" in final.delta
+        # the map after the correction factors, its statistics compared with the clean map
+        assert changes and changes[0].loc[changes[0]["statistic"] == "mean", "change vs the clean map"].iloc[0]
         assert "Final yield, average (SMS)" in labels
     else:
         assert final.label == "Final yield (clean file)" and final.delta == "grower's data: validate only"
+        assert not changes                                   # nothing applied: no second map
     clean = glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_clean.shp"))
     assert len(clean) == 1
     cols = list(pyogrio.read_info(clean[0])["fields"])
@@ -389,6 +393,8 @@ def test_app_two_combines_factor(field, tmp_path, monkeypatch):
     rec = json.load(open(glob.glob(str(tmp_path / "ws" / "*" / "clean" / "*" / "*_cleaning.json"))[0], encoding="utf-8"))
     assert rec["settings"]["machines"]["harmonise"] is True and set(rec["machines"]["factor_applied"]) == {
         "COMBINE-A", "COMBINE-B"}
+    if any(abs(float(v) - 1) > 1e-9 for v in rec["machines"]["factor_applied"].values()):
+        assert any("change vs the clean map" in d.value.columns for d in at.dataframe)   # the corrected map
 
 
 def test_app_start_over_empties_the_uploads(field, tmp_path, monkeypatch):

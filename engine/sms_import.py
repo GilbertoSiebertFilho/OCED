@@ -319,6 +319,7 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None) -> dict:
     rep["n_out"] = int(keep.sum())
     if not patch and keep.all():
         return rep
+    os.makedirs(os.path.dirname(os.path.abspath(out_shp)), exist_ok=True)
     yc.write_points(out_shp, shp, g, rows, [], byte_copy=(yc._read_shp(shp), dbf), patch=patch or None)
     rep["path"] = out_shp
     log(f"import as SMS: {n - rep['n_out']:,} of {n:,} readings left out"
