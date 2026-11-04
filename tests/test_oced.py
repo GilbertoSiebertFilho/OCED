@@ -389,3 +389,24 @@ def test_app_two_combines_factor(field, tmp_path, monkeypatch):
     rec = json.load(open(glob.glob(str(tmp_path / "ws" / "*" / "clean" / "*" / "*_cleaning.json"))[0], encoding="utf-8"))
     assert rec["settings"]["machines"]["harmonise"] is True and set(rec["machines"]["factor_applied"]) == {
         "COMBINE-A", "COMBINE-B"}
+
+
+def test_app_start_over_empties_the_uploads(field, tmp_path, monkeypatch):
+    """Start over clears the files of the upload field too (a file uploader keeps its files until it is created
+    again: the app gives it a new key)."""
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("OCED_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_file(APP, default_timeout=900)
+    at.run()
+    up = _by_key(at.get("file_uploader"), "uploads_")
+    base = os.path.splitext(field["shp"])[0]
+    up.set_value([(os.path.basename(base) + e, open(base + e, "rb").read(), "application/octet-stream")
+                  for e in (".shp", ".shx", ".dbf", ".prj")]).run()
+    at.button(key="open_btn").click().run()
+    assert not at.exception, at.exception
+    assert any(m.label == "Readings" for m in at.metric)                  # the uploaded file is open
+    at.button(key="start_over").click().run()
+    assert not at.exception, at.exception
+    up2 = _by_key(at.get("file_uploader"), "uploads_")
+    assert up2.key != up.key and not up2.value                            # the upload field is empty again
+    assert not any(m.label == "Readings" for m in at.metric)

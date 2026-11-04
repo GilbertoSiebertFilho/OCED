@@ -237,8 +237,11 @@ def start_over():
     ss.input_label = ss.work_saved = ss.work_saved_at = ss.work_msg = None
     for k in ("work_name", "work_name_for", "active_pick"):
         ss.pop(k, None)
-    for k in [k for k in ss if str(k).startswith(("cand_idx", "units_", "attr_", "path_in", "bnd_", "gw_", "a3_"))]:
+    for k in [k for k in ss if str(k).startswith(("cand_idx", "units_", "attr_", "path_in", "bnd_", "gw_", "a3_",
+                                                  "cf_", "uploads"))]:
         ss.pop(k, None)
+    # a file uploader keeps its files until it is created again: a new key empties the upload fields
+    ss.up_nonce = int(ss.get("up_nonce") or 0) + 1
 
 
 def request_open(source):
@@ -1648,7 +1651,7 @@ with st.sidebar:
 with st.container(border=True, key="oced_step_1"):
     brand.step_header(1, "Machine data", "The files of a combine, planter or sprayer: upload them, or open a file or "
                                          "folder on this computer")
-    ups = st.file_uploader("Upload files", accept_multiple_files=True, key="uploads",
+    ups = st.file_uploader("Upload files", accept_multiple_files=True, key=f"uploads_{int(ss.get('up_nonce') or 0)}",
                            help="Combines: a zipped card or JD-Data folder, the files of a GreenStar card, a yield "
                                 "point export or its .kml / .kmz. Planters and sprayers: the as-applied point export "
                                 "(.shp + .shx + .dbf + .prj, or a zip). Any other point shapefile of a machine too.")
@@ -2061,7 +2064,7 @@ with st.container(border=True, key="oced_step_3"):
                     ss.boundary.pop(ss.active, None)
                     st.rerun()
             else:
-                bup = st.file_uploader("Boundary file", accept_multiple_files=True, key=f"bnd_up_{TK}",
+                bup = st.file_uploader("Boundary file", accept_multiple_files=True, key=f"bnd_up_{TK}_{int(ss.get('up_nonce') or 0)}",
                                        type=BOUNDARY_TYPES,
                                        help="A .zip (a shapefile or an SMS 'Boundaries' export), the .shp + .shx + "
                                             ".dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz.")
