@@ -1,0 +1,16 @@
+# OCED: code and docs only. Grower data (monitor cards, exports, boundaries, results) never goes here.
+*
+!*/
+!.gitignore
+!.streamlit/config.toml
+!*.py
+!*.md
+!*.txt
+!*.bat
+!docs/literature/references_verified.csv
+!assets/brand/*
+workspace/
+_backup/
+examples/
+.venv/
+__pycache__/

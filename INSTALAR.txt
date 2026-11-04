@@ -1,0 +1,41 @@
+OCED - Olds College Extract Data - instalação num computador novo
+================================================================
+
+O OCED abre os arquivos que vêm das máquinas (colheitadeiras, plantadeiras e pulverizadores), mostra o mapa de
+cada atributo, limpa os dados com o método 3-sigma (a sequência do SMS) e gera os shapefiles limpos e os
+relatórios.
+
+1. Baixe o zip do GitHub (Code > Download ZIP), extraia (botão direito > Extrair tudo) e ponha a pasta num disco
+   LOCAL, por exemplo  C:\Olds College Projects\OCED
+   Evite Documentos, Downloads e Desktop: nos computadores da Olds College eles ficam na rede, e o ambiente
+   Python e o app ficariam lentos. Não rode direto de dentro do zip.
+
+2. Python 3.12 ou mais novo (testado com 3.13 e 3.14). Se o computador não tem:
+   - https://www.python.org/downloads/  ->  instalar marcando "Add python.exe to PATH"; ou
+   - num terminal:  winget install Python.Python.3.14
+
+3. Dê dois cliques em install_oced.bat. Ele cria um ambiente próprio (.venv) dentro da pasta e instala os pacotes
+   de requirements.txt nas versões testadas de constraints.txt (precisa de internet, uns 600 MB, alguns minutos).
+   Termina com "packages OK" e "Done".
+
+4. Dê dois cliques em run_oced.bat. O app abre no navegador em http://localhost:8502
+   (a janela preta precisa ficar aberta enquanto você usa o app; fechar a janela fecha o app).
+
+ATUALIZAR uma instalação que já existe
+   Feche o app e dê dois cliques em atualizar_oced.bat. Ele baixa a versão mais nova do GitHub (versão main),
+   guarda a versão atual em _backup\<data-hora>, põe a nova no lugar e confere o código; se algo falhar, volta a
+   versão anterior sozinho. A pasta de trabalho (workspace) e o ambiente Python (.venv) não são mexidos. Se os
+   pacotes do Python mudarem, ele avisa para rodar install_oced.bat uma vez.
+
+Onde ficam os resultados
+   Cada arquivo aberto ganha uma pasta em workspace\<data-hora>_<nome>\ com os pontos extraídos (decoded\), o
+   boundary (boundary\), a limpeza (clean\) e os shapefiles limpos (clean_shapefiles\). Os mesmos arquivos são
+   baixados pelos botões do passo 4.
+
+Problemas comuns
+- "Python was not found": instale o Python (passo 2) e rode install_oced.bat de novo.
+- Falha no pip: verifique a internet ou o proxy da rede e rode install_oced.bat de novo (ele retoma).
+- A porta 8502 já está em uso: feche a outra janela do app (ou reinicie o computador).
+- "DLL load failed" ou "The filename or extension is too long": a pasta está num caminho comprido demais para o
+  Windows. Use uma pasta curta, como C:\Olds College Projects\OCED, e rode install_oced.bat de novo.
+- O mapa aparece sem a imagem de satélite: o computador está sem internet; os pontos e as faixas aparecem igual.
