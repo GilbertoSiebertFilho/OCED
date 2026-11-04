@@ -122,9 +122,13 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     # above the clean map: the key numbers and what the grower's data did to the final yield
     labels = [m.label for m in at.metric]
     assert "Mean dry yield, cleaned" in labels and any(x.startswith("Grower's yield") for x in labels)
+    assert "Average dry yield, cleaned (SMS)" in labels and "Average dry yield (SMS)" in labels
+    stats = [d.value for d in at.dataframe if "statistic" in d.value.columns]
+    assert stats and any("average (SMS, area-weighted)" in list(t["statistic"]) for t in stats)
     final = next(m for m in at.metric if m.label.startswith("Final yield"))
     if use == "adjust":
-        assert final.label.startswith("Final yield (Yld_") and "by the grower's data" in final.delta
+        assert final.label.startswith("Final yield, mean (Yld_") and "by the grower's data" in final.delta
+        assert "Final yield, average (SMS)" in labels
     else:
         assert final.label == "Final yield (clean file)" and final.delta == "unchanged: validate only"
     clean = glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_clean.shp"))

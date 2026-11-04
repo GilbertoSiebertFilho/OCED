@@ -546,6 +546,9 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
                      ("98th percentile", fmt_value(S["p98"], unit, kind, t0)), ("maximum", fmt_value(S["max"], unit, kind, t0))]
             if kind == "num":
                 rows_ += [("SD", fmt_value(S["sd"], unit)), ("CV", f"{S['cv']:.2f} %" if S.get("cv") else "—")]
+                av = avg_of(df, col) if per_area(unit) else None
+                if av is not None:
+                    rows_.insert(4, ("average (SMS, area-weighted)", fmt_value(av, unit)))
             st.dataframe(pd.DataFrame(rows_, columns=["statistic", "value"]), hide_index=True,
                          height=36 * (len(rows_) + 1) + 3)
             f = v[np.isfinite(v)]
@@ -1134,7 +1137,7 @@ def action_tree():
 
 
 def _mean_of(df: pd.DataFrame, col) -> float | None:
-    """The plain mean of a column's finite values (as the map statistics show it), None without values."""
+    """The plain mean of a column's finite values (as the map statistics and SMS Edit Legend give it)."""
     if not col or col not in df:
         return None
     v = pd.to_numeric(df[col], errors="coerce").to_numpy(float)
@@ -1142,10 +1145,44 @@ def _mean_of(df: pd.DataFrame, col) -> float | None:
     return float(v.mean()) if len(v) else None
 
 
+def area_of(df: pd.DataFrame):
+    """The area (ac) each reading swept: distance x width (ft); None without both columns."""
+    cc = yc.detect_columns([c for c in df.columns if c not in ("lon", "lat")])
+    if not (cc.get("distance_ft") and cc.get("width_ft")):
+        return None
+    return (pd.to_numeric(df[cc["distance_ft"]], errors="coerce").to_numpy(float)
+            * pd.to_numeric(df[cc["width_ft"]], errors="coerce").to_numpy(float) / 43560.0)
+
+
+def avg_of(df: pd.DataFrame, col) -> float | None:
+    """The Average of the SMS summary: the area-weighted mean, sum(value x area) / sum(area) = the total divided by
+    the area. None without the distance and width columns."""
+    if not col or col not in df:
+        return None
+    a = area_of(df)
+    if a is None:
+        return None
+    v = pd.to_numeric(df[col], errors="coerce").to_numpy(float)
+    ok = np.isfinite(v) & np.isfinite(a) & (a > 0)
+    return float((v[ok] * a[ok]).sum() / a[ok].sum()) if ok.any() else None
+
+
+def per_area(unit: str) -> bool:
+    """A per-area unit (bu/ac, lb/ac, gal/ac, kg/ha ...): its SMS Average is the area-weighted one."""
+    u = str(unit or "").lower().replace(" ", "")
+    return u.endswith("/ac") or u.endswith("/ha")
+
+
+def _d(x, ref, what):
+    """The delta text of a card: '+1.23 bu/ac by <what> (<ref>)'; None when either value is missing."""
+    return None if (x is None or ref is None) else f"{x - ref:+.2f} bu/ac {what}"
+
+
 def result_cards(tag: str, C: dict, path_only: bool = False):
-    """Above the clean map: the key numbers of the cleaning (cards, as in step 2) and one line on what made the final
-    yield: the raw readings, what the cleaning changed, then what the grower's data changed (applied with 'adjust',
-    only compared with 'validate')."""
+    """Above the clean map: the key numbers of the cleaning (cards, as in step 2) and what made the final yield: the
+    raw readings, what the cleaning changed, then what the grower's data changed (applied with 'adjust', only
+    compared with 'validate'). Each yield as the plain mean of the readings (SMS Edit Legend) and as the Average of
+    the SMS summary (total / area, area-weighted)."""
     R = C["R"]
     L = R.get("level") or {}
     CL = L.get("closure") or {}
@@ -1153,12 +1190,8 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
     D = ss.datasets[tag]
     cdf = read_points(C["shp"], mtime(C["shp"]))
     raw = read_points(D["shp"], mtime(D["shp"]))
-    cc = yc.detect_columns([c for c in cdf.columns if c not in ("lon", "lat")])
-    area = None
-    if cc.get("distance_ft") and cc.get("width_ft"):
-        a = (pd.to_numeric(cdf[cc["distance_ft"]], errors="coerce")
-             * pd.to_numeric(cdf[cc["width_ft"]], errors="coerce")).to_numpy(float) / 43560.0
-        area = float(a[np.isfinite(a)].sum()) or None
+    a_ = area_of(cdf)
+    area = float(a_[np.isfinite(a_)].sum()) or None if a_ is not None else None
     if A3:
         col = R.get("main")
         unit = (R.get("units") or {}).get(col) if isinstance(R.get("units"), dict) else None
@@ -1166,6 +1199,7 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
         raw_m, cl_m = _mean_of(raw, col), _mean_of(cdf, col)
         if path_only or cl_m is None:
             return
+        raw_a, cl_a = (avg_of(raw, col), avg_of(cdf, col)) if per_area(unit) else (None, None)
         with st.container(horizontal=True):
             st.metric("Readings kept", f"{R['n_kept']:,}", border=True, help=f"Of the {R['n_in']:,} readings cleaned.")
             if area:
@@ -1173,25 +1207,36 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
                           help="Distance x width of the kept readings.")
             st.metric(f"Mean {col}, cleaned", f"{cl_m:,.2f} {unit}".strip(), border=True, delta_color="off",
                       delta=(f"{cl_m - raw_m:+.2f} {unit} vs the raw {raw_m:,.2f}".replace("  ", " ")
-                             if raw_m is not None else None), delta_arrow="off")
+                             if raw_m is not None else None), delta_arrow="off",
+                      help="The plain mean of the kept readings (as SMS Edit Legend).")
+            if cl_a is not None:
+                st.metric(f"Average {col}, cleaned (SMS)", f"{cl_a:,.2f} {unit}".strip(), border=True, delta_color="off",
+                          delta=(f"{cl_a - raw_a:+.2f} {unit} vs the raw {raw_a:,.2f}".replace("  ", " ")
+                                 if raw_a is not None else None), delta_arrow="off",
+                          help="As the SMS summary: the area-weighted average, the total divided by the area.")
         return
+    cc = yc.detect_columns([c for c in cdf.columns if c not in ("lon", "lat")])
     ycol = (R.get("columns") or {}).get("yield") or cc.get("yield")
     rcol = yc.detect_columns([c for c in raw.columns if c not in ("lon", "lat")]).get("yield")
     raw_m, cl_m = _mean_of(raw, rcol), _mean_of(cdf, ycol)
+    raw_a, cl_a = avg_of(raw, rcol), avg_of(cdf, ycol)
     if cl_m is None:
         return
     fcol = R.get("yield_column_for_difm")
     fcol = fcol if (fcol and fcol in cdf.columns) else ycol
-    fin_m = _mean_of(cdf, fcol)
+    fin_m, fin_a = _mean_of(cdf, fcol), avg_of(cdf, fcol)
     Lf = L.get("factor_final", L.get("factor"))
     adjusted = bool(C.get("adjusted")) and fcol != ycol and fin_m is not None
-    gro_ac = mon_ac = None
+    if not (L and adjusted):
+        fin_m, fin_a = cl_m, cl_a
+    gro_ac = mon_ac = area_y = None
     if L:
         area_s = float(L.get("export_area_ac") or 0)
         area_y = float(L.get("ticket_area_ac") or 0) if L.get("ticket_unit") == "bu/ac" else area_s
         if area_y > 0:
             gro_ac = float(L["scale_ticket_bu"]) / area_y
             mon_ac = float(L["export_total_bu"]) / area_y
+    by_g = f"by the grower's data (x L {Lf:.4f})" if (L and adjusted) else None
     if not path_only:
         with st.container(horizontal=True):
             st.metric("Readings kept", f"{R['n_kept']:,}", border=True,
@@ -1199,11 +1244,6 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
             if area:
                 st.metric("Area of the kept readings", f"{area:,.2f} ac", border=True,
                           help="Distance x width of the kept readings, after S2 narrowed the overlapping strips.")
-            st.metric("Mean dry yield, cleaned", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off", delta_arrow="off",
-                      delta=(f"{cl_m - raw_m:+.2f} bu/ac by the cleaning (raw {raw_m:,.2f})" if raw_m is not None
-                             else None),
-                      help=f"The mean of {ycol} over the kept readings: the monitor's yield after the clip and the "
-                           "3-sigma steps. The raw figure is the mean of every reading of the file (step 2).")
             if gro_ac is not None:
                 ms = (R.get("moisture") or {}).get("standard_pct")
                 at_std = L.get("ticket_bu_at_standard") is not None and ms is not None
@@ -1216,34 +1256,54 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
                           help=f"{given}" + (f", brought to the standard moisture {float(ms):g} %" if at_std else "")
                                + f": the grower's total over {area_y:,.2f} ac, against the monitor's total over the same "
                                "acres on the same basis (the Grower's data tab has the details).")
+        with st.container(horizontal=True):
+            st.metric("Mean dry yield, cleaned", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off", delta_arrow="off",
+                      delta=_d(cl_m, raw_m, f"by the cleaning (raw {raw_m:,.2f})" if raw_m is not None else ""),
+                      help=f"The plain mean of {ycol} over the kept readings (as SMS Edit Legend): the monitor's yield "
+                           "after the clip and the 3-sigma steps. Raw = every reading of the file (step 2).")
+            if cl_a is not None:
+                st.metric("Average dry yield, cleaned (SMS)", f"{cl_a:,.2f} bu/ac", border=True, delta_color="off",
+                          delta_arrow="off",
+                          delta=_d(cl_a, raw_a, f"by the cleaning (raw {raw_a:,.2f})" if raw_a is not None else ""),
+                          help=f"As the SMS summary: the Average of {ycol}, area-weighted (each reading's yield x its "
+                               "area, added up, divided by the area) = the total divided by the area.")
             if L and adjusted:
-                st.metric(f"Final yield ({fcol})", f"{fin_m:,.2f} bu/ac", border=True, delta_color="off",
-                          delta_arrow="off", delta=f"{fin_m - cl_m:+.2f} bu/ac by the grower's data (x L {Lf:.4f})",
+                st.metric(f"Final yield, mean ({fcol})", f"{fin_m:,.2f} bu/ac", border=True, delta_color="off",
+                          delta_arrow="off", delta=_d(fin_m, cl_m, by_g),
                           help=f"The column to map: the cleaned yield x L = grower / monitor. The monitor's {ycol} "
                                "stays in the file as logged.")
+                if fin_a is not None:
+                    st.metric(f"Final yield, average (SMS)", f"{fin_a:,.2f} bu/ac", border=True, delta_color="off",
+                              delta_arrow="off", delta=_d(fin_a, cl_a, by_g),
+                              help=f"The SMS Average of {fcol} (area-weighted, the total divided by the area).")
             elif L:
                 st.metric("Final yield (clean file)", f"{cl_m:,.2f} bu/ac", border=True, delta_color="off",
                           delta_arrow="off", delta="unchanged: validate only",
                           help="Validate only: the grower's data is compared, not applied; the clean file keeps the "
                                f"monitor's yields. Adjusting would multiply them by L = {Lf:.4f}.")
-    steps_ = [f"raw readings <b>{raw_m:,.2f}</b>" if raw_m is not None else "raw readings",
-              f"cleaning {cl_m - raw_m:+.2f} &rarr; <b>{cl_m:,.2f}</b>" if raw_m is not None
-              else f"cleaned <b>{cl_m:,.2f}</b>"]
-    if L and adjusted:
-        steps_.append(f"grower's data &times; L {Lf:.4f} ({fin_m - cl_m:+.2f}) &rarr; <b>{fin_m:,.2f} bu/ac</b> "
-                      f"(map {html.escape(fcol)})")
-    elif L:
-        steps_.append(f"grower's data: validate only, not applied &rarr; <b>{cl_m:,.2f} bu/ac</b> in the clean file "
-                      f"(adjusting would give {cl_m * float(Lf):,.2f} bu/ac)" if Lf else "grower's data: validate only")
-    else:
-        steps_.append("no grower's data")
+
+    def path(r, c, f):
+        s_ = [f"raw readings <b>{r:,.2f}</b>" if r is not None else "raw readings",
+              f"cleaning {c - r:+.2f} &rarr; <b>{c:,.2f}</b>" if r is not None else f"cleaned <b>{c:,.2f}</b>"]
+        if L and adjusted and f is not None:
+            s_.append(f"grower's data &times; L {Lf:.4f} ({f - c:+.2f}) &rarr; <b>{f:,.2f} bu/ac</b>")
+        elif L:
+            s_.append(f"grower's data: validate only, not applied &rarr; <b>{c:,.2f} bu/ac</b>"
+                      + (f" (adjusting would give {c * float(Lf):,.2f})" if Lf else ""))
+        else:
+            s_.append("no grower's data")
+        return " &rarr; ".join(s_)
+    lines = ["<b>What made the final yield</b>" + (f" (map {html.escape(fcol)})" if (L and adjusted) else ""),
+             "Mean (SMS Edit Legend): " + path(raw_m, cl_m, fin_m)]
+    if cl_a is not None:
+        lines.append("Average (SMS summary, total &divide; area): " + path(raw_a, cl_a, fin_a))
     note = ""
     if L and adjusted and gro_ac is not None:
         note = ("<br><span style=\"font-size:0.86rem;color:#4B5563\">L = grower / monitor is set on the totals of every "
                 "reading of the field (the scale weighed all the grain, the removed readings included), so the final "
-                "mean over the kept readings is near, not equal to, the grower's " + f"{gro_ac:,.2f} bu/ac.</span>")
-    st.html('<div class="oced-path"><b>What made the final yield</b> (mean bu/ac): ' + " &rarr; ".join(steps_)
-            + note + "</div>")
+                "mean and average over the kept readings are near, not equal to, the grower's "
+                + f"{gro_ac:,.2f} bu/ac.</span>")
+    st.html('<div class="oced-path">' + "<br>".join(lines) + note + "</div>")
 
 
 def all_clean_zip() -> str | None:
@@ -1454,12 +1514,22 @@ with st.container(border=True, key="oced_step_2"):
             rv = pd.to_numeric(df0[r0], errors="coerce")
             if rv.notna().any():
                 st.metric("Mean applied rate", f"{rv.mean():,.2f} {OPX['units'].get(r0, '')}".strip(), border=True,
-                          help=f"{r0}, every reading")
+                          help=f"{r0}, every reading: the plain mean (as SMS Edit Legend)")
+                ra = avg_of(df0, r0) if per_area(OPX["units"].get(r0, "")) else None
+                if ra is not None:
+                    st.metric("Average applied rate (SMS)", f"{ra:,.2f} {OPX['units'].get(r0, '')}".strip(),
+                              border=True, help="As the SMS summary: area-weighted, the total divided by the area.")
         if D.get("area_ac"):
             st.metric("Area harvested", f"{float(D['area_ac']):,.2f} ac", border=True,
                       help="The strips the readings swept (distance x width), added up.")
         if D.get("yield", True) and yv is not None and yv.notna().any():
-            st.metric("Mean dry yield", f"{yv.mean():,.2f} bu/ac", border=True)
+            st.metric("Mean dry yield", f"{yv.mean():,.2f} bu/ac", border=True,
+                      help="The plain mean of the readings (as SMS Edit Legend).")
+            ya = avg_of(df0, det["yield"])
+            if ya is not None:
+                st.metric("Average dry yield (SMS)", f"{ya:,.2f} bu/ac", border=True,
+                          help="As the SMS summary: the area-weighted average (each reading's yield x its area, "
+                               "added up, divided by the area) = the total divided by the area.")
         if tt is not None and tt.notna().any():
             st.metric("Date", f"{tt.min():%d %b %Y}" + (f" – {tt.max():%d %b}" if tt.max().date() != tt.min().date()
                                                             else ""), border=True)
