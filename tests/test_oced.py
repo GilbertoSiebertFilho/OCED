@@ -420,3 +420,32 @@ def test_app_start_over_empties_the_uploads(field, tmp_path, monkeypatch):
     up2 = _by_key(at.get("file_uploader"), "uploads_")
     assert up2.key != up.key and not up2.value                            # the upload field is empty again
     assert not any(m.label == "Readings" for m in at.metric)
+
+
+def test_app_file_import_settings_and_width(field, tmp_path, monkeypatch):
+    """Step 2: the header width as logged; the import settings of the open file, with the values it was imported
+    with, editable; importing it again with another weight to volume reaches the cleaning."""
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("OCED_WORKSPACE", str(tmp_path / "ws"))
+    at = AppTest.from_file(APP, default_timeout=900)
+    at.run()
+    at.text_input(key="path_in").input(field["shp"])
+    at.button(key="open_btn").click().run()
+    assert not at.exception, at.exception
+    wa = next(d.value for d in at.dataframe if "logged width (ft)" in d.value.columns)   # the width audit
+    assert float(wa["logged width (ft)"].iloc[0]) > 0
+    tw = _by_key(at.number_input, "fi_tw_")
+    assert tw.value and not tw.disabled                         # a real value, editable
+    new_tw = round(float(tw.value) + 4.0, 2)
+    tw.set_value(new_tw).run()
+    _by_key(at.button, "fi_go_").click().run()
+    assert not at.exception, at.exception
+    assert any("imported again" in x.value for x in at.success)
+    at.button(key="clean_one").click().run()
+    assert not at.exception, at.exception
+    rec = json.load(open(glob.glob(str(tmp_path / "ws" / "*" / "clean" / "*" / "*_cleaning.json"))[0], encoding="utf-8"))
+    assert rec["settings"]["test_weight_lb_bu"] == pytest.approx(new_tw)
+    clean = pyogrio.read_dataframe(glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_clean.shp"))[0],
+                                   read_geometry=False)
+    ratio = (clean["Yld_Mass_W"].astype(float) / clean["Yld_Vol_We"].astype(float)).median()
+    assert ratio == pytest.approx(new_tw, rel=1e-3)             # the volumes computed with the new weight

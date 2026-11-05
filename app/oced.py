@@ -787,6 +787,11 @@ def settings_of(tag: str, sset: dict) -> dict:
     T = grower_ticket(G)
     if T is not None:
         S["scale_ticket"] = T
+    RS = ((ss.datasets.get(tag) or {}).get("sms_import") or {}).get("resolved") or {}
+    if RS.get("test_weight_lb_bu"):
+        S["test_weight_lb_bu"] = float(RS["test_weight_lb_bu"])     # the import's weight to volume
+    if RS.get("dry_moisture_pct") is not None:
+        S["moisture"] = {"standard_pct": float(RS["dry_moisture_pct"])}   # the import's dry moisture
     if G.get("test_weight"):
         S["test_weight_lb_bu"] = float(G["test_weight"])
     if G.get("crop"):
@@ -841,17 +846,181 @@ def import_settings() -> dict:
 
 
 def data_crop(shp: str) -> str | None:
-    """The crop a point file names in its Product (or Crop) column, else None."""
+    """The crop a point file names: its Crop column, else its Product column (which may hold the variety, e.g.
+    'CDC Durango'); the first value that names a known crop (sms_import.crop_key), else the first value, else None."""
     try:
         import pyogrio
-        cols = [c for c in pyogrio.read_info(shp)["fields"] if c.lower() in ("product", "crop")]
-        if not cols:
-            return None
-        v = pyogrio.read_dataframe(shp, columns=cols[:1], read_geometry=False, max_features=200)[cols[0]]
-        v = v.astype(str).replace({"": np.nan, "nan": np.nan, "None": np.nan}).dropna()
-        return str(v.mode().iloc[0]) if len(v) else None
+        fields = list(pyogrio.read_info(shp)["fields"])
+        cols = sorted([c for c in fields if c.lower() in ("crop", "product")], key=lambda c: c.lower() != "crop")
+        first = None
+        for c in cols:
+            v = pyogrio.read_dataframe(shp, columns=[c], read_geometry=False, max_features=200)[c]
+            v = v.astype(str).replace({"": np.nan, "nan": np.nan, "None": np.nan}).dropna()
+            if not len(v):
+                continue
+            val = str(v.mode().iloc[0])
+            if si.crop_key(val):
+                return val
+            first = first or val
+        return first
     except Exception:
         return None
+
+
+def _fi_product_changed(TKi: str):
+    """A new product in the import settings of a file: its weight to volume, dry moisture and max yield volume."""
+    tw, ms, mx = si.product_defaults(ss.get(f"fi_prod_{TKi}"))
+    if tw:
+        ss[f"fi_tw_{TKi}"] = float(tw)
+    if ms is not None:
+        ss[f"fi_dm_{TKi}"] = float(ms)
+        ss[f"fi_mm_{TKi}"] = float(ms)
+    ss[f"fi_max_{TKi}"] = float(mx)
+
+
+def reimport_file(tag: str, S_f: dict) -> str:
+    """Import one open harvest file again from all its readings with the settings S_f (engine/sms_import.py); its
+    cleaning no longer applies and is dropped. Returns a line for the user."""
+    D = ss.datasets[tag]
+    IM = D.get("sms_import") or {}
+    src = IM.get("all_readings") or D["shp"]
+    R = si.resolve(S_f, S_f.get("product"))
+    folder = os.path.dirname(D["shp"]) if os.path.abspath(D["shp"]) != os.path.abspath(src) else \
+        os.path.join(ss.workdir, "imported")
+    rep = si.apply(src, os.path.join(folder, f"{tag}_imported.shp"), R)
+    D["shp"], D["n"] = rep["path"], int(rep["n_out"])
+    D["sms_import"] = {"settings": si.describe(R), "left_out": dict(rep["left_out"]), "n_all": int(rep["n_in"]),
+                       "n_in": int(rep["n_out"]), "all_readings": src, "changed": list(rep["changed"]),
+                       "notes": list(rep["notes"]), "resolved": {k: R.get(k) for k in si.DEFAULTS}}
+    ss.cleaned.pop(tag, None)
+    save_current(quiet=True)
+    n_left = int(rep["n_in"]) - int(rep["n_out"])
+    return (f"{tag} imported again: {int(rep['n_out']):,} of {int(rep['n_in']):,} readings ({n_left:,} left out); "
+            f"{si.describe(R)}. Clean it again in step 3.")
+
+
+def width_audit(df: pd.DataFrame) -> list:
+    """The header width each combine logged: [{combine, logged width (ft) = the most common width, readings at it
+    (%), narrower (%) = partial passes and sections off, narrowest (ft), widest (ft)}]; [] without a width column."""
+    det = yc.detect_columns([c for c in df.columns if c not in ("lon", "lat")])
+    wcol = det.get("width_ft")
+    if not wcol or wcol not in df:
+        return []
+    w = pd.to_numeric(df[wcol], errors="coerce").round(1)
+    key = None
+    if det.get("machine"):
+        key = df[det["machine"]].astype(str).to_numpy()
+    elif det.get("dataset"):
+        dm = sms.dataset_machines(df[det["dataset"]])
+        key = np.asarray(dm[0]).astype(str) if dm is not None else None
+    if key is None:
+        key = np.full(len(df), "all readings")
+    rows = []
+    for m, g in pd.DataFrame({"m": key, "w": w.to_numpy(float)}).groupby("m"):
+        v = g["w"].dropna()
+        v = v[v > 0]
+        if not len(v):
+            continue
+        full = float(v.value_counts().index[0])
+        rows.append({"combine": str(m), "logged width (ft)": full, "readings at it (%)": 100 * float((v == full).mean()),
+                     "narrower (%)": 100 * float((v < full - 0.05).mean()), "narrowest (ft)": float(v.min()),
+                     "widest (ft)": float(v.max())})
+    return rows
+
+
+def width_audit_box(df: pd.DataFrame):
+    """Step 2: the header width as logged, per combine, to check against the real header."""
+    WA = width_audit(df)
+    if not WA:
+        return
+    with st.expander("Header width as logged (initial audit): " + ", ".join(
+            f"{r['combine'] if len(WA) > 1 else ''} {r['logged width (ft)']:g} ft".strip() for r in WA),
+            icon=":material/straighten:"):
+        st.dataframe(pd.DataFrame(WA), hide_index=True,
+                     column_config={"logged width (ft)": st.column_config.NumberColumn(format="%.1f"),
+                                    "readings at it (%)": st.column_config.NumberColumn(format="%.1f"),
+                                    "narrower (%)": st.column_config.NumberColumn(format="%.1f"),
+                                    "narrowest (ft)": st.column_config.NumberColumn(format="%.1f"),
+                                    "widest (ft)": st.column_config.NumberColumn(format="%.1f")})
+        widths = sorted({r["logged width (ft)"] for r in WA})
+        st.caption("The width the monitor logged on each reading: SMS and OCED use it (the manual swath of the import "
+                   "settings is used only when 'Use manual swath' is ticked). The most common width should be the "
+                   "header's; narrower readings are partial passes or sections off. "
+                   + (f"The combines logged different widths ({', '.join(f'{x:g}' for x in widths)} ft): check each "
+                      "header. " if len(widths) > 1 else "")
+                   + "If it is not your header's width, tick 'Use manual swath' in the import settings of this file, "
+                     "set the real width and import it again (the bu/ac are scaled by logged / manual; the grain mass "
+                     "is kept).")
+
+
+def file_import_panel(tag: str, D: dict):
+    """Step 2: the SMS import settings this file was imported with (real values, every one editable) and 'Import this
+    file again with these settings'. Only for a harvest file imported as SMS."""
+    IM = D.get("sms_import") or {}
+    RS = IM.get("resolved")
+    if not D.get("yield", True) or not IM or not IM.get("all_readings"):
+        return
+    if not RS:                                       # an import recorded before the values were kept
+        RS = si.resolve(import_settings(), D.get("label"))
+    TKi = key_of(tag)
+    if ss.get(f"fi_msg_{TKi}"):
+        st.success(ss.pop(f"fi_msg_{TKi}"), icon=":material/check_circle:")
+    with st.expander(f"Import settings of this file (as SMS) · {IM.get('settings', '')}", icon=":material/tune:"):
+        st.caption("The values this file was imported with. Change any of them and import it again: the map, the "
+                   "statistics and the cleaning then start from the new import (its cleaning is dropped; clean it "
+                   "again in step 3). The defaults for the next files are in step 1.")
+        prods = sorted(common.CROPS)
+        p0 = RS.get("product") if RS.get("product") in prods else None
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            f_prod = st.selectbox("Physical product", [None] + prods, index=([None] + prods).index(p0),
+                                  key=f"fi_prod_{TKi}", format_func=lambda c: "unknown" if c is None else c,
+                                  on_change=_fi_product_changed, args=(TKi,))
+            f_tw = st.number_input("Weight to volume (lb/bu)", 1.0, 200.0,
+                                   float(RS.get("test_weight_lb_bu") or 60.0), 0.5, format="%.2f", key=f"fi_tw_{TKi}")
+            f_dm = st.number_input("Dry moisture (%)", 0.0, 60.0, float(RS.get("dry_moisture_pct") or 13.5), 0.1,
+                                   format="%.2f", key=f"fi_dm_{TKi}")
+            f_exp = st.checkbox("Expand dry moisture", value=bool(RS.get("expand_dry_moisture")), key=f"fi_exp_{TKi}")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            f_ums = st.checkbox("Use manual swath", value=bool(RS.get("use_manual_swath")), key=f"fi_ums_{TKi}")
+            WA_ = width_audit(read_points(D["shp"], mtime(D["shp"])))
+            w_log = max((r["logged width (ft)"] for r in WA_), default=None)
+            w0 = (float(RS.get("manual_swath_ft") or 15.0) if (RS.get("use_manual_swath") or not w_log)
+                  else float(w_log))
+            f_msw = st.number_input("Manual swath width (ft)", 0.1, 300.0, w0, 0.5,
+                                    format="%.2f", key=f"fi_msw_{TKi}", disabled=not f_ums)
+            f_umm = st.checkbox("Use manual moisture", value=bool(RS.get("use_manual_moisture")), key=f"fi_umm_{TKi}")
+            f_mm = st.number_input("Manual moisture (%)", 0.0, 80.0,
+                                   float(RS.get("manual_moisture_pct") or RS.get("dry_moisture_pct") or 13.5), 0.1,
+                                   format="%.2f", key=f"fi_mm_{TKi}", disabled=not f_umm)
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            f_min = st.number_input("Min. yield volume (bu/ac)", 0.0, 1e4, float(RS.get("min_yield") or 0.0), 1.0,
+                                    format="%.3f", key=f"fi_min_{TKi}")
+            f_max = st.number_input("Max. yield volume (bu/ac)", 0.0, 1e5, float(RS.get("max_yield") or 300.0), 10.0,
+                                    format="%.2f", key=f"fi_max_{TKi}")
+            f_sd = st.number_input("Start delay (s)", 0.0, 600.0, float(RS.get("start_delay_s") or 0.0), 0.5,
+                                   format="%.2f", key=f"fi_sd_{TKi}")
+            f_ed = st.number_input("Stop delay (s)", 0.0, 600.0, float(RS.get("stop_delay_s") or 0.0), 0.5,
+                                   format="%.2f", key=f"fi_ed_{TKi}")
+            f_fs = st.number_input("Flow shift (s)", -600.0, 600.0, float(RS.get("flow_shift_s") or 0.0), 0.5,
+                                   format="%.2f", key=f"fi_fs_{TKi}")
+        S_f = {"on": True, "product": f_prod, "test_weight_lb_bu": f_tw, "dry_moisture_pct": f_dm,
+               "expand_dry_moisture": bool(f_exp), "use_manual_swath": bool(f_ums), "manual_swath_ft": f_msw,
+               "use_manual_moisture": bool(f_umm), "manual_moisture_pct": f_mm, "min_yield": f_min, "max_yield": f_max,
+               "start_delay_s": f_sd, "stop_delay_s": f_ed, "flow_shift_s": f_fs}
+        changed = any((RS.get(k) if not isinstance(RS.get(k), float) else round(RS.get(k), 6))
+                      != (v if not isinstance(v, float) else round(v, 6)) for k, v in S_f.items() if k in RS)
+        if changed:
+            st.caption(":orange[These values differ from the ones the file was imported with: import it again to use "
+                       "them.]")
+        if st.button("Import this file again with these settings", key=f"fi_go_{TKi}", icon=":material/refresh:",
+                     type="primary" if changed else "secondary"):
+            with st.spinner("Importing the file again ..."):
+                try:
+                    ss[f"fi_msg_{TKi}"] = reimport_file(tag, S_f)
+                except Exception as e:                   # shown, never swallowed
+                    st.exception(e)
+                    return
+            st.rerun()
 
 
 def import_as_sms(shp: str, tag: str, folder: str, crop=None):
@@ -864,7 +1033,8 @@ def import_as_sms(shp: str, tag: str, folder: str, crop=None):
     R = si.resolve(S, crop or data_crop(shp))
     os.makedirs(folder, exist_ok=True)
     rep = si.apply(shp, os.path.join(folder, f"{tag}_imported.shp"), R)
-    rec = {"settings": si.describe(R), "left_out": dict(rep["left_out"]), "n_all": int(rep["n_in"]),
+    rec = {"resolved": {k: R.get(k) for k in si.DEFAULTS},
+           "settings": si.describe(R), "left_out": dict(rep["left_out"]), "n_all": int(rep["n_in"]),
            "n_in": int(rep["n_out"]), "all_readings": shp, "changed": list(rep["changed"]), "notes": list(rep["notes"])}
     return rep["path"], int(rep["n_out"]), rec
 
@@ -1798,7 +1968,8 @@ with st.container(border=True, key="oced_step_1"):
     # ---- Import as SMS: the Processing Settings SMS applies when it imports a harvest (engine/sms_import.py)
     S_p = import_settings()
     _pd = si.product_defaults(S_p["product"]) if S_p["product"] else None
-    with st.expander("Import as SMS (Processing Settings)" + ("" if S_p["on"] else ": off, the data as it is"),
+    with st.expander("Import as SMS (Processing Settings): the defaults for the data you open"
+                     + ("" if S_p["on"] else ": off, the data as it is"),
                      icon=":material/filter_alt:"):
         si_on = st.toggle("Import the data as SMS would", value=True, key="si_on",
                           help="SMS applies these settings when it imports a harvest: the yields computed with the "
@@ -2036,6 +2207,9 @@ with st.container(border=True, key="oced_step_2"):
                                                             else ""), border=True)
         if mcol:
             st.metric("Machines", f"{df0[mcol].astype(str).replace('', np.nan).nunique():,}", border=True)
+    if D.get("yield", True):
+        width_audit_box(df0)
+    file_import_panel(ss.active, D)
     B_ = boundary_of(ss.active)
     dflt_attr = (("Yld_Vol_Dr" if "Yld_Vol_Dr" in df0 else det.get("yield")) if D.get("yield", True) else
                  (OPX["rates"][0] if OPX["rates"] else None))
