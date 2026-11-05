@@ -1361,11 +1361,86 @@ def combine_settings(tag: str) -> dict:
             "max_pct": float(c.get("max_pct") or 10.0), "ticket_confirms": bool(c.get("ticket_confirms", True))}
 
 
+GATE_TEXT = {
+    "above_max_factor": "above the max factor ({mx:g} %): raise the max factor to apply it, or give the grower's weight, "
+                        "which can confirm it",
+    "above_max_factor_unconfirmed": "above the max factor ({mx:g} %) and the grower's weight did not confirm it",
+    "ci_includes_1": "not proven: its 95 % interval includes 1",
+    "sizes_disagree": "the 30 m and the 50 m cells disagree",
+    "below_min_factor": "below 1 %: nothing to correct",
+    "spatially_inconsistent": "one factor does not fit both halves of the field",
+    "no_link": "it never harvested side by side with the reference",
+    "too_few_pairs": "too few passes side by side with the reference",
+    "layout": "the method does not hold for how the combines shared the field (blocks)",
+}
+
+
+def factor_outcome(R: dict) -> dict | None:
+    """What the combine factor of a cleaning did: None when it was switched off (or one combine); else {applied
+    {combine: factor}, blocked [{combine, factor, ci_lo, ci_hi, cells, pass_pairs, why}], proposed seams, text}."""
+    M = R.get("machines") or {}
+    S = (R.get("settings") or {}).get("machines") or {}
+    if not M or not S.get("harmonise"):
+        return None
+    mx = 100 * float(S.get("max_factor") or 0.1)
+    fa = {str(k): float(v) for k, v in (M.get("factor_applied") or {}).items()}
+    applied = {m: f for m, f in fa.items() if abs(f - 1) > 1e-9}
+    blocked = []
+    for t in M.get("tests") or []:
+        m = str(t.get("machine"))
+        if t.get("primary") and m not in applied and t.get("factor") is not None:
+            why = GATE_TEXT.get(str(t.get("gate")), str(t.get("gate") or "not applied")).format(mx=mx)
+            blocked.append({"combine": m, "factor": float(t["factor"]), "ci_lo": t.get("ci_lo"), "ci_hi": t.get("ci_hi"),
+                            "cells": t.get("n_cells"), "pass_pairs": t.get("n_pass_pairs"), "why": why})
+    return {"applied": applied, "blocked": blocked, "reference": M.get("reference"),
+            "proposed": (M.get("proposed") or {}).get("seams"), "seams": M.get("seams") or {}}
+
+
+def factor_outcome_box(R: dict):
+    """The factor of the last cleaning in a box: applied (to whom) or not applied (why, and what it would do)."""
+    FO = factor_outcome(R)
+    if FO is None:
+        return
+    if FO["applied"]:
+        txt = ("The combine factor of the last cleaning was applied: "
+               + ", ".join(f"{m} x {f:.4f}" for m, f in FO["applied"].items())
+               + f" (the reference {FO['reference']} x 1). The map after the correction factors is in the Clean map tab.")
+        tone = ("#E8F7F0", "#00784D")
+    else:
+        tone = ("#FFF5E5", "#9A5B00")
+        txt = "The combine factor was switched on but NOT applied in the last cleaning"
+        if FO["blocked"]:
+            parts = []
+            for b in FO["blocked"]:
+                ci = (f", 95 % interval {float(b['ci_lo']):.4f}-{float(b['ci_hi']):.4f}"
+                      if b.get("ci_lo") is not None and b.get("ci_hi") is not None else "")
+                ev = (f", {int(b['cells'])} cells / {int(b['pass_pairs'])} pass pairs" if b.get("cells") else "")
+                parts.append(f"{b['combine']} would need x {b['factor']:.4f} ({100 * (b['factor'] - 1):+.2f} %{ci}{ev}): "
+                             f"{b['why']}")
+            txt += ": " + "; ".join(parts) + "."
+        else:
+            txt += ": no factor could be estimated (the combines did not harvest enough passes side by side)."
+        P_ = FO.get("proposed") or {}
+        if P_ and (P_.get("different_combines") or {}).get("after", {}).get("median_pct") is not None:
+            db = FO["seams"].get("different_combines", {}).get("before", {}).get("median_pct")
+            da = P_["different_combines"]["after"]["median_pct"]
+            sc = (FO["seams"].get("same_combine") or {}).get("median_pct")
+            if db is not None:
+                txt += (f" If it were applied, the passes side by side of different combines would go from {db:.2f} % to "
+                        f"{da:.2f} %" + (f" (the same combine's own passes: {sc:.2f} %)" if sc is not None else "") + ": "
+                        + ("it would bring them closer." if da < db else "it would make the seams WORSE, so the "
+                           "difference is not a calibration difference between the combines."))
+    st.html(f'<div class="oced-verdict" style="background:{tone[0]};border-color:{tone[1]};color:#1F2937">'
+            f'{html.escape(txt)}</div>')
+
+
 def seams_panel(C: dict | None):
     """Beside the combine factor: the differences between neighbouring passes of different combines and of the same
     combine, from the last cleaning of the file (R['machines']['seams'], a diagnostic that never changes the data)."""
     st.markdown("**Passes side by side** · the last cleaning of this file")
     SM = ((((C or {}).get("R") or {}).get("machines") or {}).get("seams")) or None
+    if C and C.get("R"):
+        factor_outcome_box(C["R"])
     if not SM:
         st.caption("Clean the file once: the differences between neighbouring passes of different combines and of the "
                    "same combine appear here. Then decide on the factor and clean again.")
@@ -1629,6 +1704,8 @@ def result_cards(tag: str, C: dict, path_only: bool = False):
               f"cleaning {c - r:+.2f}{brk} &rarr; <b>{c:,.2f}</b>" if r is not None else f"cleaned <b>{c:,.2f}</b>"]
         if harm_on and h is not None:
             s_.append(f"combine factor ({h - c:+.2f}) &rarr; <b>{h:,.2f}</b>")
+        elif factor_outcome(R) is not None:
+            s_.append("combine factor switched on but not applied (see the panel of the combine factor)")
         else:
             s_.append("no combine factor")
         if adjusted and f is not None and h is not None:
@@ -2351,6 +2428,12 @@ with st.container(border=True, key="oced_step_3"):
             explorer(C["shp"], key=f"clean_{key_of(C['shp'])}", height=480,
                      default=(R["main"] if A3 else ycol0),
                      outline=C["boundary"]["outline"] if C.get("boundary") else None)
+            if not corr and not A3 and factor_outcome(R) is not None:
+                st.divider()
+                st.markdown("##### After the correction factors")
+                factor_outcome_box(R)
+                st.caption("No correction was applied, so there is no second map: it appears when the combine "
+                           "factor is applied or the yields are adjusted to the grower's weight.")
             if corr:
                 st.divider()
                 st.markdown("##### After the correction factors")

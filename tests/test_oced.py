@@ -395,6 +395,10 @@ def test_app_two_combines_factor(field, tmp_path, monkeypatch):
         "COMBINE-A", "COMBINE-B"}
     if any(abs(float(v) - 1) > 1e-9 for v in rec["machines"]["factor_applied"].values()):
         assert any("change vs the clean map" in d.value.columns for d in at.dataframe)   # the corrected map
+    # what the factor did is said in plain words, applied or not (and why not)
+    boxes = [e.proto.body for e in at.get("html")]
+    assert any("combine factor of the last cleaning was applied" in h or "switched on but NOT applied" in h
+               for h in boxes)
 
 
 def test_app_start_over_empties_the_uploads(field, tmp_path, monkeypatch):

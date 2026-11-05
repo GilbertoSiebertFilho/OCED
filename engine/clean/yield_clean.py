@@ -2795,6 +2795,26 @@ def clean(path, S, C, log=print, source=None):
         R["machines"]["seams"] = machines_mod.seam_summary(Bk, float(D_s), R["machines"].get("factor_applied"),
                                                            int(Mset.get("min_pass_pairs") or 5))
         diag["seams"] = Bk
+        # a factor estimated but not applied (above the max factor, not proven ...): the seams it would give, so
+        # the user can decide whether to apply it (R["machines"]["proposed"]); a diagnostic, never applied
+        fa = {str(k): float(v) for k, v in (R["machines"].get("factor_applied") or {}).items()}
+        prop, gates = {}, {}
+        for t_ in R["machines"].get("tests") or []:
+            m_ = str(t_.get("machine"))
+            f_ = t_.get("factor")
+            if (t_.get("primary") and f_ is not None and np.isfinite(float(f_)) and t_.get("gate") != "applied"
+                    and abs(fa.get(m_, 1.0) - 1) < 1e-12):
+                prop[m_], gates[m_] = float(f_), str(t_.get("gate") or "")
+        if prop:
+            pf = g["_machine"].astype(str).map(lambda m: prop.get(m, 1.0)).to_numpy(float) * harm.to_numpy(float)
+            Bp = machines_mod.seam_blocks(g["_gx"].to_numpy(float)[kept], g["_gy"].to_numpy(float)[kept],
+                                          g["Pass_Id"].to_numpy()[kept], g["_machine"].astype(str).to_numpy()[kept],
+                                          vb[kept], (vb * pf)[kept], g["_hdg"].to_numpy(float)[kept], float(D_s))
+            allf = {m: fa.get(m, 1.0) * prop.get(m, 1.0) for m in set(fa) | set(prop)}
+            R["machines"]["proposed"] = {
+                "factors": prop, "gates": gates,
+                "seams": machines_mod.seam_summary(Bp, float(D_s), allf, int(Mset.get("min_pass_pairs") or 5)),
+                "note": "the factors estimated but not applied, and the seams if they were applied (a diagnostic)"}
     return g0, g, gx, gy, R, diag
 
 
