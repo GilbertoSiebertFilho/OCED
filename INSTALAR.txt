@@ -1,0 +1,157 @@
+OCED - Olds College Extract Data - instalação num computador novo
+================================================================
+
+Versão 0.3.0 (a versão aparece na barra de título e no painel lateral do app).
+
+O OCED abre os arquivos que vêm das máquinas (colheitadeiras, plantadeiras e pulverizadores: cartões e logs brutos,
+dados ISOXML e exportações de pontos), importa-os como o Ag Leader SMS, mostra o mapa de cada atributo, limpa os
+dados com o método 3-sigma (a sequência do SMS) e gera os shapefiles limpos, o shapefile para o DIFM, a colheita
+limpa no formato do próprio monitor e os relatórios.
+
+1. Baixe o zip do GitHub (Code > Download ZIP), extraia (botão direito > Extrair tudo) e ponha a pasta num disco
+   LOCAL, por exemplo  C:\Olds College Projects\OCED
+   Evite Documentos, Downloads e Desktop: nos computadores da Olds College eles ficam na rede, e o ambiente
+   Python e o app ficariam lentos. Não rode direto de dentro do zip.
+
+2. Python 3.12 ou mais novo (testado com 3.13 e 3.14). Se o computador não tem:
+   - https://www.python.org/downloads/  ->  instalar marcando "Add python.exe to PATH"; ou
+   - num terminal:  winget install Python.Python.3.14
+
+3. Dê dois cliques em install_oced.bat. Ele cria um ambiente próprio (.venv) dentro da pasta e instala os pacotes
+   de requirements.txt nas versões testadas de constraints.txt (precisa de internet, uns 600 MB, alguns minutos).
+   Termina com "packages OK" e "Done".
+
+4. Dê dois cliques em run_oced.bat. O app abre no navegador em http://localhost:8502
+   (a janela preta precisa ficar aberta enquanto você usa o app; fechar a janela fecha o app).
+
+ATUALIZAR uma instalação que já existe
+   Feche o app e dê dois cliques em atualizar_oced.bat. Ele baixa a versão mais nova do GitHub (versão main),
+   guarda a versão atual em _backup\<data-hora>, põe a nova no lugar e confere o código; se algo falhar, volta a
+   versão anterior sozinho. A pasta de trabalho (workspace) e o ambiente Python (.venv) não são mexidos. Se os
+   pacotes do Python mudarem, ele avisa para rodar install_oced.bat uma vez.
+   Quem atualiza a partir da versão 0.2.0: o atualizar_oced.bat dessa versão atualiza o app, mas não copia a pasta
+   tests nem se substitui. Depois dessa atualização, baixe uma vez o atualizar_oced.bat novo do GitHub, ponha-o no
+   lugar do antigo e rode-o de novo: a partir daí ele traz também a pasta tests.
+   Quando o próprio atualizador muda, ele não se substitui (um .bat em execução não pode): grava o novo ao lado,
+   como atualizar_oced.new.bat, e avisa no fim. Feche a janela, apague atualizar_oced.bat e renomeie
+   atualizar_oced.new.bat para atualizar_oced.bat.
+
+Onde ficam os resultados
+   Cada arquivo aberto ganha uma pasta de trabalho em workspace\<data-hora>_<nome>\ com:
+   - uploads\ (os arquivos enviados pelo navegador) e input\ (o que foi descompactado: deles, de um zip digitado
+     no passo 1 e dos zips dentro de uma pasta digitada, tudo o que o zip tem; uma pasta digitada é lida no lugar);
+   - decoded\ (os pontos extraídos de um cartão ou log bruto, <nome>_decoded.shp, o relatório da extração
+     <nome>_decode_report.json e o arquivo importado como o SMS, <nome>_imported.shp);
+   - imported\ (uma exportação de pontos importada como o SMS, <nome>_imported.shp);
+   - boundary\ (só quando o boundary foi enviado pelo navegador; um boundary digitado é lido no lugar);
+   - clean\ (a limpeza de cada arquivo: o registro JSON, o relatório PDF e os pontos marcados) e
+     clean_shapefiles\ (os shapefiles limpos e, de cada um, o shapefile para o DIFM, <nome>_sms3s_clean_DIFM.zip,
+     <nome>_sms3s_clean_adjusted_DIFM.zip ou <nome>_3s_clean_DIFM.zip, veja Shapefile para o DIFM);
+   - native\<nome>\ (a colheita limpa gravada pelo passo 4 no formato do monitor, cn1, gs3 ou jdl, ou em ISOXML,
+     com o zip que o botão do passo 4 baixa; gravar o mesmo formato de novo troca o conjunto anterior);
+   - sections\ (só para exportações do Operations Center por seção: o arquivo reduzido a uma leitura por segundo);
+   - superseded\<data-hora>\ (uma limpeza que deixou de valer porque o arquivo foi extraído ou importado de novo:
+     guardada aqui, não apagada);
+   - oced_work.json (o trabalho salvo: abre de novo pelo painel lateral, também depois de mover a pasta).
+   Os mesmos arquivos são baixados pelos botões do passo 4. Para gravar a colheita limpa no formato bruto do
+   monitor (passo 4), o cartão ou os logs de onde ela foi extraída precisam continuar no computador (na pasta
+   input\ do trabalho, ou onde foram lidos).
+   A pasta workspace fica dentro da pasta do app. Para usar outra (mais curta, por exemplo), defina a variável de
+   ambiente OCED_WORKSPACE antes de abrir o app: num Prompt de Comando, setx OCED_WORKSPACE C:\OCED_work ; depois
+   feche a janela preta do app e abra-o de novo com dois cliques em run_oced.bat, ou de um Prompt de Comando novo
+   (o setx não muda o Prompt de Comando em que foi digitado). Os trabalhos salvos e o cn1_card_names.json (os nomes
+   de cartão Case IH já dados) ficam na pasta antiga: para mantê-los, mova-os para a pasta nova com o app fechado.
+
+Dados ISOXML (ISO 11783)
+   Além dos cartões e logs (Case IH / New Holland .cn1, John Deere .jdl e GreenStar 3), o passo 1 lê os dados de
+   colheita em ISOXML: a pasta TASKDATA (TASKDATA.XML com os arquivos TLG*.XML e TLG*.BIN), uma ou várias, também
+   o zip de zips que o portal de telemetria entrega. Eles entram como o SMS os lê (um log de cada vez) e a colheita
+   limpa pode ser gravada de novo em ISOXML no passo 4. Dados ISOXML de plantadeira ou pulverizador não são lidos:
+   abra a exportação de pontos deles.
+
+Zip danificado na entrada (qualquer formato)
+   Um zip danificado entre os zips da entrada (um zip dentro de um zip, ou um zip numa pasta digitada) é deixado de
+   fora e os outros são lidos: o que estava nele NÃO entra nos dados. O app avisa no passo 1, e o nome do zip e o
+   motivo ficam no relatório da extração (decode_report.json), no registro (JSON) e no relatório (PDF) da limpeza
+   e no trabalho salvo, que repete o aviso quando é aberto de novo. Um zip danificado dado sozinho é recusado.
+
+Colheita limpa no formato do monitor (passo 4)
+   Além do shapefile, o passo 4 grava a colheita limpa no formato bruto de onde ela veio: cartão Case IH / New
+   Holland (.cn1), cartão John Deere GreenStar 3, logs John Deere Gen4 (.jdl) ou ISOXML TASKDATA; para uma
+   exportação de pontos, só ISOXML. O conjunto ISOXML é novo, feito das leituras limpas (não é cópia do conjunto do
+   monitor), com um log de tempo por colhedora e mais logs quando as leituras não cabem em sequência num só (o SMS
+   mostra um dataset por log). Ainda não testado no SMS: o SMS ainda não leu esses arquivos de volta; importe-os
+   primeiro num projeto de teste, não no projeto que tem os dados originais.
+
+Passes do Optimize Swath Widths (passo 3)
+   Junto das outras opções da limpeza SMS 3-sigma, o passo 3 tem "Optimize Swath Widths passes" (1 a 3; o padrão é
+   1). Use 2 ou 3 só para repetir uma limpeza do SMS em que Clip + Optimize Swath Widths foi adicionado esse número
+   de vezes na cadeia de análise: cada passe a mais recorta de novo no boundary e estreita o que o passe anterior
+   deixou. O valor fica salvo com o trabalho, aparece no registro da limpeza (JSON) e na linha Optimize Swath Widths
+   do relatório, e mudá-lo depois de limpar faz o app pedir para limpar de novo.
+
+Shapefile para o DIFM
+   O DIFM (difm.farm) lê shapefiles no formato da exportação de shapefile do Ag Leader SMS, não dados brutos. Ao
+   lado do shapefile limpo de cada arquivo, o passo 4 oferece "Shapefile for DIFM" (também em clean_shapefiles\): é
+   esse zip que se envia ao DIFM. O de uma colheita (<nome>_sms3s_clean_DIFM.zip) tem os mesmos pontos limpos, nas
+   mesmas posições, só com os campos do SMS que o DIFM mapeia (Yld_Mass_D, Yld_Vol_Dr, Track_deg_, Distance_f,
+   Elevation_, Moisture__, Y_Offset_f, Speed_mph_, Time, Swth_Wdth_ e os demais da exportação), nas larguras do
+   arquivo que o DIFM já leu, com os valores do arquivo limpo: os textos como estão e os números com 6 casas
+   decimais (mais do que qualquer monitor mede; a exportação do SMS tem 4). Um número que o arquivo limpo guarda com
+   mais casas é arredondado, e um zero sai como 0.000000, nunca -0.000000. Com 15 casas o zip de um talhão grande
+   passava de 10 MB; se o zip ainda passar de 10 MB, o passo 4 avisa. Y_Offset_f é 0 quando a origem não tem
+   deslocamento lateral; tudo em WGS 84.
+   Campo que o arquivo limpo não tem (uma exportação do Operations Center não traz Field, Dataset, Product,
+   Duration_s, Yld_Vol_We nem Yld_Mass_D): só é preenchido com o que sai exatamente dos próprios valores do arquivo
+   limpo e da importação como o SMS, nunca com valor inventado. Massa = volume x o peso por bushel (lb/bu) da
+   importação, e volume = massa / esse peso, no úmido e no seco (quando a importação calculou as produtividades com
+   ele); Duration_s = o intervalo entre leituras seguidas da mesma colhedora, quando 90 % delas têm o mesmo (1 s
+   num log de uma leitura por segundo); Field = o talhão que os metadados da exportação citam, Product = a cultura
+   que a importação leu do arquivo, Dataset = a colhedora de cada leitura. O que não dá para tirar fica vazio, e
+   leituras sem Yld_Mass_D ou sem Yld_Vol_Dr (os campos que o DIFM mapeia como produtividade) viram aviso no passo 4.
+   Time e Date são datas, a data de cada leitura: a data da própria exportação do SMS como está; para um horário, o
+   dia desse horário, com uma regra só para todo horário em UTC (logs e cartões John Deere, e qualquer horário que
+   diz o seu fuso, como o IsoTime de uma exportação do Operations Center): o relógio deste computador naquele
+   instante, como o SMS mostra (o Harv_Day da limpeza pode dar um dia de diferença nessas leituras perto da
+   meia-noite); horário sem fuso, de outra origem, fica como está (dados ISOXML: o horário é o relógio do próprio
+   monitor, que o SMS mostra como está, então cada leitura fica no seu dia); senão o Harv_Day ou a data no nome do
+   dataset.
+   Um zip gravado por uma versão anterior (15 casas) é gravado de novo quando o passo 4 o mostra.
+   O de uma plantadeira ou
+   pulverizador (<nome>_3s_clean_DIFM.zip) mantém as próprias colunas, com as datas como datas (a unidade da taxa
+   se escolhe no Define Features do DIFM); ainda não foi testado no DIFM. O shapefile limpo continua com todas as
+   colunas.
+   Qual produtividade vai para o DIFM: quando a limpeza ajustou a produtividade (fator de colhedora aplicado e/ou
+   peso do produtor usado para ajustar), o passo 4 pergunta, na hora de gerar o arquivo da colheita:
+   - "3-sigma + combine correction and grower's weight (adjusted yield)", o padrão, grava
+     <nome>_sms3s_clean_adjusted_DIFM.zip: Yld_Vol_Dr é a produtividade ajustada da limpeza (Yld_Harm = seca limpa x
+     fator de colhedora; Yld_Level = seca limpa x fator de colhedora x L quando o peso do produtor ajusta) e
+     Yld_Mass_D, Yld_Mass_W e Yld_Vol_We são os do monitor (os do arquivo limpo, ou os preenchidos com o lb/bu da
+     importação) x o mesmo fator de cada leitura: o DIFM dá o mesmo
+     resultado por massa ou por volume, e o peso por bushel e a umidade continuam os do monitor (leitura com
+     produtividade 0 continua 0). A opção cita só o que foi aplicado (colhedora, peso do produtor ou os dois);
+   - "3-sigma only (the monitor's yield)" grava <nome>_sms3s_clean_DIFM.zip, com a produtividade seca do monitor,
+     limpa; o passo 4 avisa que a ajustada não está nesse arquivo.
+   Sem ajuste (nenhum fator aplicado; sem peso do produtor, ou peso usado só para validar) não há pergunta e sai só
+   o <nome>_sms3s_clean_DIFM.zip. Os dois arquivos podem existir; o passo 4 oferece o escolhido, a legenda diz qual
+   produtividade ele leva (com os fatores de colhedora e o L) e o registro da limpeza (JSON, shapefile_for_difm)
+   guarda qual foi gerado: ao abrir o trabalho de novo a escolha continua; uma limpeza nova volta ao padrão. A seca
+   simétrica (Yld_Dry_Sy) não é um ajuste e não tem campo nesse formato. Uma limpeza que precisa ser refeita não
+   ganha esse arquivo; se a gravação falhar (o zip aberto em outro programa), o botão "Write it again" tenta de novo.
+
+Testes
+   Os testes (pasta tests\) são para quem desenvolve e vêm com a versão que testam (o atualizar_oced.bat desta
+   versão também os copia; quem vem da 0.2.0, veja ATUALIZAR). Numa instalação, na pasta do app:
+   .venv\Scripts\python.exe -m pytest -q tests ; numa cópia do GitHub (clone ou o zip de Code > Download ZIP):
+   python -m pytest -q tests .
+
+Problemas comuns
+- "Python was not found": instale o Python (passo 2) e rode install_oced.bat de novo.
+- Falha no pip: verifique a internet ou o proxy da rede e rode install_oced.bat de novo (ele retoma).
+- A porta 8502 já está em uso: feche a outra janela do app (ou reinicie o computador).
+- "DLL load failed" ou "The filename or extension is too long": a pasta está num caminho comprido demais para o
+  Windows. Use uma pasta curta, como C:\Olds College Projects\OCED, e rode install_oced.bat de novo.
+- O app diz que a pasta de trabalho (workspace) é funda demais: um arquivo da limpeza passaria dos 259 caracteres
+  que o Windows abre. Use uma pasta de trabalho curta com OCED_WORKSPACE (veja Onde ficam os resultados) e abra
+  os dados brutos de novo (passo 1).
+- O mapa aparece sem a imagem de satélite: o computador está sem internet; os pontos e as faixas aparecem igual.

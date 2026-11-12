@@ -1,0 +1,18 @@
+# OCED - Olds College Extract Data: Python packages (Python 3.12+; tested with Python 3.14 on Windows 11). No R needed.
+#   python -m pip install -r requirements.txt
+geopandas>=1.0
+shapely>=2.0
+pyogrio>=0.9
+pyproj>=3.6
+numpy>=2.0
+pandas>=2.2
+scipy>=1.13
+scikit-image>=0.24
+matplotlib>=3.9
+reportlab>=4.2
+pymupdf>=1.24
+pyarrow>=15
+pillow>=10          # already required by streamlit and matplotlib; app/brand.py opens the logo for the page icon
+pydeck>=0.9         # the maps (also installed with streamlit)
+streamlit>=1.61      # tested version 1.61.1: the app uses dataframe selection_default and callable download data
+pytest>=8

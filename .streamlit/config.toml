@@ -1,0 +1,33 @@
+# OCED - Olds College Extract Data: Streamlit settings (read when the app is started from this folder: run_oced.bat).
+# The theme is the Olds College palette of assets/brand/BRAND.md (app/brand.py holds the same values for the page).
+# No external font: the system sans-serif, so the app works offline (the satellite image under the maps needs the
+# internet).
+[server]
+port = 8502                   # OCED's port (another Streamlit app can use 8501 at the same time)
+maxUploadSize = 4096          # MB: zipped monitor cards can be large; a folder path in step 1 avoids the upload
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"       # no Deploy button / developer menu at the top right; the settings menu (theme) stays
+
+[theme]
+base = "light"
+primaryColor = "#00358E"             # Olds College navy: buttons, active states, focus
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F7FC"
+textColor = "#1F2937"
+linkColor = "#0077B6"                # the light blue darkened to 4.9:1 on white (AA); #009CDE itself is 3.0:1
+borderColor = "#D7E3F2"
+font = "sans-serif"
+baseRadius = "6px"
+showSidebarBorder = true
+greenColor = "#00B373"               # kept / success
+orangeColor = "#F5A623"              # removed / warnings
+blueColor = "#009CDE"                # accents
+
+[theme.sidebar]
+backgroundColor = "#F3F7FC"
+secondaryBackgroundColor = "#E6EEF8"
+borderColor = "#D7E3F2"
