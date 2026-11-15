@@ -9,14 +9,20 @@ operation), so that the data OCED maps and cleans is the data SMS would hold aft
     rep = si.apply(shp, out_shp, R)                 # writes the imported file (records byte for byte, cells patched)
 
 SMS's settings (Processing Settings of a Grain Harvest operation) and the values OCED gives them when the user leaves
-them empty (resolve), per source, as SMS made its products for the raw data it read:
-    John Deere files (GreenStar 3 cards, Gen4 .jdl logs) and John Deere Operations Center exports: Weight To Volume
-        and Dry Moisture of the file's crop (the decode report's "monitor_product": a GreenStar 3 card's own crop
-        definition; for a Gen4 log or an Operations Center export the values SMS gives that crop,
-        common.JD_SMS_CROPS), Min. Yield Volume 5.000 and Max. Yield Volume 10,000.00 bu/ac (SMS_JD_MIN_YIELD /
-        SMS_JD_MAX_YIELD, SMS's values for these files; SMS can hold another maximum for a product, so the maximum
-        stays editable); SMS's product table (below)
+them empty (resolve), per source: for raw monitor data as SMS made its products for the raw data it read, for a point
+file as SMS's generic import holds it:
+    John Deere files (GreenStar 3 cards, Gen4 .jdl logs): Weight To Volume and Dry Moisture of the file's crop (the
+        decode report's "monitor_product": a GreenStar 3 card's own crop definition; for a Gen4 log the values SMS
+        gives that crop, common.JD_SMS_CROPS), Min. Yield Volume 5.000 and Max. Yield Volume 10,000.00 bu/ac
+        (SMS_JD_MIN_YIELD / SMS_JD_MAX_YIELD, SMS's values for these files; SMS can hold another maximum for a
+        product, so the maximum stays editable); SMS's product table (below)
         only when the file carries no crop definition (or a crop with no SMS value established).
+    Point exports (fmt "point_export": a point shapefile, a .kml / .kmz converted to one, an SMS export; and
+        "jd_ops_center", a John Deere Operations Center export): as SMS's generic import of a point file holds it,
+        which keeps every reading - Min. Yield Volume 0 and no Max. Yield Volume (SMS_POINT_MIN_YIELD /
+        SMS_POINT_MAX_YIELD, labelled SRC_POINT: only a reading with no dry yield, or a negative one, is left out),
+        and the Weight To Volume and Dry Moisture of SMS's product table by the crop name (below), not the values
+        SMS gives a John Deere crop when it reads the machine's own logs.
     ISOXML task data (ISO 11783 TASKDATA with TLG time logs, engine/formats/isoxml.py): Weight To Volume and Dry
         Moisture = what SMS gives the task's crop (isoxml.ISO_SMS_CROPS, in the decode report's "monitor_product";
         not the density and reference moisture the log carries), Min. Yield Volume 5.000 and Max. Yield Volume
@@ -24,13 +30,13 @@ them empty (resolve), per source, as SMS made its products for the raw data it r
         and reference moisture for a crop code or name OCED does not know ("from the file"; what SMS gives such a
         task is not known); and, for a task with no crop and no density in its log, what SMS stores for a dataset
         without a product (isoxml.ISO_SMS_NO_PRODUCT, labelled SRC_ISO_NONE).
-    Case IH / New Holland cards and every other input (point exports): SMS's product table, SMS_PRODUCTS, as SMS
-        stores it: Wheat - Spring 60 lb/bu, 13.5 %, 5-300 bu/ac; Wheat - Durum 60, 13.0 %, 5-300; Barley (Fall /
+    Case IH / New Holland cards and a source of no known format (fmt None): SMS's product table, SMS_PRODUCTS, as
+        SMS stores it: Wheat - Spring 60 lb/bu, 13.5 %, 5-300 bu/ac; Wheat - Durum 60, 13.0 %, 5-300; Barley (Fall /
         Spring) 48, 14.5 %, 5-200; Canola 50, 8.5 %, 10-400; Field Peas and Chick Peas 60, 13.0 %, 5-200; Lentils 60,
         14.0 %, 5-200; Oats - Spring 32, 14.0 %, 5-200; Flax 60, 10.0 %, 10-400; Rye - Annual 56, 14.0 %, 0-500. The
         crop names cards and exports carry ('DURUM', 'Durum Wheat', 'CANOLA', 'HRS wheat', 'Barley - Fall' ...) are
         mapped to these products by sms_product(). A crop outside the table: the crop table of
-        engine.formats.common.CROPS, 5-300 bu/ac.
+        engine.formats.common.CROPS, 5-300 bu/ac (a point export: the crop table, with no limits).
     Expand Dry Moisture       off everywhere: grain drier than the dry moisture is not raised (one-sided shrink)
     Use Manual Swath          off; Manual Swath Width 15.00 ft (the per-area yields are scaled by logged / manual)
     Use Manual Moisture       off; Manual Moisture = the dry moisture
@@ -39,11 +45,15 @@ them empty (resolve), per source, as SMS made its products for the raw data it r
                               earlier (positive) or later (negative), within each run of continuous logging
 A value the user sets always wins; resolve() says per value where it came from (R["sources"]: "you", "file", "SMS
 for this John Deere crop", "SMS for this crop in ISOXML task data", "SMS for ISOXML task data without a product",
-"SMS product table", "SMS for John Deere files", "SMS for ISOXML task data", "crop table" or "OCED default").
+"SMS product table", "SMS for John Deere files", "SMS for ISOXML task data", "SMS generic import of point files",
+"crop table" or "OCED default"). The record of an import (engine.run.import_as_sms, the app) carries
+IMPORT_REVISION, so that a work saved by a version with other rules can say how this one imports its files.
 
-Checked on an SMS export: wet mass / wet volume = the product's weight to volume, dry / wet volume = (100 - M) /
-(100 - Ms) above the dry moisture Ms and exactly 1 below it, no reading below the minimum yield. Pure Python (no
-Streamlit).
+Checked on SMS exports of raw data: wet mass / wet volume = the product's weight to volume, dry / wet volume =
+(100 - M) / (100 - Ms) above the dry moisture Ms and exactly 1 below it, no reading below the minimum yield. Checked on
+SMS's generic imports of point files (shapefiles, KML converted to shapefiles, Operations Center exports): SMS holds
+every record of the file, also readings at 0 and far above the product's maximum, and its dry yield is the one
+computed again from the wet mass with the product's weight to volume and dry moisture. Pure Python (no Streamlit).
 
 The yield columns are found by what they hold, not by one vendor's names (yield_columns): the wet mass per area
 (Yld_Mass_W of SMS, WetMass of the John Deere Operations Center), the wet and the dry volume (Yld_Vol_We; Yld_Vol_Dr,
@@ -69,13 +79,17 @@ from engine.formats import common
 AUTO = "auto"                     # min_yield: the source's / product's minimum (None = no minimum)
 SRC_YOU, SRC_FILE, SRC_TABLE = "you", "file", "SMS product table"
 SRC_JD, SRC_CROPS, SRC_OCED = "SMS for John Deere files", "crop table", "OCED default"
-# a Gen4 log's or an Operations Center export's crop: the weight to volume and dry moisture SMS gives that crop
-# (common.JD_SMS_CROPS), not the values the file states (monitor_product "basis" "sms_crop")
+# a Gen4 log's crop: the weight to volume and dry moisture SMS gives that crop (common.JD_SMS_CROPS), not the values
+# the file states (monitor_product "basis" "sms_crop"); an Operations Center export carries the same monitor_product,
+# but it is a point export, imported with SMS's product table (resolve: family "point")
 SRC_JD_CROP = "SMS for this John Deere crop"
 # ISOXML task data: the weight to volume and dry moisture SMS gives the task's crop (isoxml.ISO_SMS_CROPS), and the
 # yield volume limits SMS stores with the products it makes of such task data
 SRC_ISO_CROP, SRC_ISO = "SMS for this crop in ISOXML task data", "SMS for ISOXML task data"
 SRC_ISO_NONE = "SMS for ISOXML task data without a product"     # monitor_product "basis" "sms_no_product"
+# a point export (shapefile, KML / KMZ, Operations Center or SMS export): the yield volume limits of SMS's generic
+# import of a point file, which keeps every reading of the file
+SRC_POINT = "SMS generic import of point files"
 
 # SMS's product table: SMS product -> (Weight To Volume lb/bu, Dry Moisture %, Min. / Max. Yield Volume bu/ac), as
 # SMS stores the products it made for the Case IH / New Holland cards it read (Processing Settings)
@@ -122,9 +136,17 @@ _PRODUCT_RE = [(re.compile(p, re.I), name) for p, name in _PRODUCT_RULES]
 SMS_JD_MIN_YIELD, SMS_JD_MAX_YIELD = 5.0, 10_000.0
 SMS_MIN_YIELD = 5.0               # SMS's Min. Yield Volume of a product
 MAX_YIELD_OTHER = 300.0           # a crop outside SMS's table
-JOHN_DEERE_FORMATS = ("jd_gs3_rcd", "jd_jdl", "jd_ops_center")    # jd_ops_center: an Operations Center export
+# SMS's generic import of a point file: every record kept (no minimum above 0, no maximum)
+SMS_POINT_MIN_YIELD, SMS_POINT_MAX_YIELD = 0.0, None
+JOHN_DEERE_FORMATS = ("jd_gs3_rcd", "jd_jdl")
 CNH_FORMATS = ("cnh_cn1",)
 ISOXML_FORMATS = ("isoxml",)
+POINT_EXPORT = "point_export"     # the format of a point export (engine.run.import_format)
+OPS_CENTER = "jd_ops_center"      # an Operations Center export: a point export too (its own id for the DIFM file)
+POINT_FORMATS = (POINT_EXPORT, OPS_CENTER)
+# the revision of these rules an import record carries ("revision"); a record without one was made before point
+# exports followed SMS's generic import (min 0, no max, the product table's weight and moisture)
+IMPORT_REVISION = 2
 # the families whose import takes the crop definition of the file (the decode report's monitor_product) and SMS's
 # 5 / 10,000 bu/ac limits; their decoder keeps the file's crop unless the user types a weight or a moisture
 FILE_CROP_FAMILIES = ("john_deere", "isoxml")
@@ -152,6 +174,16 @@ PASS_BREAK_DEG = 60.0                 # or turns by more than this
 GAP_PERIODS = 2.0                     # logging stopped where the time step exceeds the reading's own duration by
                                       # more than this many median durations (a new run: a new pass for the delays)
 DRY_MASS_NAMES = ("yld_mass_d", "yld_mass_dry", "drymass", "dry_mass")       # no key of detect_columns: by its name
+# the notes of an import whose product is not known (no weight to volume or dry moisture): a point export with its own
+# dry yield and dry mass (SMS's exports; one of John Deere data names the variety as its product) keeps them, said
+# plainly; any other file keeps its yields too, with the suffix for a point export (SMS's import needs a product)
+OWN_YIELDS_NOTE = ("the product of this point export is not known, so the file's own dry yields (bu/ac) and dry masses "
+                   "are used as it gives them; choosing the product converts them with its weight to volume and dry "
+                   "moisture (the dry yield computed again from the wet mass)")
+UNKNOWN_PRODUCT_NOTE = ("weight to volume or dry moisture unknown (product not recognised): the yields are used as the "
+                        "file gives them")
+UNKNOWN_POINT_SUFFIX = ("; SMS's generic import of a point file needs a product, so choose one to import it as SMS "
+                        "would")
 OTHER_YIELD_NAMES = ("vryieldmas",)   # per-area yields with no known basis: scaled with the manual swath only
 
 
@@ -190,14 +222,16 @@ def crop_key(text) -> str | None:
 
 
 def format_family(fmt) -> str | None:
-    """'john_deere' for a GreenStar 3 card, Gen4 .jdl logs or an Operations Center export, 'cnh' for a Case IH / New
-    Holland card, 'isoxml' for ISOXML task data (whatever the maker of the display), None for anything else (a
-    point export of another software, unknown)."""
+    """'john_deere' for a GreenStar 3 card or Gen4 .jdl logs, 'cnh' for a Case IH / New Holland card, 'isoxml' for
+    ISOXML task data (whatever the maker of the display), 'point' for a point export (POINT_FORMATS: a point file of
+    any software, an Operations Center export), None for anything else (unknown)."""
     f = str(fmt or "").strip().lower()
     if not f:
         return None
     if f in ISOXML_FORMATS:
         return "isoxml"
+    if f in POINT_FORMATS or "ops_center" in f:
+        return "point"
     if f in CNH_FORMATS or f.startswith("cnh"):
         return "cnh"
     if f in JOHN_DEERE_FORMATS or f.startswith("jd") or "deere" in f or "ops_center" in f:
@@ -260,19 +294,21 @@ def resolve(S: dict, crop=None, monitor: dict | None = None, fmt: str | None = N
     crop: the crop name of the data (a unit's crop, the file's Crop / Product column, the Deere metadata).
     monitor: the decode report's "monitor_product" - {"crop", "test_weight_lb_bu", "dry_moisture_pct", and
         optionally "min_yield", "max_yield" (None = no maximum), "source"}: the crop definition the file carries.
-    fmt: the source format (engine.formats FORMAT_ID: "jd_gs3_rcd", "jd_jdl", "cnh_cn1"; "jd_ops_center" for an
-        Operations Center export; None for any other point export).
+    fmt: the source format (engine.formats FORMAT_ID: "jd_gs3_rcd", "jd_jdl", "cnh_cn1", "isoxml"; "point_export"
+        for a point export, "jd_ops_center" for an Operations Center export: engine.run.import_format).
     John Deere sources: the file's weight and dry moisture stand in for the product table when no product is chosen or
     the product chosen is the file's crop, min / max from the monitor dict, else 5 / 10,000 bu/ac. ISOXML task data
     ("isoxml"): the same, with the monitor dict's values labelled SRC_ISO_CROP / SRC_ISO. Case IH / New
-    Holland: the product table (the file's values only for a crop outside it). fmt None with a monitor dict: the file's
-    values, its min / max where it gives them, else the product table's. No monitor dict and fmt None (a point
-    export of another software): the product table.
-    The weight and dry moisture of a monitor dict whose "basis" is "sms_crop" (a Gen4 log, an Operations Center
-    export: SMS's values for the crop, common.jd_monitor_product) are labelled SRC_JD_CROP, not "file".
+    Holland: the product table (the file's values only for a crop outside it). Point exports ("point_export",
+    "jd_ops_center"): SMS's generic import - min 0 and no max (SRC_POINT), the product table's weight and moisture
+    (the crop table's for a crop outside it), whatever the monitor dict of an Operations Center export says. fmt None
+    with a monitor dict: the file's values, its min / max where it gives them, else the product table's. No monitor
+    dict and fmt None (a source of no known format): the product table.
+    The weight and dry moisture of a monitor dict whose "basis" is "sms_crop" (a Gen4 log: SMS's values for the crop,
+    common.jd_monitor_product) are labelled SRC_JD_CROP, not "file".
     Returns the settings plus "sources" {key: you | file | SMS for this John Deere crop | SMS product table | SMS for
-    John Deere files | crop table | OCED default}, "defaults" {key: the value an empty setting gets}, "sms_product",
-    "family", "monitor_source"."""
+    John Deere files | SMS generic import of point files | crop table | OCED default}, "defaults" {key: the value
+    an empty setting gets}, "sms_product", "family", "monitor_source"."""
     S = settings(S)
     fam = format_family(fmt)
     mon = monitor if isinstance(monitor, dict) and monitor else None
@@ -283,7 +319,8 @@ def resolve(S: dict, crop=None, monitor: dict | None = None, fmt: str | None = N
     if sms_name is None and prod in CROP_PRODUCT:
         t_tw, t_dm, t_min, t_max, sms_name, t_src = table_values(CROP_PRODUCT[prod])
     same = not S["product"] or mon_key == prod
-    use_file = bool(mon) and same and (fam != "cnh" or sms_name is None)
+    # a point export: SMS's generic import takes the product's values, not a crop definition the export carries
+    use_file = bool(mon) and same and fam != "point" and (fam != "cnh" or sms_name is None)
     # the monitor dict carries SMS's values for the file's John Deere crop, not the file's own (a record made before
     # "basis" was kept says so in its source text)
     sms_crop = bool(mon) and (mon.get("basis") == "sms_crop" or "JD_SMS_CROPS" in str(mon.get("source") or ""))
@@ -303,6 +340,8 @@ def resolve(S: dict, crop=None, monitor: dict | None = None, fmt: str | None = N
                 d[k], src[k] = (None if mon[k] is None else float(mon[k])), lab
             else:
                 d[k], src[k] = jd, lab
+        elif fam == "point":
+            d[k], src[k] = (SMS_POINT_MIN_YIELD if k == "min_yield" else SMS_POINT_MAX_YIELD), SRC_POINT
         elif fam is None and use_file and k in mon:
             d[k], src[k] = (None if mon[k] is None else float(mon[k])), SRC_FILE
         else:
@@ -356,10 +395,12 @@ def describe_sources(R: dict) -> str:
     src = R.get("sources") or {}
     head = (f"SMS product {R['sms_product']}: " if R.get("sms_product") and SRC_TABLE in src.values() else "")
 
-    def f(v, d=2):
-        return "none" if v is None else f"{float(v):,.{d}f}"
-    parts = [f"weight to volume {f(R.get('test_weight_lb_bu'))} lb/bu", f"dry moisture {f(R.get('dry_moisture_pct'))} %",
-             f"min. yield volume {f(R.get('min_yield'), 3)} bu/ac", f"max. yield volume {f(R.get('max_yield'))} bu/ac"]
+    def f(v, unit, d=2):
+        return "none" if v in (None, AUTO) else f"{float(v):,.{d}f} {unit}"
+    parts = [f"weight to volume {f(R.get('test_weight_lb_bu'), 'lb/bu')}",
+             f"dry moisture {f(R.get('dry_moisture_pct'), '%')}",
+             f"min. yield volume {f(R.get('min_yield'), 'bu/ac', 3)}",
+             f"max. yield volume {f(R.get('max_yield'), 'bu/ac')}"]
     return head + ", ".join(p + (f" ({src[k]})" if src.get(k) else "") for p, k in zip(parts, RESOLVED_KEYS))
 
 
@@ -499,15 +540,20 @@ def _group_counts(df, C, mask) -> dict:
     return {str(a): int(b) for a, b in zip(u, k)}
 
 
-def apply(shp: str, out_shp: str, R: dict, log=lambda m: None) -> dict:
+def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | None = None) -> dict:
     """Import a standard harvest point file as SMS would: manual swath / moisture, flow shift, the weight to volume
     and dry moisture (wet volume, dry mass and dry volume computed again from the wet mass), the start / stop delays
     and the yield volume limits. Writes out_shp with the kept records byte for byte and the changed cells patched
     (engine.clean.yield_clean.write_points); a file whose records GDAL reads differently from the raw .dbf (deleted
     records, a damaged .shx) is written through GDAL instead, which a note says. When nothing changes and nothing is
     left out the file is not copied.
+    labels: {text column: value} written in every kept record (a decoded file whose yields are converted with another
+    crop than the one it is labelled with: {"Product": ..., "Crop": ...}); a column the file lacks is added after its
+    own ones.
     Returns {path, n_in, n_out, left_out: {step: n}, left_out_by_group: {step: {machine: n}}, changed: [columns],
-    applied: {setting: True / False}, settings, notes}."""
+    relabelled: [columns], applied: {setting: True / False}, settings, notes, own_yields}. own_yields: True for a
+    point export whose product is not known and which carries its own dry yield (bu/ac) and dry mass: its yields are
+    the file's own (OWN_YIELDS_NOTE); another file of an unknown product gets UNKNOWN_PRODUCT_NOTE."""
     import pyogrio
     from engine.clean import yield_clean as yc
     if R.get("min_yield") == AUTO or "sources" not in R:
@@ -520,7 +566,7 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None) -> dict:
     applied = {"manual_swath": False, "manual_moisture": False, "flow_shift": False, "weight_and_moisture": False,
                "start_stop_delay": False, "yield_limits": False}
     rep = {"path": shp, "n_in": n, "n_out": n, "left_out": {}, "left_out_by_group": {}, "changed": [],
-           "applied": applied, "settings": R, "notes": []}
+           "relabelled": [], "applied": applied, "settings": R, "notes": [], "own_yields": False}
     if n == 0:
         return rep
     Y = yield_columns(g.columns, C)                  # what each yield column holds, whatever its name
@@ -627,9 +673,13 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None) -> dict:
     elif wet is None:
         rep["notes"].append("weight to volume and dry moisture not applied: the file has no wet mass or wet volume "
                             "column, the yields are used as the file gives them")
+    elif R.get("family") == "point" and Y["dry_vol"] and Y["dry_mass"]:
+        # a point export that carries its own dry yield and dry mass (SMS's exports do; one of John Deere data names
+        # the variety as its product): those are the file's yields, said plainly, not a warning
+        rep["own_yields"] = True
+        rep["notes"].append(OWN_YIELDS_NOTE)
     else:
-        rep["notes"].append("weight to volume or dry moisture unknown (product not recognised): the yields are used "
-                            "as the file gives them")
+        rep["notes"].append(UNKNOWN_PRODUCT_NOTE + (UNKNOWN_POINT_SUFFIX if R.get("family") == "point" else ""))
     if other and (applied["flow_shift"] or applied["weight_and_moisture"]):
         rep["notes"].append(f"{', '.join(other)}: the Operations Center's yield as mass (wet or dry is not known) is "
                             "left as the file gives it" + (", scaled with the manual swath" if applied["manual_swath"]
@@ -685,35 +735,61 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None) -> dict:
         if diff[rows].any():
             patch[c] = (np.asarray(v, float)[rows], diff[rows])
             rep["changed"].append(c)
+    # the text labels of the crop (a decoded file converted with another crop): the cells that differ, or a column added
+    extra = []
+    for c, v in (labels or {}).items():
+        if v is None:
+            continue
+        v = str(v)[:40]
+        if c in g.columns:
+            cur = g[c].astype(object).where(g[c].notna(), "").astype(str).str.strip().to_numpy()
+            diff = cur[rows] != v
+            if diff.any():
+                patch[c] = (np.full(len(rows), v, dtype=object), diff)
+                rep["relabelled"].append(c)
+        elif len(rows):
+            extra.append((c, "C", [v] * len(rows), 80, 0))      # the width a decoded file's text has
+            rep["relabelled"].append(c)
     rep["n_out"] = int(keep.sum())
-    if not patch and keep.all():
+    if not patch and not extra and keep.all():
         return rep
     os.makedirs(os.path.dirname(os.path.abspath(out_shp)), exist_ok=True)
     bc, why = yc.byte_copy_source(shp, g)
     if bc is not None:
-        yc.write_points(out_shp, shp, g, rows, [], byte_copy=bc, patch=patch or None)
+        yc.write_points(out_shp, shp, g, rows, extra, byte_copy=bc, patch=patch or None)
     else:
         # the raw records are not the features GDAL read (deleted records ...): written from the features instead
-        _write_gdal(out_shp, g, rows, patch)
+        _write_gdal(out_shp, g, rows, patch, extra)
         rep["notes"].append(f"the file could not be copied record by record ({why}): it was written again with GDAL "
                             "(the field definitions may differ from the original)")
     rep["path"] = out_shp
+    if rep["relabelled"]:
+        rep["notes"].append(", ".join(f"{c} {labels[c]}" for c in rep["relabelled"])
+                            + ": the crop the yields are converted with")
     log(f"import as SMS: {n - rep['n_out']:,} of {n:,} readings left out"
         + (" (" + ", ".join(f"{k} {v:,}" for k, v in rep["left_out"].items()) + ")" if rep["left_out"] else "")
         + (f"; changed {', '.join(rep['changed'])}" if rep["changed"] else ""))
     return rep
 
 
-def _write_gdal(out_shp, g, rows, patch):
-    """The records `rows` of g with the patched cells, through GDAL (+ a UTF-8 .cpg)."""
+def _write_gdal(out_shp, g, rows, patch, extra=()):
+    """The records `rows` of g with the patched cells and the extra columns ((name, type, values, width, decimals)),
+    through GDAL (+ a UTF-8 .cpg)."""
     noext = os.path.splitext(out_shp)[0]
     for e in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
         if os.path.exists(noext + e):
             os.remove(noext + e)
     out = g.iloc[rows].copy()
     for name, (v, mask) in (patch or {}).items():
-        col = np.array(pd.to_numeric(out[name], errors="coerce"), dtype=float)      # a writable copy
         m = np.asarray(mask, bool)
+        if np.asarray(v).dtype == object:                                           # a text label
+            col = out[name].astype(object).to_numpy().copy()
+            col[m] = np.asarray(v, object)[m]
+            out[name] = col
+            continue
+        col = np.array(pd.to_numeric(out[name], errors="coerce"), dtype=float)      # a writable copy
         col[m] = np.asarray(v, float)[m]
         out[name] = col
+    for name, _, vals, _, _ in extra or ():
+        out[name] = list(vals)
     out.to_file(noext + ".shp", engine="pyogrio", encoding="UTF-8")

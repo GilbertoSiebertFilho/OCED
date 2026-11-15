@@ -24,6 +24,8 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from tests.app_steps import (_apply_import, _badge_lines, _extract_again, _last_metric,  # noqa: E402
+                             _starts_from, _switch_off, switch)
 from tests.synthetic import make_field  # noqa: E402
 
 APP = os.path.join(ROOT, "app", "oced.py")
@@ -68,7 +70,8 @@ def _variant(src, dst, fn=None):
     return str(dst)
 
 
-def _imported_count(shp, lo=5.0, hi=300.0):
+def _imported_count(shp, lo=0.0, hi=np.inf):
+    """The readings a point export keeps at import: SMS's generic import holds every reading with a dry yield."""
     y = pd.to_numeric(pyogrio.read_dataframe(shp, read_geometry=False)["Yld_Vol_Dr"], errors="coerce").to_numpy(float)
     return int((np.isfinite(y) & (y >= lo) & (y <= hi)).sum())
 
@@ -126,39 +129,50 @@ def test_app_two_uploads_with_one_name_are_refused(field, tmp_path, monkeypatch)
 
 # ------------------------------------------------------------------------------------------------ import as SMS
 def test_app_import_panel_unknown_and_known_product(field, tmp_path, monkeypatch):
-    """A file whose product is not a crop (a variety, no Crop column): the panel leaves the weight to volume and the
-    dry moisture empty instead of wheat's, claims no difference, and importing it again untouched changes nothing.
-    A recognised product: no 'differ' caption right after opening, and each value says where it came from."""
+    """A file whose product is not a crop (a variety, no Crop column): step 2 says that the file's own yields are used
+    (it carries its own dry yield and dry mass, as SMS's exports do), its fields leave the weight to volume and the
+    dry moisture empty instead of wheat's, claim no difference, and Apply stays disabled while nothing is changed.
+    A recognised product: nothing 'not applied' right after the switch, and each value says where it came from."""
     v = _variant(field["shp"], tmp_path / "in" / "Variety.shp", lambda g: g.assign(Product="Variety X"))
     at = _app(tmp_path, monkeypatch)
     _open(at, v)
+    assert switch(at).value
+    assert any(str(c.help or "").startswith("The product of this point export is not known") for c in at.caption)
+    assert not any("Product not recognised" in c.value for c in at.caption)
+    n0 = _metric(at, "Readings").value
+    _switch_off(at)
     assert _by_key(at.number_input, "fi_tw_").value is None and _by_key(at.number_input, "fi_dm_").value is None
-    assert any("Product not recognised" in c.value for c in at.caption)
-    assert not any("These values differ" in c.value for c in at.caption)
-    n0, y0 = _metric(at, "Readings").value, _metric(at, "Mean dry yield").value
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
-    assert any("imported again" in s.value for s in at.success)
-    assert _metric(at, "Readings").value == n0 and _metric(at, "Mean dry yield").value == y0
+    assert not any("Not applied:" in c.value for c in at.caption)
+    assert _by_key(at.button, "fi_go_").disabled                     # nothing to apply: the data stays step 1's
+    assert _metric(at, "Readings").value == n0 and at.session_state["datasets"][at.session_state["active"]][
+        "import_mode"] == "default"
     # a recognised product (Wheat): its values from SMS's product table, nothing flagged
     _open(at, field["shp"])
+    _switch_off(at)
     assert float(_by_key(at.number_input, "fi_tw_").value) == pytest.approx(60.0)
     assert float(_by_key(at.number_input, "fi_dm_").value) == pytest.approx(13.5)
-    assert not any("These values differ" in c.value for c in at.caption)
+    assert not any("Not applied:" in c.value for c in at.caption)
     assert any("Where the values came from" in c.value and "SMS product table" in c.value for c in at.caption)
-    assert "SMS product table" in _metric(at, "Readings").help
+    assert "From: SMS product table" in str(_by_key(at.number_input, "fi_tw_").help)
 
 
 def test_app_import_panel_follows_a_new_import(field, tmp_path, monkeypatch):
-    """The same export opened again after another maximum in step 1: the panel shows the values of the new import,
-    not the previous one's (its widgets are keyed by the import)."""
+    """Another maximum applied in step 2: the fields show the values of the new import, not the previous one's
+    (their widgets are keyed by the import), and its line names the change; the same export opened again is on SMS's
+    default (a point export has no maximum of its own)."""
     at = _app(tmp_path, monkeypatch)
     _open(at, field["shp"])
-    assert float(_by_key(at.number_input, "fi_max_").value) == pytest.approx(300.0)
-    at.number_input(key="si_max").set_value(150.0).run()
-    _open(at, field["shp"])
+    _switch_off(at)
+    assert _by_key(at.number_input, "fi_max_").value is None
+    _apply_import(at, max=150.0)
     assert float(_by_key(at.number_input, "fi_max_").value) == pytest.approx(150.0)
-    assert "150.00 bu/ac" in _metric(at, "Readings").help and "(you)" in _metric(at, "Readings").help
+    assert any("Max. yield volume none → 150.00" in b for b in _badge_lines(at))
+    IM = at.session_state["datasets"][at.session_state["active"]]["sms_import"]
+    assert IM["resolved"]["max_yield"] == 150.0 and IM["sources"]["max_yield"] == "you"
+    _open(at, field["shp"])
+    assert switch(at).value
+    _switch_off(at)
+    assert _by_key(at.number_input, "fi_max_").value is None
 
 
 def test_app_two_crops_in_one_export(field, tmp_path, monkeypatch):
@@ -173,12 +187,13 @@ def test_app_two_crops_in_one_export(field, tmp_path, monkeypatch):
     _open(at, v)
     assert any("more than one crop" in w.value and "barley (300 readings)" in w.value for w in at.warning)
     assert "recomputed" not in _metric(at, "Readings").help
+    _switch_off(at)
     assert _by_key(at.number_input, "fi_tw_").value is None
 
 
 def test_app_area_card_is_the_file_on_screen(field, tmp_path, monkeypatch):
-    """'Area harvested' is distance x width of the readings imported (a point export shows it too), and it follows
-    'Import this file again'."""
+    """'Area harvested' is distance x width of the readings imported (a point export shows it too): step 1's card is
+    the default import's, step 2's the import applied there."""
     at = _app(tmp_path, monkeypatch)
     _open(at, field["shp"])
 
@@ -188,14 +203,12 @@ def test_app_area_card_is_the_file_on_screen(field, tmp_path, monkeypatch):
         return float((d["Distance_f"].astype(float) * d["Swth_Wdth_"].astype(float)).sum() / 43560.0)
     a1 = area_now()
     assert _metric(at, "Area harvested").value == f"{a1:,.2f} ac"
-    _by_key(at.number_input, "fi_min_").set_value(60.0).run()
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
+    _apply_import(at, min=60.0)
     a2 = area_now()
-    assert a2 < a1 and _metric(at, "Area harvested").value == f"{a2:,.2f} ac"
+    assert a2 < a1 and _last_metric(at, "Area harvested").value == f"{a2:,.2f} ac"
+    assert _metric(at, "Area harvested").value == f"{a1:,.2f} ac"              # step 1: unchanged
 
 
-# ------------------------------------------------------------------------------------------------ opening
 def test_app_failed_open_keeps_the_work(field, tmp_path, monkeypatch):
     """A path that does not exist, or an input with nothing usable in it, leaves the work on screen as it is and no
     new folder; 'nothing usable' says why. An input left before anything was made of it is removed when another one
@@ -279,8 +292,8 @@ def test_app_save_keeps_the_value_typed_just_before(field, tmp_path, monkeypatch
 
 
 def test_app_moved_workspace_imports_again(field, tmp_path, monkeypatch):
-    """An uploaded export, saved; the workspace moved; the work opened again: 'Import this file again' finds the
-    readings in the moved folder."""
+    """An uploaded export, saved; the workspace moved; the work opened again: step 2's Apply finds the readings in
+    the moved folder."""
     at = _app(tmp_path, monkeypatch, ws="ws1")
     base = os.path.splitext(field["shp"])[0]
     files = [(os.path.basename(base) + e, open(base + e, "rb").read(), "application/octet-stream")
@@ -293,9 +306,7 @@ def test_app_moved_workspace_imports_again(field, tmp_path, monkeypatch):
     at2 = _app(tmp_path, monkeypatch, ws="ws2")
     at2.button(key="work_open").click().run()
     assert not at2.exception, at2.exception
-    _by_key(at2.number_input, "fi_min_").set_value(20.0).run()
-    _by_key(at2.button, "fi_go_").click().run()
-    assert not at2.exception, at2.exception
+    _apply_import(at2, min=20.0)
     assert any("imported again" in s.value for s in at2.success)
     assert at2.session_state["datasets"][at2.session_state["active"]]["shp"].startswith(str(tmp_path / "ws2"))
 
@@ -303,9 +314,9 @@ def test_app_moved_workspace_imports_again(field, tmp_path, monkeypatch):
 # ------------------------------------------------------------------------------------------------ cleaning a work
 def test_app_import_minimum_long_paths_saved_work_and_superseded_files(field, tmp_path, monkeypatch):
     """One file through the whole work, uploaded as a zip with a 64-character name into a workspace 130 characters
-    deep: imported with min 0 (S0 then keeps those readings), cleaned (the record carries the import, every path within
-    the Windows limit), another k saved and the work opened again (flagged 'clean again'), then imported again (the
-    previous clean files move to superseded/)."""
+    deep: imported with min 0 (SMS's generic import of a point file; S0 then keeps those readings), cleaned (the record
+    carries the import, every path within the Windows limit), another k saved and the work opened again (flagged
+    'clean again'), then another import applied in step 2 (the previous clean files move to superseded/)."""
     import zipfile
     pad = 130 - len(str(tmp_path)) - len(os.sep + "OCED_workspace") - 1
     if pad < 4:
@@ -325,10 +336,8 @@ def test_app_import_minimum_long_paths_saved_work_and_superseded_files(field, tm
     tag = at.session_state["active"]
     assert tag and len(tag) <= 60
     assert not glob.glob(str(deep / "*" / "uploads" / "*.zip"))          # unpacked: the uploaded copy is gone
-    _by_key(at.number_input, "fi_min_").set_value(0.0).run()
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
-    assert any("S0 minimum: none" in c.value for c in at.caption) and at.number_input(key="min_yield").disabled
+    assert "S0 minimum 0.000 bu/ac" in _starts_from(at).value
+    assert not [x for x in at.number_input if x.key == "min_yield"]       # the import's minimum, no field of step 3
     at.button(key="clean_one").click().run()
     assert not at.exception, at.exception
     js = glob.glob(str(deep / "*" / "clean" / "*" / "*_cleaning.json"))
@@ -346,9 +355,8 @@ def test_app_import_minimum_long_paths_saved_work_and_superseded_files(field, tm
     at.button(key="work_open").click().run()
     assert not at.exception, at.exception
     assert any("changed since this file was cleaned" in w.value for w in at.warning)
-    # imported again: the cleaning is dropped and its files leave clean_shapefiles/
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
+    # another import applied: the cleaning is dropped and its files leave clean_shapefiles/
+    _apply_import(at, max=10_000.0)
     wd = at.session_state["workdir"]
     assert not glob.glob(os.path.join(wd, "clean_shapefiles", f"{tag}_sms3s_clean.*"))
     assert glob.glob(os.path.join(wd, "superseded", "*", "p", f"{tag}_sms3s_clean.shp"))
@@ -413,7 +421,8 @@ def test_sms_summary_follows_the_import_settings():
 
 def test_app_card_summary_and_totals_only_option(tmp_path, monkeypatch):
     """A synthetic Case IH card with a task whose log is not on it: the option to add its totals to the SMS Summary
-    is offered, and the Summary's dry volume follows 'Import this file again' with another dry moisture."""
+    is offered, and the Summary's dry volume follows another dry moisture applied in step 2 (step 2 repeats the
+    Summary line with its own import; step 1's stays SMS's default)."""
     from tests.test_dec_cnh import _card, _crop_table, _logged, _totals_only
     root = _card(tmp_path / "card", {"TASK0001": _logged(n=40), "TASK0002": _totals_only()})
     _crop_table(root)
@@ -424,15 +433,13 @@ def test_app_card_summary_and_totals_only_option(tmp_path, monkeypatch):
     assert not at.exception, at.exception
 
     def summary():
-        return next(c.value for c in at.caption if c.value.startswith("SMS Summary of these datasets"))
-    s1 = summary()
-    assert "bu dry" in s1 and "the import settings of this file" in s1
-    dm = _by_key(at.number_input, "fi_dm_")
-    dm.set_value(float(dm.value) + 3.0).run()
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
-    s2 = summary()
-    assert s2 != s1 and "bu dry" in s2
+        return [c for c in at.caption if c.value.startswith("SMS Summary (the display's totals)")]
+    [s1] = summary()
+    assert "bu dry" in s1.value and "the import settings of this file" in s1.help
+    _switch_off(at)
+    _apply_import(at, dm=float(_by_key(at.number_input, "fi_dm_").value) + 3.0)
+    first, s2 = summary()
+    assert first.value == s1.value and s2.value != s1.value and "bu dry" in s2.value
 
 
 def test_app_gen4_points_option_reaches_the_decoder(tmp_path, monkeypatch):
@@ -521,11 +528,10 @@ def test_app_gs3_card_takes_the_card_product_and_the_alignment_option(tmp_path, 
     assert R["test_weight_lb_bu"] == pytest.approx(60.0098, abs=1e-4) and R["dry_moisture_pct"] == 13.0
     assert (R["min_yield"], R["max_yield"]) == (5.0, 10_000.0)
     assert S["test_weight_lb_bu"] == "file" and S["max_yield"] == "SMS for John Deere files"
-    assert "60.01 lb/bu (from the file)" in _metric(at, "Readings").help
+    assert "60.01 lb/bu (from the file)" in " ".join(c.value for c in at.caption)      # Import details (step 1)
     assert D["report"]["alignment"]["method"] == "sms"
     _by_key(at.button_group, "al_").set_value("shift").run()
-    next(b for b in at.button if str(b.key or "").startswith("extract_")).click().run()
-    assert not at.exception, at.exception
+    _extract_again(at)                                  # 'Extract more' ticks nothing: the unit ticked again
     assert len(at.session_state["datasets"]) == 1
     D = at.session_state["datasets"][at.session_state["active"]]
     assert D["report"]["alignment"]["method"] == "shift" and D["report"]["decoder_kwargs"]["alignment"] == "shift"

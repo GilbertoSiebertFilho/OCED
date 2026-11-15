@@ -923,7 +923,8 @@ def _field_bytes(name, typ, values, width, dec):
 
 
 def _patch_cells(recs, dbf, patch):
-    """Rewrite numeric cells in place (the SMS 3-sigma clean file: an SMS export after Optimize Swath Widths).
+    """Rewrite numeric cells in place (the SMS 3-sigma clean file: an SMS export after Optimize Swath Widths), and
+    text cells (an import's crop label, cut to the field's width).
     recs: the (n x rlen) record bytes of the rows written; patch: {field name: (values n, mask n)}, only the rows of the
     mask are rewritten, in the field's own width and decimals (fewer decimals when a value would not fit). Returns
     the number of cells that still did not fit (written as '*', the dBASE overflow mark)."""
@@ -931,7 +932,12 @@ def _patch_cells(recs, dbf, patch):
     for d in dbf["fdesc"]:
         name = d[:11].split(b"\0")[0].decode("latin-1")
         typ, w, dec = chr(d[11]), d[16], d[17]
-        if name in patch and typ in ("N", "F"):
+        if name in patch and typ == "C":                 # a text cell (an import's crop label), left-aligned
+            vals, mask = patch[name]
+            for k in np.nonzero(np.asarray(mask, bool))[0]:
+                s = "" if vals[k] is None else str(vals[k])
+                recs[k, off:off + w] = np.frombuffer(s.encode("utf-8")[:w].ljust(w), np.uint8)
+        elif name in patch and typ in ("N", "F"):
             vals, mask = patch[name]
             for k in np.nonzero(np.asarray(mask, bool))[0]:
                 v = vals[k]
@@ -1111,6 +1117,31 @@ def ds_sort_key(s):
     Center date; names without one last), then ds_key."""
     t = sms_mod.dataset_start(s)
     return ((t if np.isfinite(t) else np.inf), ds_key(s))
+
+
+def export_logs(df, dataset_col, order_col) -> tuple:
+    """(the dataset key of every record of df, the number of repeated (dataset, record id) pairs): ds_key of the
+    dataset name, with ' #logNNNN' added when the record id restarts inside a dataset (an Ops Center task holding one
+    log per combine: every restart in file order starts a new log)."""
+    key = df[dataset_col].map(ds_key)
+    dup = df.duplicated([dataset_col, order_col])
+    if dup.any():
+        o = pd.to_numeric(df[order_col], errors="coerce")
+        restart = o.groupby(df[dataset_col], sort=False).diff() < 0
+        seg = restart.astype(int).groupby(df[dataset_col], sort=False).cumsum()
+        key = key + " #log" + seg.map(lambda v: f"{int(v):04d}")
+    return key, int(dup.sum())
+
+
+def export_order(df, dataset_col, order_col) -> np.ndarray:
+    """Positions of df's rows in the order clean() sorts a file without a time per reading that has a dataset and a
+    record id column: dataset start (the time or date in the dataset name, names without one last), the dataset key
+    (export_logs), the record id. engine/works.py compares it with a file's own row order (method revision 4)."""
+    key, _ = export_logs(df, dataset_col, order_col)
+    ts = df[dataset_col].map(sms_mod.dataset_start).astype(float).to_numpy()
+    k = pd.DataFrame({"_ds_t": np.where(np.isfinite(ts), ts, np.inf), "_ds_key": key.to_numpy(),
+                      "_ord": df[order_col].to_numpy()})
+    return k.sort_values(["_ds_t", "_ds_key", "_ord"], kind="stable").index.to_numpy()
 
 
 def resolve_columns(available, S):
@@ -1769,6 +1800,17 @@ def _shifted_positions(g, lag_s, D, ux, uy):
 
 
 IMPORT_MAX_STEP = "above the max. yield volume"          # engine/sms_import.apply's left-out step of the maximum
+# several combines and no time per reading: the order the overlap takes (the SMS method's S2 on a point file: the
+# file's own row order, sms3sigma.ORDER_FILE)
+SEVERAL_NO_TIME = ("several combines but no per-record time column: the overlap order is dataset start then record id, "
+                   "so for combines working at the same time every pass of the later-started dataset is treated as "
+                   "harvested after all passes of the other; export the file with a time of day per record (on the "
+                   "command line, settings cols['time'] names such a column)")
+SEVERAL_FILE_ORDER = ("several combines but no per-record time column: the swath step (S2) takes the readings in the "
+                      "file's own row order (SMS holds a point file without a time per reading as one dataset, in the "
+                      "order of its import), so a pass further down the file is treated as harvested after the passes "
+                      "above it; export the file with a time of day per record (on the command line, settings "
+                      "cols['time'] names such a column)")
 
 
 def import_max_check(imp, steps, passes, mode) -> tuple[dict | None, list]:
@@ -1983,24 +2025,20 @@ def clean(path, S, C, log=print, source=None):
         order_info = {"basis": "time", "column": C["time"],
                       "rule": "rows sorted by machine then time; overlap burnt in time order across machines"}
     elif C.get("dataset") and C.get("order"):
-        g["_ds_key"] = g[C["dataset"]].map(ds_key)
-        dup = g.duplicated([C["dataset"], C["order"]])
+        # the record id may restart inside a dataset (Ops Center: one log per combine in the same task): every restart
+        # in file order starts a new log, sorted after the previous one (export_logs)
+        g["_ds_key"], n_dup = export_logs(g, C["dataset"], C["order"])
         n_logs = None
-        if dup.any():
-            # the record id restarts inside a dataset (Ops Center: one log per combine in the same task): every restart
-            # in file order starts a new log, sorted after the previous one
-            o = pd.to_numeric(g[C["order"]], errors="coerce")
-            restart = o.groupby(g[C["dataset"]], sort=False).diff() < 0
-            seg = restart.astype(int).groupby(g[C["dataset"]], sort=False).cumsum()
-            g["_ds_key"] = g["_ds_key"] + " #log" + seg.map(lambda v: f"{int(v):04d}")
+        if n_dup:
             n_logs = int(g["_ds_key"].nunique())
-            warnings.append(f"the record id {C['order']!r} repeats inside a dataset ({int(dup.sum()):,} duplicates): the "
+            warnings.append(f"the record id {C['order']!r} repeats inside a dataset ({n_dup:,} duplicates): the "
                             f"file holds {n_logs} separate logs (one per combine in an Ops Center task?); each restart "
                             "of the id starts a new log, logs are processed in file order. Without per-record time the "
                             "overlap order between logs is file order, and without a machine column the logs cannot "
                             "be harmonised")
         # the datasets in harvest order: by the start time 'YY/MM/DD-HH:MM:SS' or the date 'M/D/YYYY' in their names
         # (as text the GreenStar 4 names sort 'TaskName 1/10/2000' before '1/9/2000'); names without either last
+        # (export_order gives the same order from a file's rows: keep the two alike)
         ts = g[C["dataset"]].map(sms_mod.dataset_start).astype(float)
         g["_ds_t"] = np.where(np.isfinite(ts), ts, np.inf)
         g = g.sort_values(["_ds_t", "_ds_key", C["order"]], kind="stable").drop(columns="_ds_t")
@@ -2016,10 +2054,7 @@ def clean(path, S, C, log=print, source=None):
     g = g.reset_index(drop=True)
     burn = np.argsort(g["_t"].values, kind="stable") if time_ok else np.arange(len(g))
     if g["_machine"].nunique() > 1 and not time_ok:
-        warnings.append("several combines but no per-record time column: the overlap order is dataset start then "
-                        "record id, so for combines working at the same time every pass of the later-started dataset "
-                        "is treated as harvested after all passes of the other; export the file with a time of day per "
-                        "record (on the command line, settings cols['time'] names such a column)")
+        warnings.append(SEVERAL_NO_TIME)
 
     y = g[C["yield"]].astype(float)
     moi = g[C["moisture"]].astype(float) if C.get("moisture") else pd.Series(np.nan, index=g.index)
@@ -2115,6 +2150,9 @@ def clean(path, S, C, log=print, source=None):
                                            "width_m": width_m, "dist_m": dist_m, "hdg": hdg},
                                  plan, utm, burn, aoi_mod, log=log, warnings=warnings, notes=notes,
                                  src_format=src_fmt, session_keys=sess0)
+        if (CS.get("swath") or {}).get("order_basis") == sms_mod.ORDER_FILE:
+            # the swath step took the file's own row order, not the dataset order the warning above names
+            warnings[:] = [SEVERAL_FILE_ORDER if w == SEVERAL_NO_TIME else w for w in warnings]
         alive = CS["alive"]
         st = {"alive": alive, "why": CS["why"], "log": CS["log"]}
         g["Overlap_f"] = np.nan_to_num(CS["covered_frac"])

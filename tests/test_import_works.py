@@ -107,6 +107,25 @@ def test_legacy_record_grower_ticket_and_clean_again(tmp_path):
     assert "clean_again" not in ew.load_work(wd)["cleaned"]["T"]
 
 
+def test_a_legacy_folder_reads_the_decode_made_for_sms_default(tmp_path):
+    """A folder without a saved work rebuilt from its files: a raw file decoded again for SMS's default (its readings in
+    sms_default/decoded/) is read from there, with that decode's report, before decoded/'s readings of the same file;
+    a file decoded only once is read from decoded/."""
+    wd = str(tmp_path / "ws" / "20261101-090000_Old")
+    for sub, tag, fmt in ((("decoded",), "T", "cnh_cn1"), (("sms_default", "decoded"), "T", "cnh_cn1_default"),
+                          (("decoded",), "S", "jd_jdl")):
+        d = os.path.join(wd, *sub)
+        os.makedirs(d, exist_ok=True)
+        for e in (".shp", ".shx", ".dbf"):
+            open(os.path.join(d, f"{tag}_decoded{e}"), "wb").write(b"")
+        json.dump({"format": fmt}, open(os.path.join(d, f"{tag}_decode_report.json"), "w", encoding="utf-8"))
+    rec = ew.legacy_record(wd)
+    T, S = rec["datasets"]["T"], rec["datasets"]["S"]
+    assert os.path.normcase(T["shp"]) == os.path.normcase(os.path.join(wd, "sms_default", "decoded", "T_decoded.shp"))
+    assert T["report"]["format"] == "cnh_cn1_default" and rec["legacy"] is True
+    assert os.path.normcase(S["shp"]) == os.path.normcase(os.path.join(wd, "decoded", "S_decoded.shp"))
+
+
 def test_a_copied_work_reads_its_own_files(tmp_path):
     """VA-10: a work whose record kept absolute paths (an older version), COPIED to another workspace while the
     original is still there: every path of the copy points into the copy, not into the folder it came from; a card

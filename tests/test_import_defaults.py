@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Import as SMS (engine/sms_import.py) on synthetic data only: the defaults per source (John Deere files take the
-file's crop definition and 5-10,000 bu/ac, Case IH / New Holland cards SMS's product table), where each value came
+file's crop definition and 5-10,000 bu/ac, Case IH / New Holland cards SMS's product table, point exports SMS's
+generic import: the product table's weight and moisture, min 0, no max), where each value came
 from, the crop names mapped to SMS's products, and apply() on the cases the defaults do not reach: the Operations
 Center's yield as mass, settings that cannot be applied, a file without moisture, a .dbf with deleted records, holes
-in the logging under the flow shift and the delays.
+in the logging under the flow shift and the delays; a point export naming durum, and one of an unknown product that
+keeps its own dry yields (said in its note and on the command line); the crop labels a decoded file converted with
+another crop gets.
 
     python -m pytest -q tests/test_import_defaults.py
 """
@@ -37,7 +40,7 @@ def _write(df, shp):
 
 
 # ------------------------------------------------------------------------------------------------ resolve
-@pytest.mark.parametrize("fmt", ["jd_gs3_rcd", "jd_jdl", "jd_ops_center"])
+@pytest.mark.parametrize("fmt", ["jd_gs3_rcd", "jd_jdl"])
 def test_john_deere_files_take_the_files_crop(fmt):
     R = si.resolve(si.settings(), "Wheat (Hard Red Spring)", MON, fmt)
     assert (R["test_weight_lb_bu"], R["dry_moisture_pct"], R["min_yield"], R["max_yield"]) == (60.01, 13.0, 5.0, 1e4)
@@ -96,7 +99,7 @@ def test_other_sources_and_names():
                    "cnh_cn1")
     assert (R["test_weight_lb_bu"], R["dry_moisture_pct"], R["min_yield"], R["max_yield"]) == (55.0, 15.2, 5.0, 300.0)
     assert R["sources"]["test_weight_lb_bu"] == "file" and R["sources"]["max_yield"] == "OCED default"
-    # a point export (no format): SMS's product table, the same as a card
+    # a source of no known format: SMS's product table, the same as a card
     assert si.resolve(si.settings(), "DURUM")["dry_moisture_pct"] == 13.0
     assert si.resolve(si.settings(), "Canola")["min_yield"] == 10.0
     assert si.resolve(si.settings({"product": "Wheat - Durum"}), None)["product"] == "durum"
@@ -104,9 +107,201 @@ def test_other_sources_and_names():
     assert si.format_family("jd_jdl") == "john_deere" and si.format_family("cnh_cn1") == "cnh"
     assert si.format_family(None) is None and si.format_family("isoxml") == "isoxml"
     assert si.format_family("some_other_export") is None
+    assert si.format_family("point_export") == si.format_family("jd_ops_center") == "point"
     with pytest.raises(ValueError):
         si.settings({"min_yield": "sometimes"})
     assert si.settings()["min_yield"] == si.AUTO and si.settings({"min_yield": None})["min_yield"] is None
+
+
+@pytest.mark.parametrize("fmt", ["point_export", "jd_ops_center"])
+def test_point_exports_follow_smss_generic_import(fmt):
+    """A point export (a point shapefile, a KML converted to one, an SMS export; an Operations Center export) is
+    imported as SMS's generic import of a point file holds it: every reading kept (min 0, no max, whatever the crop and
+    whatever the Operations Center's crop record says), the weight to volume and dry moisture of SMS's product table
+    by the crop name; what the user types wins."""
+    from engine.formats import common
+    mon = common.jd_monitor_product("Barley", "synthetic crop record") if fmt == "jd_ops_center" else None
+    R = si.resolve(si.settings(), "Barley", mon, fmt)
+    assert R["family"] == "point" and R["sms_product"] == "Barley - Fall"
+    assert (R["test_weight_lb_bu"], R["dry_moisture_pct"], R["min_yield"], R["max_yield"]) == (48.0, 14.5, 0.0, None)
+    assert R["sources"] == {"test_weight_lb_bu": si.SRC_TABLE, "dry_moisture_pct": si.SRC_TABLE,
+                            "min_yield": si.SRC_POINT, "max_yield": si.SRC_POINT}
+    assert R["defaults"]["min_yield"] == 0.0 and R["defaults"]["max_yield"] is None
+    assert "yield volume from 0.000 bu/ac, no maximum" in si.describe(R)
+    assert f"max. yield volume none ({si.SRC_POINT})" in si.describe_sources(R)
+    for name, (tw, dm, _mn, _mx) in TABLE.items():
+        R = si.resolve(si.settings(), name, None, fmt)
+        assert (R["test_weight_lb_bu"], R["dry_moisture_pct"], R["min_yield"], R["max_yield"]) == (tw, dm, 0.0, None)
+    durum = common.jd_monitor_product("Wheat (Durum)", "synthetic crop record") if mon else None
+    assert si.resolve(si.settings(), "Wheat (Durum)", durum, fmt)["dry_moisture_pct"] == 13.0
+    R = si.resolve(si.settings(), "corn", None, fmt)
+    assert R["sources"]["test_weight_lb_bu"] == si.SRC_CROPS and (R["min_yield"], R["max_yield"]) == (0.0, None)
+    R = si.resolve(si.settings(), None, None, fmt)
+    assert R["test_weight_lb_bu"] is None and (R["min_yield"], R["max_yield"]) == (0.0, None)
+    R = si.resolve(si.settings({"min_yield": 5.0, "max_yield": 300.0, "dry_moisture_pct": 15.0}), "Barley", mon, fmt)
+    assert (R["min_yield"], R["max_yield"], R["dry_moisture_pct"]) == (5.0, 300.0, 15.0)
+    assert R["sources"] == {"test_weight_lb_bu": si.SRC_TABLE, "dry_moisture_pct": si.SRC_YOU,
+                            "min_yield": si.SRC_YOU, "max_yield": si.SRC_YOU}
+    R = si.resolve(si.settings({"min_yield": 0.0, "product": "canola"}), "Barley", mon, fmt)
+    assert R["sources"]["min_yield"] == si.SRC_POINT and (R["test_weight_lb_bu"], R["max_yield"]) == (50.0, None)
+
+
+@pytest.mark.parametrize("fmt", ["point_export", "jd_ops_center"])
+def test_a_point_export_keeps_every_reading(fmt, tmp_path):
+    """apply() with a point export's defaults: readings at 0, below 5 bu/ac and far above the product's maximum all
+    stay (only a reading with no dry yield goes), and the dry yield is computed again from the wet mass; the same file
+    as a card's product (no format) loses them."""
+    df = _ops()
+    wet = df["WetMass"].to_numpy().copy()
+    wet[[3, 4]] = 0.0                                       # no grain
+    wet[[10, 11, 12]] = 120.0                               # 2 bu/ac
+    wet[[20, 21]] = 60.0 * 900.0                            # 900 bu/ac
+    wet[30] = np.nan                                        # no yield
+    df["WetMass"] = wet
+    shp = _write(df, str(tmp_path / "p" / "Points.shp"))
+    rep = si.apply(shp, str(tmp_path / "a.shp"), si.resolve(si.settings(), "wheat", None, fmt))
+    assert rep["n_out"] == len(df) - 1 and rep["left_out"] == {"no yield": 1}
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    m = np.delete(df["Moisture"].to_numpy(), 30)
+    f = np.where(m > 13.5, (100 - m) / 86.5, 1.0)
+    assert np.allclose(e["VRYIELDVOL"].to_numpy(float), np.delete(wet, 30) * f / 60.0, rtol=1e-9)
+    assert (e["VRYIELDVOL"].to_numpy(float) == 0).sum() == 2 and (e["VRYIELDVOL"].to_numpy(float) > 300).sum() == 2
+    rep = si.apply(shp, str(tmp_path / "b.shp"), si.resolve(si.settings(), "wheat"))
+    assert rep["left_out"] == {"no yield": 1, "below the min. yield volume": 5, "above the max. yield volume": 2}
+    # a crop that names no product: the file's own yields, every reading kept, and the note says SMS needs a product
+    rep = si.apply(shp, str(tmp_path / "c.shp"), si.resolve(si.settings(), None, None, fmt))
+    assert rep["n_out"] == len(df) and not rep["applied"]["weight_and_moisture"] and rep["left_out"] == {}
+    assert any("generic import of a point file needs a product" in x for x in rep["notes"])
+
+
+def _sms_frame(product, n=200, seed=5):
+    """n readings with the columns of an SMS point export (wet and dry mass, wet and dry volume), one product name."""
+    rng = np.random.default_rng(seed)
+    moist = 14.0 + rng.normal(0, 1.0, n)
+    wet = 3900 + rng.normal(0, 250, n)
+    f = np.where(moist > 14.5, (100 - moist) / 85.5, 1.0)                 # a made-up basis of the file's own dry yield
+    return pd.DataFrame({"Product": product, "Distance_f": 6.6, "Swth_Wdth_": 30.0, "Duration_s": 1.0,
+                         "Moisture__": moist, "Yld_Mass_W": wet, "Yld_Vol_We": wet / 61.0, "Yld_Mass_D": wet * f,
+                         "Yld_Vol_Dr": wet * f / 61.0, "x": np.arange(n) * 2.0, "y": 0.0})
+
+
+def test_a_point_export_named_durum_takes_wheat_durum(tmp_path):
+    """The crop of a point export by the import's crop key (sms_import.crop_key), on the command line as in the app: a
+    product naming durum ('Wheat - Durum', 'Durum Wheat') is SMS's Wheat - Durum (60 lb/bu, 13.0 %), not Wheat -
+    Spring; a Crop column is read first; a variety names no crop."""
+    from engine import run as er
+    for i, (name, key) in enumerate((("Wheat - Durum", "durum"), ("Durum Wheat", "durum"), ("Wheat - Spring", "wheat"),
+                                     ("Barley - Fall", "barley"), ("Variety 7", None))):
+        shp = _write(_sms_frame(name), str(tmp_path / f"p{i}" / "Points.shp"))
+        assert er.export_crop_guess(shp) == key, name
+    shp = _write(_sms_frame("Variety 7").assign(Crop="Wheat - Durum"), str(tmp_path / "crop_col" / "Points.shp"))
+    assert er.export_crop_guess(shp) == "durum"
+    shp = _write(_sms_frame("Wheat - Durum"), str(tmp_path / "d" / "Points.shp"))
+    R = si.resolve(si.settings(), er.export_crop_guess(shp), None, si.POINT_EXPORT)
+    assert R["sms_product"] == "Wheat - Durum" and (R["test_weight_lb_bu"], R["dry_moisture_pct"]) == (60.0, 13.0)
+    rep = si.apply(shp, str(tmp_path / "a.shp"), R)
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    df = _sms_frame("Wheat - Durum")
+    m, wet = df["Moisture__"].to_numpy(), df["Yld_Mass_W"].to_numpy()
+    assert np.allclose(e["Yld_Vol_Dr"].to_numpy(float), wet * np.where(m > 13.0, (100 - m) / 87.0, 1.0) / 60.0,
+                       rtol=1e-9)
+
+
+def test_a_point_export_of_an_unknown_product_keeps_its_own_yields(tmp_path):
+    """A point export whose product names no crop (an SMS export of John Deere data names the variety) and that
+    carries its own dry yield (bu/ac) and dry mass: the file's own yields are used, the import note says so plainly
+    and that choosing the product converts them (own_yields; no warning); the command line prints it. Without its own
+    dry mass, or for a source that is not a point export, the earlier note (a warning on the command line)."""
+    from engine import run as er
+    shp = _write(_sms_frame("Variety 7"), str(tmp_path / "v" / "Points.shp"))
+    R = si.resolve(si.settings(), "Variety 7", None, si.POINT_EXPORT)
+    assert R["test_weight_lb_bu"] is None and R["dry_moisture_pct"] is None
+    rep = si.apply(shp, str(tmp_path / "a.shp"), R)
+    assert rep["own_yields"] is True and rep["notes"] == [si.OWN_YIELDS_NOTE] and rep["changed"] == []
+    assert not rep["applied"]["weight_and_moisture"] and rep["n_out"] == 200
+    assert "product of this point export is not known" in si.OWN_YIELDS_NOTE
+    assert "choosing the product converts them" in si.OWN_YIELDS_NOTE
+    # the product chosen: the yields converted with its weight to volume and dry moisture
+    rep = si.apply(shp, str(tmp_path / "b.shp"), si.resolve(si.settings({"product": "wheat"}), "Variety 7", None,
+                                                           si.POINT_EXPORT))
+    assert not rep["own_yields"] and rep["applied"]["weight_and_moisture"] and "Yld_Vol_Dr" in rep["changed"]
+    # no dry mass of its own: the earlier note, with the point-file suffix; a card's product: without it
+    nodry = _write(_sms_frame("Variety 7").drop(columns=["Yld_Mass_D"]), str(tmp_path / "n" / "Points.shp"))
+    rep = si.apply(nodry, str(tmp_path / "c.shp"), R)
+    assert not rep["own_yields"] and rep["notes"] == [si.UNKNOWN_PRODUCT_NOTE + si.UNKNOWN_POINT_SUFFIX]
+    rep = si.apply(shp, str(tmp_path / "d.shp"), si.resolve(si.settings(), "Variety 7", None, "cnh_cn1"))
+    assert not rep["own_yields"] and rep["notes"] == [si.UNKNOWN_PRODUCT_NOTE]
+    # the command line: the note for the file's own yields, a warning otherwise
+    for path, head, own in ((shp, "note: ", True), (nodry, "WARNING: ", False)):
+        lines = []
+        _, _, rec = er.import_as_sms(path, "v", str(tmp_path / f"imp_{own}"), {}, crop="Variety 7",
+                                     log=lines.append, fmt=si.POINT_EXPORT)
+        assert rec["own_yields"] is own
+        assert [x for x in lines if x.startswith(head)] and not [x for x in lines if x.startswith(
+            "WARNING: " if own else "note: ")]
+        assert any(si.OWN_YIELDS_NOTE in x for x in lines) is own
+
+
+def _kml_text(dry):
+    """A yield KML as SMS writes it for Google Earth: one placemark per reading, its attributes as ExtendedData."""
+    pm = []
+    for i, y in enumerate(dry):
+        a = {"Obj. Id": i + 1, "Product": "Wheat - Spring", "Yld Vol(Dry)(bu/ac)": round(float(y), 6),
+             "Yld Vol(Wet)(bu/ac)": round(float(y), 6), "Yld Mass(Wet)(lb/ac)": round(float(y) * 60.0, 6),
+             "Moisture(%)": 12.5, "Swth Wdth(ft)": 40.0, "Distance(ft)": 4.0, "Speed(mph)": 4.5, "Time": "2026-09-01"}
+        ed = "".join(f'<Data name="{k}"><value>{v}</value></Data>' for k, v in a.items())
+        pm.append(f"<Placemark><ExtendedData>{ed}</ExtendedData><Point><coordinates>{LON0 + (i % 40) * 5e-5:.7f},"
+                  f"{LAT0 + (i // 40) * 5e-5:.7f},0</coordinates></Point></Placemark>")
+    return ('<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+            + "".join(pm) + "</Document></kml>")
+
+
+@pytest.mark.parametrize("ext", [".kml", ".kmz"])
+def test_a_yield_kml_or_kmz_keeps_every_reading(ext, tmp_path):
+    """A yield KML / KMZ (SMS's Export to Google Earth) opens as a point export and is imported as SMS's generic
+    import of a point file holds it: readings at 0, below 5 bu/ac and far above the product's maximum all stay, with
+    the product table's weight to volume and dry moisture; a card's product rule would leave them out."""
+    import zipfile
+    from engine import run as er
+    rng = np.random.default_rng(7)
+    dry = rng.normal(60.0, 10.0, 400)
+    dry[:15], dry[15:30], dry[30:35] = 0.0, 2.5, 650.0
+    os.makedirs(tmp_path / "in")
+    p = str(tmp_path / "in" / f"Synthetic_points{ext}")
+    if ext == ".kml":
+        open(p, "w", encoding="utf-8").write(_kml_text(dry))
+    else:
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("doc.kml", _kml_text(dry))
+    cands = er.open_input([p], str(tmp_path / "work"), log=lambda m: None)
+    [c] = [x for x in cands if x.get("kind") == "export"]
+    fmt = er.import_format(None, c)
+    crop = er.export_crop_guess(c["path"])
+    assert fmt == si.POINT_EXPORT and crop == "wheat"
+    _, n, rec = er.import_as_sms(c["path"], "kml", str(tmp_path / "imp"), {}, crop=crop, log=lambda m: None,
+                                 monitor=c.get("monitor_product"), fmt=fmt)
+    assert rec["family"] == "point" and n == rec["n_all"] == len(dry) and rec["left_out"] == {}
+    assert (rec["resolved"]["min_yield"], rec["resolved"]["max_yield"]) == (0.0, None)
+    assert rec["sources"]["min_yield"] == rec["sources"]["max_yield"] == si.SRC_POINT
+    assert (rec["resolved"]["test_weight_lb_bu"], rec["resolved"]["dry_moisture_pct"]) == (60.0, 13.5)
+    assert rec["revision"] == si.IMPORT_REVISION
+    _, n_card, rec_card = er.import_as_sms(c["path"], "kml_card", str(tmp_path / "imp_card"), {}, crop=crop,
+                                           log=lambda m: None, fmt="cnh_cn1")
+    assert n_card == len(dry) - 35 and rec_card["left_out"] == {"below the min. yield volume": 30,
+                                                               "above the max. yield volume": 5}
+
+
+def test_the_report_says_where_the_import_values_came_from(tmp_path):
+    """The cleaning report's Import as SMS row: the settings line, where the values came from (a point export: SMS's
+    generic import of a point file) and the readings in the data and imported."""
+    from engine import run as er
+    from engine.report import clean_report as cr
+    shp = _write(_ops(), str(tmp_path / "r" / "Report.shp"))
+    _, n, rec = er.import_as_sms(shp, "rep", str(tmp_path / "imp"), {}, crop="wheat", log=lambda m: None,
+                                 fmt=si.POINT_EXPORT)
+    txt = cr._import_text(rec)
+    assert "yield volume from 0.000 bu/ac, no maximum" in txt and f"({si.SRC_POINT})" in txt
+    assert f"({rec['n_all']:,} readings in the data, {n:,} imported)" in txt and n == rec["n_all"]
 
 
 # ------------------------------------------------------------------------------------------------ apply
@@ -269,23 +464,27 @@ def test_left_out_counts_per_combine(tmp_path):
     wet[[3, 4, 70]] = 60.0                                  # 1 bu/ac
     df["WetMass"] = wet
     shp = _write(df, str(tmp_path / "g" / "Groups.shp"))
-    rep = si.apply(shp, str(tmp_path / "a.shp"), si.resolve(si.settings(), "wheat", MON, "jd_ops_center"))
+    rep = si.apply(shp, str(tmp_path / "a.shp"), si.resolve(si.settings({"min_yield": 5.0}), "wheat", MON,
+                                                             "jd_ops_center"))
     assert rep["left_out"] == {"below the min. yield volume": 3}
     assert rep["left_out_by_group"] == {"below the min. yield volume": {"A": 2, "B": 1}}
 
 
 def test_john_deere_crop_values_are_not_called_the_files():
-    """F3 / VA-4: a Gen4 log or an Operations Center export carries SMS's weight and dry moisture for its crop
-    (common.jd_monitor_product, basis 'sms_crop'), not the file's own: resolve says so (SRC_JD_CROP); a GreenStar 3
-    card's own crop definition stays 'file'; a monitor dict saved before 'basis' was kept is told by its source."""
+    """F3 / VA-4: a Gen4 log carries SMS's weight and dry moisture for its crop (common.jd_monitor_product, basis
+    'sms_crop'), not the file's own: resolve says so (SRC_JD_CROP); an Operations Center export with the same crop
+    record is a point export (SMS's product table); a GreenStar 3 card's own crop definition stays 'file'; a monitor
+    dict saved before 'basis' was kept is told by its source."""
     from engine.formats import common
     mon = common.jd_monitor_product("Barley", "synthetic crop record",
                                     file_values={"test_weight_lb_bu": 47.99, "std_moisture_pct": 14.0})
-    for fmt in ("jd_jdl", "jd_ops_center"):
-        R = si.resolve(si.settings(), "Barley", mon, fmt)
-        assert (R["test_weight_lb_bu"], R["dry_moisture_pct"], R["max_yield"]) == (48.0, 15.0, 1e4)
-        assert R["sources"]["test_weight_lb_bu"] == R["sources"]["dry_moisture_pct"] == si.SRC_JD_CROP
-        assert "(SMS for this John Deere crop)" in si.describe_sources(R)
+    R = si.resolve(si.settings(), "Barley", mon, "jd_jdl")
+    assert (R["test_weight_lb_bu"], R["dry_moisture_pct"], R["max_yield"]) == (48.0, 15.0, 1e4)
+    assert R["sources"]["test_weight_lb_bu"] == R["sources"]["dry_moisture_pct"] == si.SRC_JD_CROP
+    assert "(SMS for this John Deere crop)" in si.describe_sources(R)
+    R = si.resolve(si.settings(), "Barley", mon, "jd_ops_center")
+    assert (R["test_weight_lb_bu"], R["dry_moisture_pct"]) == (48.0, 14.5)
+    assert R["sources"]["dry_moisture_pct"] == si.SRC_TABLE and R["monitor_source"] is None
     old = {k: v for k, v in mon.items() if k != "basis"}
     assert si.resolve(si.settings(), "Barley", old, "jd_jdl")["sources"]["dry_moisture_pct"] == si.SRC_JD_CROP
     R = si.resolve(si.settings(), "Wheat (Hard Red Spring)", MON, "jd_gs3_rcd")
@@ -293,3 +492,38 @@ def test_john_deere_crop_values_are_not_called_the_files():
     # what the user types equal to SMS's value stays SMS's; another value is the user's
     R = si.resolve(si.settings({"dry_moisture_pct": 14.0}), "Barley", mon, "jd_jdl")
     assert R["sources"]["dry_moisture_pct"] == si.SRC_YOU and R["sources"]["test_weight_lb_bu"] == si.SRC_JD_CROP
+
+
+def test_crop_labels_written_in_every_kept_reading(tmp_path):
+    """labels: a decoded file converted with another crop gets that crop's Product (cells rewritten; the columns the
+    import does not compute again keep their values) and a Crop column added when it has none; the GDAL route
+    (deleted records) writes them too; without labels nothing is relabelled."""
+    from engine.clean import yield_clean as yc
+    n = 60
+    wet = np.full(n, 3000.0)
+    wet[:3] = 10.0                                          # below the minimum: left out
+    d = pd.DataFrame({"Product": "Wheat - Spring", "Distance_f": 6.6, "Swth_Wdth_": 40.0, "Duration_s": 1.0,
+                      "Moisture__": 15.0, "Yld_Mass_W": wet, "Yld_Vol_We": wet / 60.0, "Yld_Mass_D": wet,
+                      "Yld_Vol_Dr": wet / 60.0, "Obj__Id": np.arange(1, n + 1), "x": np.arange(n) * 2.0, "y": 0.0})
+    shp = _write(d, str(tmp_path / "lab" / "Decoded.shp"))
+    R = si.resolve(si.settings({"product": "barley", "min_yield": 5.0}), "Wheat - Spring")
+    rep = si.apply(shp, str(tmp_path / "a.shp"), R, labels={"Product": "barley", "Crop": "barley"})
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    assert len(e) == n - 3 and set(e["Product"]) == {"barley"} and set(e["Crop"]) == {"barley"}
+    for c in ("Distance_f", "Swth_Wdth_", "Duration_s", "Moisture__", "Yld_Mass_W", "Obj__Id"):
+        assert np.allclose(e[c].to_numpy(float), d[c].to_numpy(float)[3:]), c
+    assert rep["relabelled"] == ["Product", "Crop"] and any("the crop the yields are converted with" in x
+                                                             for x in rep["notes"])
+    names = [str(x[:11].split(b"\0")[0], "latin-1") for x in yc._read_dbf(rep["path"][:-4] + ".dbf")["fdesc"]]
+    assert names[-1] == "Crop"                              # added after the file's own columns
+    rep = si.apply(shp, str(tmp_path / "b.shp"), R)
+    assert set(pyogrio.read_dataframe(rep["path"], read_geometry=False)["Product"]) == {"Wheat - Spring"}
+    assert rep["relabelled"] == []
+    dbf = shp[:-4] + ".dbf"                                 # a deleted record: written through GDAL
+    b = bytearray(open(dbf, "rb").read())
+    hlen, rlen = int.from_bytes(b[8:10], "little"), int.from_bytes(b[10:12], "little")
+    b[hlen + 30 * rlen] = 0x2A
+    open(dbf, "wb").write(bytes(b))
+    rep = si.apply(shp, str(tmp_path / "c.shp"), R, labels={"Product": "barley", "Crop": "barley"})
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    assert len(e) == n - 4 and set(e["Product"]) == {"barley"} and set(e["Crop"]) == {"barley"}

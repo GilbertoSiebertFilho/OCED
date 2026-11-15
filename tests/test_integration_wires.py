@@ -199,6 +199,117 @@ def test_an_older_sms_cleaning_is_marked_clean_again():
     assert ew.clean_again_reason(R) is None
 
 
+def test_a_cleaning_whose_s2_kept_readings_of_no_width_is_marked_clean_again(tmp_path):
+    """Method revision 3: S2 removes the readings logged with a swath width of 0. A revision-2 cleaning (0.3.0) whose
+    S2 met such readings (kept, or removed by a later step: its flagged file tells) says 'clean it again'; one whose
+    readings of width 0 went before S2 (S0, S1), one without them, one whose S2 was off and one of revision 3 do not.
+    A flagged file that cannot be read is not taken as unchanged."""
+    import geopandas as gpd
+    from engine.clean import sms3sigma as sms
+    assert sms.METHOD_REVISION >= sms.NO_WIDTH_REVISION == 3
+
+    def flagged(name, widths, rem):
+        p = str(tmp_path / f"{name}_flagged.shp")
+        g = gpd.GeoDataFrame({"Swth_Wdth_": widths, "Rem_By": rem, "Keep": [int(r == "") for r in rem]},
+                             geometry=gpd.points_from_xy(np.arange(len(rem)) * 1e-4 - 114.0, [51.8] * len(rem)),
+                             crs="EPSG:4326")
+        g.to_file(p, engine="pyogrio")
+        return p
+
+    def rec(p, rev=2, on=True):
+        return {"sms3sigma": {"method_revision": rev, "steps": []}, "columns": {"width_ft": "Swth_Wdth_"},
+                "cascade": [{"filter": "S0", "on": True}, {"filter": "S2", "on": on}], "files": {"flagged_shp": p}}
+    kept = flagged("kept", [30.0, 0.0, 0.0, 30.0, 0.0, 30.0], ["", "", "S5a", "S3", "S0", ""])
+    why = ew.clean_again_reason(rec(kept))
+    assert why.startswith("settings changed:") and "2 reading(s) logged with a swath width of 0" in why
+    assert why.endswith("clean it again") and ew.no_width_readings_at_s2(rec(kept)) == 2
+    early = flagged("early", [30.0, 0.0, 0.0, 30.0], ["", "S0", "S1", "S4"])
+    assert ew.no_width_readings_at_s2(rec(early)) == 0 and ew.clean_again_reason(rec(early)) is None
+    plain = flagged("plain", [30.0, 30.0, 29.5], ["", "S2", "S5a"])
+    assert ew.clean_again_reason(rec(plain)) is None
+    assert ew.clean_again_reason(rec(kept, on=False)) is None and ew.clean_again_reason(rec(kept, rev=3)) is None
+    gone = rec(str(tmp_path / "gone_flagged.shp"))
+    assert ew.no_width_readings_at_s2(gone) is None and "could not be read" in ew.clean_again_reason(gone)
+    # the flagged file the app resolved (a moved work) is read before the record's own path
+    assert ew.clean_again_reason(gone, kept) == why
+
+
+def test_a_cleaning_whose_s2_order_changes_is_marked_clean_again(tmp_path):
+    """Method revision 4: S2 takes a point file without a time per reading in the file's own row order, and
+    swath_order 'file' is the file's own row order. A cleaning of revision 3 or earlier of such a file whose readings
+    that reached S2 were not in that order (its flagged file holds them in file order) says 'clean it again'; one whose
+    rows were already in the dataset order, one with a time per reading, one not imported as a point file, an SMS
+    export of GreenStar 4 data, one whose out-of-order rows went at S0 / S1, one with S2 off and one of revision 4 do
+    not. A flagged file that cannot be read is not taken as unchanged."""
+    import geopandas as gpd
+    from engine.clean import sms3sigma as sms
+    assert sms.METHOD_REVISION >= sms.FILE_ORDER_REVISION == 4
+
+    def flagged(name, datasets, ids, rem=None):
+        p = str(tmp_path / f"{name}_flagged.shp")
+        rem = rem or [""] * len(ids)
+        g = gpd.GeoDataFrame({"Dataset": datasets, "Obj__Id": ids, "Rem_By": rem, "Swth_Wdth_": [30.0] * len(ids)},
+                             geometry=gpd.points_from_xy(np.arange(len(ids)) * 1e-4 - 114.0, [51.8] * len(ids)),
+                             crs="EPSG:4326")
+        g.to_file(p, engine="pyogrio")
+        return p
+
+    def rec(p, rev=3, on=True, basis="dataset+order", imp=None, order="auto"):
+        return {"sms3sigma": {"method_revision": rev, "steps": [], "settings": {"swath_order": order}},
+                "columns": {"width_ft": "Swth_Wdth_", "dataset": "Dataset", "order": "Obj__Id"},
+                "order": {"basis": basis}, "sms_import": {"family": "point", "fmt": "point_export"} if imp is None
+                else imp, "cascade": [{"filter": "S0", "on": True}, {"filter": "S2", "on": on}],
+                "files": {"flagged_shp": p}}
+    undated_first = flagged("u", ["Strip U"] * 3 + ["Strip D 9/14/2026"] * 3, [1, 2, 3, 1, 2, 3])
+    why = ew.clean_again_reason(rec(undated_first))
+    assert ew.file_order_changed(rec(undated_first)) is True
+    assert why.startswith("settings changed:") and "file's own row order" in why and why.endswith("clean it again")
+    in_order = flagged("o", ["Strip D 9/14/2026"] * 3 + ["Strip U"] * 3, [1, 2, 3, 1, 2, 3])
+    assert ew.file_order_changed(rec(in_order)) is False and ew.clean_again_reason(rec(in_order)) is None
+    assert ew.clean_again_reason(rec(undated_first, basis="time")) is None
+    assert ew.clean_again_reason(rec(undated_first, imp={"family": "cnh", "fmt": "cnh_cn1"})) is None
+    assert ew.clean_again_reason(rec(undated_first, imp={})) is None
+    gs4 = flagged("g", ["TaskName 9/15/2026 (GreenStar 4 Monitor)"] * 3 + ["TaskName 9/14/2026 (GreenStar 4 Monitor)"]
+                  * 3, [1, 2, 3, 1, 2, 3])
+    assert ew.clean_again_reason(rec(gs4)) is None
+    early = flagged("e", ["Strip U", "Strip D 9/14/2026", "Strip D 9/14/2026"], [1, 1, 2], rem=["S1", "", ""])
+    assert ew.clean_again_reason(rec(early)) is None
+    assert ew.clean_again_reason(rec(undated_first, on=False)) is None
+    assert ew.clean_again_reason(rec(undated_first, rev=4)) is None
+    # swath_order 'file' (it meant the dataset or the time order before): any file whose S2 order changes
+    assert ew.clean_again_reason(rec(gs4, order="file")) is not None
+    assert ew.clean_again_reason(rec(undated_first, order="file", imp={})) is not None
+    assert ew.clean_again_reason(rec(in_order, order="file", basis="time", imp={})) is not None
+    assert ew.clean_again_reason(rec(in_order, order="file", imp={})) is None
+    assert ew.clean_again_reason(rec(gs4, order="chain")) is None
+    gone = rec(str(tmp_path / "gone_flagged.shp"))
+    assert ew.file_order_changed(gone) is None and "could not be read" in ew.clean_again_reason(gone)
+    # a revision-2 cleaning (0.3.0) with no reading of width 0 at S2 gets the same reason
+    assert ew.clean_again_reason(rec(undated_first, rev=2)) == why
+
+
+def test_a_point_file_cleaned_at_revision_3_order_asks_to_clean_again(tmp_path):
+    """End to end on a written cleaning (synthetic): an untimed point file whose undated dataset comes first, cleaned
+    by this engine (its record and flagged file), then marked as revision 3: 'clean it again' (the order that revision
+    took is rebuilt from the flagged file); the same file with a time per reading, and a file already in dataset
+    order, do not. The cleaning report says the order of S2."""
+    from engine.clean import sms3sigma as sms
+    from tests.synthetic_strips import make_strips
+    imp = {"family": "point", "fmt": "point_export", "resolved": {"min_yield": 0.0, "max_yield": None}}
+    cases = {"undated_first": (make_strips(str(tmp_path / "u"), "Strip U", "Strip D 9/14/2026"), True),
+             "timed": (make_strips(str(tmp_path / "t"), "Strip U", "Strip D 9/14/2026",
+                                   times=("2026-09-14 14:00:00", "2026-09-14 13:00:00")), False),
+             "in_order": (make_strips(str(tmp_path / "o"), "Strip D 9/14/2026", "Strip U"), False)}
+    for name, (F, changes) in cases.items():
+        R = yc.run(F["shp"], str(tmp_path / f"out_{name}"), {"method": "sms3sigma", "machines": {"harmonise": False},
+                                                             "sms_import": imp, "tag": name}, log=Q)
+        assert R["sms3sigma"]["method_revision"] == sms.METHOD_REVISION and ew.clean_again_reason(R) is None
+        assert os.path.isfile(R["files"]["report_pdf"])
+        R["sms3sigma"]["method_revision"] = 3
+        why = ew.clean_again_reason(R)
+        assert (why is not None and "file's own row order" in why) == changes, name
+
+
 # ------------------------------------------------------------------------------------------- AOI cache
 def test_the_aoi_cache_key_follows_format_points_options_and_version(sources, monkeypatch):
     S = sources["jd_jdl"]
@@ -245,7 +356,8 @@ def test_the_aoi_positions_are_decoded_with_the_decoder_options(sources, tmp_pat
 # ------------------------------------------------------------------------------------------- import as SMS
 def test_import_as_sms_resolves_with_the_source_crop_definition(tmp_path):
     """engine.run.import_as_sms with a John Deere monitor_product: max 10,000 and the file's weight and moisture,
-    recorded with where each came from; the same file as a Case IH card's product: SMS's product table."""
+    recorded with where each came from; the same file as a Case IH card's product: SMS's product table; as a point
+    export: SMS's generic import, no reading left out for its yield."""
     F = make_field(str(tmp_path / "field"))
     mon = {"crop": "wheat", "test_weight_lb_bu": 60.0098, "dry_moisture_pct": 13.0, "min_yield": 5.0,
            "max_yield": 10_000.0, "source": "synthetic file"}
@@ -265,7 +377,15 @@ def test_import_as_sms_resolves_with_the_source_crop_definition(tmp_path):
     o, _ = er.decoder_options_for_import(detect.default_options("cnh_cn1"), {}, "wheat", fmt="cnh_cn1")
     assert o.test_weight_lb_bu == 60.0 and o.std_moisture_pct == 13.5
     assert er.import_format(None, {"kind": "export", "monitor_product": mon}) == "jd_ops_center"
-    assert er.import_format(None, {"kind": "export"}) is None and er.import_format({"format": "jd_jdl"}) == "jd_jdl"
+    assert er.import_format(None, {"kind": "export"}) == "point_export"
+    assert er.import_format({"format": "jd_jdl"}) == "jd_jdl" and er.import_format(None, None) is None
+    # the same file as a point export: SMS's generic import (every reading kept), the record carries the revision
+    _, n_pt, rec3 = er.import_as_sms(F["shp"], "pt", str(tmp_path / "d3"), {}, crop="wheat", log=Q,
+                                     fmt=er.import_format(None, {"kind": "export"}))
+    assert rec3["family"] == "point" and rec3["fmt"] == "point_export" and rec3["revision"] == si.IMPORT_REVISION
+    assert (rec3["resolved"]["min_yield"], rec3["resolved"]["max_yield"]) == (0.0, None)
+    assert rec3["sources"]["min_yield"] == si.SRC_POINT and n_pt == rec3["n_all"] - rec3["left_out"].get("no yield", 0)
+    assert n_pt >= n_jd and rec["revision"] == rec2["revision"] == si.IMPORT_REVISION
 
 
 def test_import_max_is_reported_next_to_s5a():

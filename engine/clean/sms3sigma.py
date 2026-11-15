@@ -28,9 +28,17 @@ every step, as the user reads them again in Edit Legend after each filter:
       shortened (Distance, and Speed = Distance / Duration). The per-area values (yield, mass per area, fuel per area)
       of a narrowed or shortened reading are multiplied by its old / new area (W x D) / (W' x D') (mass is
       conserved). engine/clean/sms_swath.py (reverse-engineered from SMS raw vs cleaned exports and SMS's cleaning
-      logs). The datasets run in the order of the start time / date in their names, and the
-      logged files of a GreenStar 4 SMS export, listed in file-name order, are put back in time order first
-      (swath_order auto). swath_scope "operation" (default) tests every reading against the ground cut by all the
+      logs). A reading logged with a swath width of 0 (a rectangle of no area: the header up, every section off) is
+      removed here; a point export imported with no minimum yield brings them (from the step counts of an SMS
+      cleaning, not matched reading by reading). The processing order (swath_order auto): the time of every reading
+      when the file has one; a point file (its import record says family 'point') without a time per reading in the
+      file's own row order, as one block (SMS holds such a file as one dataset in the order of its import: measured
+      on the clean export of one file); else the datasets in the order of the start time / date in their names, and
+      the logged files of a GreenStar 4 SMS export, listed in file-name order, put back in time order first (also when
+      the GreenStar 4 export is a point file). swath_order "file" takes the file's own row order for any file (also
+      over a time per reading), "chain" re-chains the file blocks of every dataset. The cleaning record says the order
+      and why (swath 'order', 'order_basis', 'order_reason').
+      swath_scope "operation" (default) tests every reading against the ground cut by all the
       combines, as SMS does when they are datasets of one instance; "machine" tests it against its own combine's
       ground only, as in an SMS cleaning made with one instance per combine.
       Before the rectangles are built, every combine's lateral bias is measured (lateral_bias: how far its logged
@@ -100,7 +108,8 @@ DEFAULTS = {
     "round_decimals": 2,        # the limits as typed in SMS (None = full precision)
     "yield_floor": 0.0,         # the lower limit is floored here (None = no floor)
     "swath_params": None,       # advanced: overrides of engine.clean.sms_swath.DEFAULTS
-    "swath_order": "auto",      # S2 processing order: auto | file | chain (GreenStar 4 file blocks re-chained)
+    "swath_order": "auto",      # S2 processing order: auto | file (the file's own row order) | chain (file blocks
+                                # re-chained); auto: time, else the row order of a point file, else dataset start
     "swath_scope": "operation",  # S2 over: operation (all combines together: one SMS instance) | machine (each
                                  # combine alone: an SMS cleaning with one instance per combine)
     "swath_bias": "warn",        # S2: a combine whose logged points sit beside the centre of the strip it cut
@@ -114,6 +123,7 @@ SWATH_BIASES = ("warn", "auto", "off")
 BIAS_MIN_FT = 1.0           # a lateral bias of this size (ft) or more is reported (and moved with swath_bias auto)
 BIAS_MIN_PAIRS = 200        # ... when measured on this many readings or more with an opposite pass on each side
 CLUSTER_GAP_M = 500.0       # without a clip: a warning when the readings form groups farther apart than this
+NO_WIDTH_REASON = "logged swath width 0"    # S2: a reading with no width, removed (stats removed_by_reason)
 BIAS_KNN = 64               # lateral_bias: neighbours asked per reading (k-nearest within the search radius) ...
 BIAS_KNN_MAX = 512          # ... and for a reading whose 64th neighbour is still inside the radius
 BIAS_CHUNK = 4096           # ... readings per query block (peak memory ~ BIAS_CHUNK x BIAS_KNN cells)
@@ -126,7 +136,15 @@ LEGACY_FILTER_ORDER = "speed_moisture"                # what a cleaning record w
 #   1  S3 speed, S4 moisture; group_by auto = one group per task with several combines
 #   2  S3 moisture, S4 speed (filter_order); group_by auto = one group per combine; a reading without a value is
 #      not removed by that filter; S0 takes the minimum it is given
-METHOD_REVISION = 2
+#   3  S2 removes the readings logged with a swath width of 0 (NO_WIDTH_REASON); a cleaning of an earlier revision
+#      whose S2 met such readings is cleaned again (engine/works.py clean_again_reason reads its flagged file)
+#   4  S2 takes a point file without a time per reading in the file's own row order (swath_order auto), and
+#      swath_order 'file' is the file's own row order for every file; a cleaning of an earlier revision whose S2 order
+#      this changes is cleaned again (engine/works.py clean_again_reason: file_order_changed)
+METHOD_REVISION = 4
+NO_WIDTH_REVISION = 3       # the revision from which S2 removes them
+FILE_ORDER_REVISION = 4     # the revision from which S2 takes the file's row order (above)
+ORDER_TIME, ORDER_FILE, ORDER_EXPORT, ORDER_CHAIN = "time", "file rows", "dataset start", "chain"   # order_basis
 STEP_ORDER = ["S0", "S1", "S2", "S3", "S4"]           # + S5a, S5b ... (yield passes)
 PASS_LETTERS = "abcdefghij"
 G_IMPORT, G_SWATH, G_YIELD = "Import and clip (S0-S1)", "Swath widths (S2)", "Dry yield (S5)"
@@ -268,6 +286,18 @@ def pass_column(columns) -> str | None:
         if str(c).strip().strip("_").lower() in PASS_NUM_NAMES:
             return c
     return None
+
+
+def point_import(rec) -> bool:
+    """True when the import record of the file (settings['sms_import'], engine.run.import_as_sms) says it is a point
+    file: family 'point', or a source format of that family (engine/sms_import.format_family: a point export of any
+    software, an Operations Center export). A file without a record (not imported as SMS) or of a raw format is not."""
+    if not isinstance(rec, dict):
+        return False
+    if str(rec.get("family") or "").strip().lower() == "point":
+        return True
+    from engine import sms_import as si
+    return si.format_family(rec.get("fmt")) == "point"
 
 
 def file_blocks(seg, pass_num) -> np.ndarray:
@@ -828,26 +858,55 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                        "changes between log files; on ISOXML task data: the positions the display logs for the "
                        "sections of its header, which SMS takes as they are); swath_bias 'auto' moves the points "
                        "back before the swath step"))
-        # processing order: time when the file has it; an SMS export of GreenStar 4 data has dates only and lists the
-        # logged files in file-name order, so their blocks are put back in time order by position (swath_order auto)
+        # processing order: time when the file has it; a point file without a time per reading in the file's own row
+        # order (SMS holds it as one dataset in the order of its import); an SMS export of GreenStar 4 data has dates
+        # only and lists the logged files in file-name order, so their blocks are put back in time order by position
+        # (swath_order auto); swath_order 'file' = the file's own row order for any file
         order_sw = np.asarray(burn)
         has_time = bool(C.get("time"))
         order_note = "time order across combines" if has_time else "export order (dataset, then record id)"
         ds_names = g[C["dataset"]].astype(str) if C.get("dataset") else None
         is_gs4 = (ds_names.str.contains(GS4_NAME_RE).to_numpy(bool) if ds_names is not None else np.zeros(n, bool))
         mode_o = P["swath_order"]
-        want_chain = mode_o == "chain" or (mode_o == "auto" and not has_time and bool(is_gs4.any()))
+        point = point_import(S.get("sms_import"))
+        if has_time:
+            order_basis, order_reason = ORDER_TIME, "the file has a time per reading"
+        elif point and is_gs4.any():
+            order_basis, order_reason = ORDER_EXPORT, ("an SMS export of GreenStar 4 data without a time per reading "
+                                                       "(no pass number column to put its logged files back in time "
+                                                       "order)")
+        else:
+            order_basis, order_reason = ORDER_EXPORT, ("no time per reading, and not a point file (raw data, or a file "
+                                                       "not imported as SMS)")
+        want_file = mode_o == "file" or (mode_o == "auto" and point and not has_time and not bool(is_gs4.any()))
+        want_chain = not want_file and (mode_o == "chain" or (mode_o == "auto" and not has_time
+                                                              and bool(is_gs4.any())))
+        if want_file:
+            rows_f = g["_row"].to_numpy(np.int64) if "_row" in g else np.arange(n)
+            order_sw = np.argsort(rows_f, kind="stable")
+            order_basis = ORDER_FILE
+            order_reason = ("set by swath_order 'file'" if mode_o == "file" else
+                            "a point file without a time per reading: SMS holds it as one dataset, in the order of "
+                            "its import (swath_order auto)")
+            order_note = f"the file's own row order, as one block ({order_reason})"
+            if has_time:
+                order_note += "; it replaces the per-record time order"
+                warnings.append("SMS 3-sigma: swath_order 'file' replaces the per-record time order of the swath step "
+                                "with the file's own row order")
         if want_chain:
             pcol = pass_column(g.columns)
             if pcol is None:
                 what = "swath_order 'chain'" if mode_o == "chain" else "re-chaining the GreenStar 4 file blocks"
                 warnings.append(f"SMS 3-sigma: {what} needs a pass number column (Pass_Num); the "
                                 + ("time order" if has_time else "export order") + " is used for the swath step")
+                if mode_o == "chain":
+                    order_reason += "; swath_order 'chain' needs a pass number column (Pass_Num)"
             else:
                 seg = (g["_ds_key"] if "_ds_key" in g else ds_names if ds_names is not None
                        else pd.Series(["all"] * n)).astype(str).to_numpy()
                 pn = pd.to_numeric(g[pcol], errors="coerce").to_numpy(float)
                 order_sw, n_blk, n_mov = chain_order(seg, pn, xs, ys, chain_mask=None if mode_o == "chain" else is_gs4)
+                order_basis = ORDER_CHAIN
                 if mode_o == "chain" and not is_gs4.all():
                     order_note = (f"file blocks (a new block at a Pass_Num decrease) re-chained by position, set by "
                                   f"swath_order 'chain' ({n_blk} blocks, {n_mov} moved)")
@@ -855,11 +914,14 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                     order_note = (f"GreenStar 4 file blocks put back in time order by position ({n_blk} blocks, {n_mov} "
                                   "moved" + ("; the other datasets in export order" if not is_gs4.all() else "")
                                   + "): the SMS export lists them in file-name order")
+                order_reason = ("set by swath_order 'chain'" if mode_o == "chain" else
+                                "an SMS export of GreenStar 4 data without a time per reading: SMS lists its logged "
+                                "files in file-name order (swath_order auto)")
                 if has_time:
                     order_note += "; it replaces the per-record time order"
                     warnings.append("SMS 3-sigma: swath_order 'chain' replaces the per-record time order of the swath "
                                     "step with an order rebuilt from the block positions")
-        if not has_time and ds_names is not None:
+        if not want_file and not has_time and ds_names is not None:
             # the datasets in harvest order: by the start time / date in their names (the rows are sorted by name,
             # and GreenStar 4 names sort as text: 1/10 before 1/9)
             ts = ds_names.map(dataset_start).to_numpy(float)
@@ -875,8 +937,14 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
         if P.get("swath_scope") == "machine" and not each:
             notes.append("SMS 3-sigma: swath_scope 'machine' with one combine (or none told apart): Optimize Swath "
                          "Widths runs over the whole operation")
-        act = alive.copy()
-        rem_all = np.zeros(n, bool)
+        # a reading logged with no swath width (0: no cut, e.g. the header up or every section off) is a rectangle of
+        # no area: nothing of it is left to keep (its kept width is below the module's min_w_ft), so the step removes
+        # it. A point file brings such readings (an import of raw data leaves them out as below the minimum yield);
+        # the step counts of an SMS cleaning of one say that SMS's swath step removes them (not matched reading by
+        # reading). A missing width (no value) is not one: it keeps its logged values
+        no_width = alive & np.isfinite(width_ft) & (width_ft <= 0)
+        act = alive & ~no_width
+        rem_all = no_width.copy()
         clip_again = np.zeros(n, bool)
         for sp in range(int(P.get("swath_passes") or 1)):
             if sp > 0 and in_sms is not None:     # a repeated Clip + Swath chain clips the moved points again
@@ -927,10 +995,16 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
         if yoff_col and (yoff[surv] != 0).any():
             sw_stats["y_offset_column"] = yoff_col
             sw_stats["n_offset_moved"] = int((surv & (yoff != 0)).sum())
+        if no_width.any():
+            rbr = dict(sw_stats.get("removed_by_reason") or {})
+            rbr[NO_WIDTH_REASON] = int(rbr.get(NO_WIDTH_REASON, 0)) + int(no_width.sum())
+            sw_stats["removed_by_reason"] = rbr
+            sw_stats["n_no_width"] = int(no_width.sum())
         nar = kept & (w_new < width_ft - 1e-6)
         short = kept & (d_new < dist_ft - 1e-6)
         sw_stats.update(n_narrowed=int(nar.sum()), n_removed=int(rem_all.sum()), n_shortened=int(short.sum()),
                         n_dist_cut=int(short.sum()), swath_passes=int(P.get("swath_passes") or 1), order=order_note,
+                        order_basis=order_basis, order_reason=order_reason, order_setting=mode_o,
                         scope=("each combine alone" if each else "the whole operation"),
                         lateral_bias_ft={k: v["bias_ft"] for k, v in biases.items()},
                         lateral_bias=biases, lateral_bias_moved_ft=moved,
@@ -945,7 +1019,9 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                      "narrowed to the uncovered strip"
                      + (" with their per-area values scaled" if P["scale_per_area"] else "")
                      + (f" ({int(P.get('swath_passes') or 1)} passes)" if int(P.get("swath_passes") or 1) > 1 else "")
-                     + ("; each combine against its own ground only" if each else ""),
+                     + ("; each combine against its own ground only" if each else "")
+                     + (f"; {int(no_width.sum()):,} reading(s) logged with no swath width (0) - removed"
+                        if no_width.any() else ""),
                rem_all, extra={"narrowed": int(nar.sum())})
     else:
         record("S2", "Optimize Swath Widths", np.zeros(n, bool), on=False)

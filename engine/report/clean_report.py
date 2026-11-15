@@ -40,6 +40,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -488,16 +489,43 @@ def _difm_column(R) -> tuple[str, str]:
 
 
 def _import_text(imp: dict) -> str:
-    """The file's Import as SMS record (engine.run.import_as_sms): the settings line and the readings left out."""
-    s = _e(imp.get("text") or imp.get("describe") or "")
+    """The file's Import as SMS record (engine.run.import_as_sms): the settings line, where its values came from
+    (a point export: SMS's generic import of a point file, which keeps every reading) and the readings left out."""
+    line = imp.get("text") or imp.get("describe") or imp.get("settings")
+    s = _e(line if isinstance(line, str) else "")
     if not s:
         r = imp.get("resolved") or imp
         s = ", ".join(f"{_e(k)} {_e(v)}" for k, v in r.items() if not isinstance(v, (dict, list)) and v is not None)
+    if imp.get("mode") == "custom":                      # the user's settings of step 2, not SMS's default
+        s = "Your settings (step 2): " + s
+    elif imp.get("mode") == "older":                     # a work of an earlier version: its import kept as saved
+        ch = imp.get("older") if isinstance(imp.get("older"), list) else []
+        head = (f"Decoded by an older OCED with {_e(imp['older_decode'])}, kept" if imp.get("older_decode")
+                else "An older OCED rule, kept as saved")
+        if imp.get("older_decode") and imp.get("older_decode_converted"):
+            # the import converted those readings' yields with its own product's weight and moisture: its own line
+            s = re.sub(r"^product ", "the yields converted with product ", s, count=1)
+        elif imp.get("older_decode"):
+            # the yields are those that decode gave the readings (its product's weight and moisture), not the
+            # 'product unknown; weight to volume -' of an import that converts nothing
+            vals = imp.get("older_decode_values")
+            s = re.sub(r"^product [^;]*; weight to volume [^;]*; dry moisture [^;]*",
+                       lambda m: "the yields as that decode gives them" + (f" ({_e(vals)})" if vals else ""), s,
+                       count=1)
+        s = head + (f" ({_e('; '.join(str(x) for x in ch))})" if ch else "") + ": " + s
+    src_txt = imp.get("sources_text") if isinstance(imp.get("sources_text"), str) else ""
+    if imp.get("mode") == "older" and imp.get("older_decode") and not imp.get("older_decode_converted"):
+        # (nor 'weight to volume none, dry moisture none' of an import that converted nothing: the decode's values)
+        src_txt = re.sub(r"^(?:SMS product [^:]*: )?weight to volume [^,]*, dry moisture [^,]*(?:, )?", "", src_txt)
+    if src_txt:
+        s += "; values from: " + _e(src_txt)
     lo = imp.get("left_out")
     if isinstance(lo, dict) and lo:
         s += "; left out at import: " + ", ".join(f"{_n(v)} {_e(k)}" for k, v in lo.items())
     if imp.get("n_in") is not None and imp.get("n_out") is not None:
         s += f" ({_n(imp['n_in'])} readings in, {_n(imp['n_out'])} imported)"
+    elif imp.get("n_all") is not None and imp.get("n_in") is not None:
+        s += f" ({_n(imp['n_all'])} readings in the data, {_n(imp['n_in'])} imported)"
     return s + "."
 
 
@@ -775,6 +803,15 @@ def _sms_swath_text(R) -> str:
     if sw.get("order"):
         t += f"; order: {_e(sw['order'])}"
     return t + (f"; model: {_e(sw.get('model'))}" if sw.get("model") else "") + "."
+
+
+def _swath_order_text(R) -> str:
+    """'; Optimize Swath Widths (S2): ...' when the SMS 3-sigma swath step took the file's own row order
+    (engine/clean/sms3sigma.py ORDER_FILE), not the harvest order of this row; else ''."""
+    sw = (R.get("sms3sigma") or {}).get("swath") or {}
+    if sw.get("order_basis") != yield_clean.sms_mod.ORDER_FILE:
+        return ""
+    return "; Optimize Swath Widths (S2): " + _e(f"the file's own row order ({sw.get('order_reason') or ''})")
 
 
 def _section_sms_limits(story, R, num):
@@ -1397,7 +1434,7 @@ def make_report(result: dict, path: str) -> str:
     rows += [
         ["Points", f"{R['n_in']:,} in &rarr; <b>{R['n_kept']:,} kept</b>; {rem:,} removed ({R['removed_pct']:.2f} %)"],
         ["Harvest order", _e(f"{R['order']['basis']}: {R['order']['rule']}")
-         + (f" ({R['order']['n_logs']} logs)" if R["order"].get("n_logs") else "")],
+         + (f" ({R['order']['n_logs']} logs)" if R["order"].get("n_logs") else "") + _swath_order_text(R)],
     ]
     mo = _moisture_text(R)
     if mo:

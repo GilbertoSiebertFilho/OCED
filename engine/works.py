@@ -23,7 +23,10 @@ Record, version 1:
     inputs_left_out  the inputs left out when the work's data was opened (a damaged zip among the zips given: one
                      sentence each with the reason), [] when none; the app says them again when the work is opened
     datasets  {tag: the app's dataset dict (shp, zip relative; report.input_root and source.input_root,
-                     source.decode_report, source.decoded_shp relative when inside the work folder)}
+                     source.decode_report, source.decoded_shp relative when inside the work folder; the default
+                     import of the file, import_default {shp, n, mtime, sig, sms_import, source, basis, error, older;
+                     a raw file decoded again for SMS's default also report, zip, older_decode, raw_gone}, with the
+                     same paths relative, and import_mode default | custom | as_is)}
     boundary  {tag: {path, feature}}             the boundary file of each extracted file
     grower    {tag: the grower's data dict}      weight, unit, basis, moisture, test_weight, crop, std_moisture, use,
                                                  area_ac
@@ -57,7 +60,9 @@ PATH_KEYS_D = ("shp", "zip")
 PATH_KEYS_C = ("json", "shp", "zip", "flagged_shp", "flagged_zip", "report_pdf")
 PATH_KEYS_REPORT = ("input_root",)                                  # in a dataset's decode report
 PATH_KEYS_SOURCE = ("input_root", "decode_report", "decoded_shp")   # in a dataset's source (engine.run.decode_source)
-PATH_KEYS_IMPORT = ("all_readings",)                                # in a dataset's sms_import record
+PATH_KEYS_IMPORT = ("all_readings",)                                # in a dataset's sms_import record (and in
+                                                                    # its default import's basis)
+PATH_KEYS_DEFAULT = ("shp", "zip")                                  # in a dataset's import_default
 
 
 # ================================================================================================ paths
@@ -116,7 +121,9 @@ def _paths(d, keys, fn):
 
 def _dataset_paths(D: dict, fn) -> dict:
     """The dataset dict with fn applied to every path it holds: shp, zip, the decode report's input folder, the
-    source's input folder / decode report / decoded shapefile, the import's file of all readings."""
+    source's input folder / decode report / decoded shapefile, the import's file of all readings, and the same paths
+    of its default import (import_default: its shapefile and extracted points, the file of all readings of its basis
+    and of its record, its source's paths, its decode report's input folder)."""
     d = _paths(D, PATH_KEYS_D, fn)
     if isinstance(d.get("report"), dict):
         d["report"] = _paths(d["report"], PATH_KEYS_REPORT, fn)
@@ -124,6 +131,17 @@ def _dataset_paths(D: dict, fn) -> dict:
         d["source"] = _paths(d["source"], PATH_KEYS_SOURCE, fn)
     if isinstance(d.get("sms_import"), dict):
         d["sms_import"] = _paths(d["sms_import"], PATH_KEYS_IMPORT, fn)
+    if isinstance(d.get("import_default"), dict):
+        DF = _paths(d["import_default"], PATH_KEYS_DEFAULT, fn)
+        if isinstance(DF.get("basis"), dict):
+            DF["basis"] = _paths(DF["basis"], PATH_KEYS_IMPORT, fn)
+        if isinstance(DF.get("sms_import"), dict):
+            DF["sms_import"] = _paths(DF["sms_import"], PATH_KEYS_IMPORT, fn)
+        if isinstance(DF.get("source"), dict):
+            DF["source"] = _paths(DF["source"], PATH_KEYS_SOURCE, fn)
+        if isinstance(DF.get("report"), dict):          # a raw file decoded again for SMS's default
+            DF["report"] = _paths(DF["report"], PATH_KEYS_REPORT, fn)
+        d["import_default"] = DF
     return d
 
 
@@ -300,13 +318,86 @@ def _config_paths(cfg, fn):
 
 
 # ================================================================================================ older records
-def clean_again_reason(R: dict | None) -> str | None:
+def no_width_readings_at_s2(R: dict, flagged_shp: str | None = None) -> int | None:
+    """The readings logged with a swath width of 0 (or less) that reached S2 of an SMS 3-sigma cleaning record R
+    (kept, or removed by S2 or a later step), counted in its flagged file (flagged_shp, else R['files']['flagged_shp']:
+    every reading inside the boundary with its logged width and Rem_By). 0 when S2 did not run or the cleaning had no
+    width column (nothing for the S2 rule of revision 3 to change); None when the flagged file cannot be read."""
+    rows = [c for c in (R.get("cascade") or []) if isinstance(c, dict) and c.get("filter") == "S2"]
+    wcol = (R.get("columns") or {}).get("width_ft")
+    if not rows or not rows[0].get("on") or not wcol:
+        return 0
+    paths = [p for p in (flagged_shp, (R.get("files") or {}).get("flagged_shp")) if p]
+    p = next((q for q in paths if os.path.isfile(q)), None)
+    try:
+        import numpy as np
+        import pyogrio
+        g = pyogrio.read_dataframe(p, columns=[wcol, "Rem_By"], read_geometry=False)
+        w = np.asarray(g[wcol], dtype=float)
+        rem = g["Rem_By"].fillna("").astype(str).str.strip()
+    except Exception:
+        return None
+    return int((np.isfinite(w) & (w <= 0) & ~rem.isin(["S0", "S1"]).to_numpy()).sum())
+
+
+def file_order_changed(R: dict, flagged_shp: str | None = None) -> bool | None:
+    """Whether this engine's S2 would take the readings of an SMS 3-sigma cleaning record R in another order than the
+    one R was made with, from method revision 4 (engine/clean/sms3sigma.py FILE_ORDER_REVISION: a point file without
+    a time per reading in the file's own row order; swath_order 'file' = the file's own row order for every file).
+    True when S2 ran and took its readings in another order than the file's own rows: the setting 'file' over a time
+    per reading; or, without a time per reading, the setting 'file', or 'auto' on a point file (its import record)
+    that is not an SMS export of GreenStar 4 data, whose rows were not already in the order S2 took (dataset start,
+    then record id: yield_clean.export_order), read from its flagged file (the readings in the file's own row order;
+    flagged_shp, else the one R names). False when nothing changes; None when the flagged file cannot be read."""
+    rows = [c for c in (R.get("cascade") or []) if isinstance(c, dict) and c.get("filter") == "S2"]
+    if not rows or not rows[0].get("on"):
+        return False
+    from engine.clean import sms3sigma as sms
+    M = R.get("sms3sigma") or {}
+    P = M.get("settings") if isinstance(M.get("settings"), dict) else {}
+    mode = str(P.get("swath_order") or "auto").strip().lower()
+    timed = str((R.get("order") or {}).get("basis") or "") == "time"
+    if mode == "file" and timed:
+        return True
+    if mode not in ("auto", "file") or timed or (mode == "auto" and not sms.point_import(R.get("sms_import"))):
+        return False
+    cols = R.get("columns") or {}
+    dcol, ocol = cols.get("dataset"), cols.get("order")
+    if not dcol:
+        return False                          # no dataset column: S2 took the file's row order already
+    paths = [p for p in (flagged_shp, (R.get("files") or {}).get("flagged_shp")) if p]
+    p = next((q for q in paths if os.path.isfile(q)), None)
+    try:
+        import numpy as np
+        import pyogrio
+        from engine.clean import yield_clean as yc
+        g = pyogrio.read_dataframe(p, columns=[c for c in (dcol, ocol) if c] + ["Rem_By"], read_geometry=False)
+        names = g[dcol].astype(str)
+        if mode == "auto" and names.str.contains(sms.GS4_NAME_RE).any():
+            return False                      # an SMS export of GreenStar 4 data: its files are re-chained as before
+        if ocol:
+            old = yc.export_order(g, dcol, ocol)
+        else:                                 # file order, then S2 put the datasets in the order of their dates
+            ts = names.map(sms.dataset_start).to_numpy(float)
+            old = np.argsort(ts, kind="stable") if np.isfinite(ts).all() else np.arange(len(g))
+    except Exception:
+        return None
+    reached = ~g["Rem_By"].fillna("").astype(str).str.strip().isin(["S0", "S1"]).to_numpy()
+    seq = old[reached[old]]                   # the file rows that reached S2, in the order S2 took them
+    return bool((np.diff(seq) < 0).any())
+
+
+def clean_again_reason(R: dict | None, flagged_shp: str | None = None) -> str | None:
     """Why a harvest cleaning record (the engine's cleaning JSON) must be made again before the app shows it, or None:
     a grower's weight compared by an engine older than the combine-factor totals (R['level'] without
-    'monitor_total_final_bu': the verdict and the factor in the file would be read from the wrong total), or an SMS
+    'monitor_total_final_bu': the verdict and the factor in the file would be read from the wrong total), an SMS
     3-sigma cleaning of the method's revision 1 (R['sms3sigma'] without 'method_revision': speed filtered before
     moisture and one mean and SD per task, engine/clean/sms3sigma.py METHOD_REVISION), whose steps the app would
-    otherwise label in the current order."""
+    otherwise label in the current order, or one of revision 2 whose S2 met readings logged with a swath width of 0
+    (it kept them; from revision 3 S2 removes them, which changes every later step): counted in its flagged file
+    (flagged_shp, else the one the record names; no_width_readings_at_s2), or one of revision 3 or earlier whose S2
+    order changes from revision 4 (a point file without a time per reading now in the file's own row order:
+    file_order_changed); when the flagged file cannot be read the cleaning is not taken as unchanged."""
     if not isinstance(R, dict):
         return None
     lv = R.get("level")
@@ -317,6 +408,35 @@ def clean_again_reason(R: dict | None) -> str | None:
     if isinstance(M, dict) and M and "method_revision" not in M:
         return ("settings changed: made by an older version of the SMS 3-sigma method (speed filtered before moisture, "
                 "one mean and SD per task): clean it again")
+    if isinstance(M, dict) and M:
+        from engine.clean.sms3sigma import NO_WIDTH_REVISION
+        try:
+            rev = int(M.get("method_revision") or 0)
+        except (TypeError, ValueError):
+            rev = 0
+        if rev < NO_WIDTH_REVISION:
+            n = no_width_readings_at_s2(R, flagged_shp)
+            if n is None:
+                return ("settings changed: made by an older version of the SMS 3-sigma method, whose S2 kept the "
+                        "readings logged with a swath width of 0 (S2 now removes them), and its flagged file could "
+                        "not be read to tell whether this file had any: clean it again")
+            if n:
+                return (f"settings changed: made by an older version of the SMS 3-sigma method, whose S2 kept the {n:,} "
+                        "reading(s) logged with a swath width of 0 (S2 now removes them, which changes the later "
+                        "steps): clean it again")
+        from engine.clean.sms3sigma import FILE_ORDER_REVISION
+        if rev < FILE_ORDER_REVISION:
+            ch = file_order_changed(R, flagged_shp)
+            if ch is None:
+                return ("settings changed: made by an older version of the SMS 3-sigma method, whose S2 took the "
+                        "readings of a file without a time per reading in the order of its datasets (S2 now takes "
+                        "the file's own row order), and its flagged file could not be read to tell whether this "
+                        "changes the order: clean it again")
+            if ch:
+                return ("settings changed: made by an older version of the SMS 3-sigma method, whose S2 took the "
+                        "readings in another order (S2 now takes a point file without a time per reading in the "
+                        "file's own row order, as SMS holds it; swath_order 'file' is the file's own row order): "
+                        "clean it again")
     return None
 
 
@@ -338,10 +458,16 @@ def _n_points(shp: str) -> int:
 
 
 def legacy_record(workdir: str) -> dict | None:
-    """A work folder without oced_work.json, rebuilt from its files: decoded/<tag>_decoded.shp (extracted files) and
-    clean/<tag>/*_cleaning.json (cleanings, with the settings the engine received: the boundary, the grower's data,
-    the SMS or 3-sigma settings). None when the folder holds neither."""
-    decoded = sorted(glob.glob(os.path.join(workdir, "decoded", "*_decoded.shp")))
+    """A work folder without oced_work.json, rebuilt from its files: decoded/<tag>_decoded.shp (extracted files; a
+    raw file an older version decoded with a product and decoded again for SMS's default by 0.3.1 has its readings in
+    sms_default/decoded/<tag>_decoded.shp, taken before decoded/'s) and clean/<tag>/*_cleaning.json (cleanings, with the
+    settings the engine received: the boundary, the grower's data, the SMS or 3-sigma settings). None when the folder
+    holds neither."""
+    by_tag = {}
+    for sub in (("decoded",), ("sms_default", "decoded")):     # the second wins for the same tag
+        for shp in glob.glob(os.path.join(workdir, *sub, "*_decoded.shp")):
+            by_tag[os.path.basename(shp)[:-len("_decoded.shp")]] = shp
+    decoded = sorted(by_tag.values(), key=os.path.basename)
     cleanings = sorted(glob.glob(os.path.join(workdir, "clean", "*", "*_cleaning.json")))
     if not decoded and not cleanings:
         return None
@@ -429,7 +555,10 @@ def legacy_record(workdir: str) -> dict | None:
                    "dropped": list((R.get("oced") or {}).get("columns_left_out") or []),
                    "kind": "a3" if a3 else "sms",
                    "at": _dt.datetime.fromtimestamp(os.path.getmtime(js)).strftime("%H:%M:%S")}
-        why = None if a3 else clean_again_reason(R)
+        fl = F.get("flagged_shp")
+        if fl and not os.path.exists(fl):                # a folder moved since: its flagged file beside the record
+            fl = os.path.join(os.path.dirname(js), os.path.basename(fl))
+        why = None if a3 else clean_again_reason(R, fl)
         if why:
             cl[tag]["clean_again"] = why
     if not ds:

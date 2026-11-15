@@ -41,7 +41,8 @@ detect(roots)
     points of a machine) is an "export" too, with its "operation" (engine/clean/applied3s.detect_operation) and
     "yield" False; polygon and line shapefiles (boundaries, as-applied polygons, yield polygons) are ignored with a
     note, because the cleaning works on the logged points. An Operations Center export with its metadata also carries
-    "monitor_product" (common.jd_monitor_product of its crop: the weight to volume and dry moisture SMS gives it). A
+    "monitor_product" (common.jd_monitor_product of its crop; its import, a point export's, takes the crop from it and
+    the weight to volume and dry moisture of SMS's product table: engine.sms_import.resolve). A
     folder read in place with files beyond the 259 characters Windows opens gets a note: those files are not read.
     The same export found twice (a zip next to its unpacked copy: same file stem,
     feature count and .dbf size) is listed once, and so is the same raw dataset found twice (same decoder and same

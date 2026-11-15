@@ -29,6 +29,11 @@ APP = os.path.join(ROOT, "app", "oced.py")
 CAVEAT = "Not yet tested in SMS: read it into a scratch SMS project, not into the project that holds the original data"
 
 
+def _caveat(at):
+    """Step 4's 'Not yet tested in SMS' line, with the caveat in its "?"."""
+    return any(c.value == ":orange[Not yet tested in SMS]" and str(c.help or "").startswith(CAVEAT) for c in at.caption)
+
+
 def _by_key(items, prefix):
     return next(x for x in items if str(x.key or "").startswith(prefix))
 
@@ -103,7 +108,7 @@ def test_app_export_offers_isoxml_only(tmp_path, monkeypatch):
     bs = _write_buttons(at)
     assert [b.key.split("_")[2] for b in bs] == ["isoxml"] and not bs[0].disabled
     assert "experimental" in bs[0].label
-    assert any(w.value.startswith(CAVEAT) for w in at.warning)
+    assert _caveat(at)
     bs[0].click().run()
     assert not at.exception, at.exception
     rec, wd = _record(at, "isoxml")
@@ -135,8 +140,8 @@ def test_app_isoxml_readings_with_no_grain_are_not_a_failed_check(tmp_path, monk
     shp = str(tmp_path / "nog" / "Synthetic_no_grain.shp")
     g.to_file(shp, driver="ESRI Shapefile", encoding="UTF-8")
     at = _app(tmp_path / "ws", monkeypatch)
-    at.number_input(key="si_min").set_value(0.0).run()
-    _open(at, shp)
+    _open(at, shp)                          # SMS's generic import of a point file: min. yield volume 0, kept
+    assert at.session_state["datasets"][at.session_state["active"]]["sms_import"]["resolved"]["min_yield"] == 0.0
     for k in ("t_speed", "t_moist", "t_yield"):
         at.toggle(key=k).set_value(False).run()
     at.button(key="clean_one").click().run()
@@ -234,7 +239,7 @@ def test_app_gs3_and_gen4_written_in_their_format(tmp_path, monkeypatch):
         rec, wd = _record(at, fid)
         n_clean = int(pyogrio.read_info(at.session_state["cleaned"][at.session_state["active"]]["shp"])["features"])
         assert rec["n_kept"] == n_clean and rec["check"]["ok"] is True, rec["check"]
-        assert any(w.value.startswith(CAVEAT) for w in at.warning)
+        assert _caveat(at)
 
 
 def _tree(folder):

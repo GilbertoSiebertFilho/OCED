@@ -40,7 +40,7 @@ NAME = "OCED"
 LONG_NAME = "OCED — Olds College Extract Data"
 TAGLINE = "Olds College Extract Data · raw yield data to clean shapefiles with the SMS 3-sigma sequence"
 ORG = "Olds College Smart Farm (OFPE)"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 # ---- palette (hex strings; BRAND.md)
 NAVY = "#00358E"            # primary: buttons, headings, tree group titles, active states, lines and fits in figures
@@ -97,9 +97,11 @@ def page_icon():
 
 def _css() -> str:
     """The style block: stable hooks only (data-testid attributes, the .stApp root, the st-key-* classes of the keyed
-    containers and widgets, our own .oced-* classes); no emotion class names. Every colour is a CSS light-dark() pair
-    resolved by the browser against the color-scheme that Streamlit sets on .stApp for the rendered theme, so the
-    block is right on the very first run too (dark mode is not a target, but stays legible). Python-side detection
+    containers and widgets, our own .oced-* classes); no emotion class names. The colours of text, surfaces and plain
+    edges are CSS light-dark() pairs resolved by the browser against the color-scheme that Streamlit sets on .stApp for
+    the rendered theme, so the block is right on the very first run too (dark mode is not a target, but stays
+    legible); the badges, the brand's accent edges (the navy and light-blue left edges of the boxes) and the navy fills
+    of a chosen pill or tab keep fixed colours that read on both. Python-side detection
     through st.context.theme.type is not used: on the first run after a connection it reports the OS preference, not
     the configured theme.
 
@@ -107,7 +109,12 @@ def _css() -> str:
     edge and a numbered badge (step_header; keys oced_step_1..4), the controls that decide the run in tinted panels
     (method_panel: crop and cleaning method; factor_method_box; the column mapping expander colmap), the tabs as
     pills (the selected one navy), primary buttons navy with a lift on hover, the main action (run_go) larger and the
-    clean-shapefile download green, metrics as small cards. The captions keep full opacity (WCAG AA: 7.6:1 on white)."""
+    clean-shapefile download green, metrics as small cards. The captions keep full opacity (WCAG AA: 7.6:1 on white).
+    The steps of 0.3.1 add: the import badges, the 'Next' line, the group labels of the import settings, the tinted
+    import panel, the strips of cards (a grid of equal tracks, two per row on a phone), the map toolbar (small pills
+    on no box), the larger Apply and Clean buttons, the white boxes of step 3 with a navy edge, the result strip and
+    the yield path. The app writes no style block of its own; a few elements keep inline colours (the legend chips,
+    the verdict boxes, the map tooltip), fixed colours that read in both themes."""
     navy, blue, txt = NAVY, LIGHT_BLUE, TEXT
     heading = f"light-dark({NAVY}, {LIGHT_BLUE})"
     rule = f"light-dark({RULE}, rgba(255,255,255,0.14))"
@@ -119,6 +126,9 @@ def _css() -> str:
     tint2 = "light-dark(#F5F9FE, rgba(255,255,255,0.03))"
     edge = "light-dark(#C9DCF3, rgba(0,156,222,0.35))"
     pill_txt = f"light-dark({NAVY}, #CFE3FA)"
+    edge2 = "light-dark(#C9D8EC, rgba(0,156,222,0.35))"     # the edge of the map toolbar, the boxes of step 3
+    note_bg = f"light-dark({BG2}, rgba(0,156,222,0.08))"     # the notes under a result card, the yield path
+    body = f"light-dark({TEXT}, #E5E7EB)"
     shadow = "0 1px 2px rgba(16,24,40,0.05), 0 6px 22px rgba(0,53,142,0.07)"
     return f"""<style>
 /* ---- OCED brand (app/brand.py) ---- */
@@ -260,17 +270,125 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
   border-color: {rule}; }}
 [data-testid="stSidebar"] [data-testid="stExpander"] summary p {{ font-weight: 600; }}
 .oced-rule {{ height: 1px; background: {rule}; border: 0; margin: 0.6rem 0 1.0rem; }}
+
+/* ---- the import of a file: a small badge before its line (SMS default, your settings, as it is ...) */
+.oced-badge {{ display: inline-block; font-size: 0.74rem; font-weight: 700; padding: 0.05rem 0.5rem;
+  border-radius: 999px; margin-right: 0.4rem; vertical-align: 0.08rem; letter-spacing: 0.02em; white-space: nowrap; }}
+.oced-badge-default {{ background: {navy}; color: #FFFFFF; border: 1px solid {navy}; }}
+.oced-badge-custom {{ background: {LIGHT_BLUE_TEXT}; color: #FFFFFF; border: 1px solid {LIGHT_BLUE_TEXT}; }}
+.oced-badge-as_is, .oced-badge-as_logged {{ background: transparent; color: {link}; border: 1px solid {blue}; }}
+.oced-badge-older, .oced-badge-failed {{ background: transparent; color: light-dark({ORANGE_TEXT}, {ORANGE});
+  border: 1px solid {ORANGE}; }}
+/* ---- the last line of a step: where to go next */
+.oced-next {{ text-align: right; font-size: 0.86rem; color: {muted}; margin-top: 0.4rem; }}
+.oced-next a {{ color: {link}; text-decoration: none; font-weight: 600; }}
+.oced-next a:hover {{ text-decoration: underline; }}
+/* ---- the labels of a group of fields (OPERATION, FILTER ...) */
+.oced-group {{ font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: {muted}; margin: 0.35rem 0 0.1rem; }}
+/* ---- the import settings of a file: a tinted panel with a light-blue edge */
+.stApp [class*="st-key-imp_panel_"] {{
+  background: {tint}; border: 1px solid {edge}; border-left: 5px solid {blue}; border-radius: 12px;
+  padding: 0.7rem 1.0rem 0.85rem !important; }}
+/* ---- a strip of cards (steps 1 and 2): a grid of equal tracks, two per row on a phone */
+.stApp [class*="st-key-strip_"] [data-testid="stHorizontalBlock"] {{ display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: 1fr; gap: 0.6rem; }}
+.stApp [class*="st-key-strip_"] [data-testid="stColumn"] {{ width: auto !important; min-width: 0 !important;
+  flex: none !important; }}
+.stApp [class*="st-key-strip_"] [data-testid="stMetricLabel"] p {{ white-space: normal; overflow: visible;
+  text-overflow: clip; }}
+.stApp [class*="st-key-strip_"] [data-testid="stMetricValue"] {{ font-size: 1.5rem; }}
+
+/* ---- the toolbar of a map (pills, More and the way the readings are drawn, in a keyed box): small pills on no
+   box, navy when chosen */
+.stApp [class*="st-key-attr_box_"] {{ background: none; border: 0; padding: 0 !important; }}
+.stApp [class*="st-key-attr_box_"] button[role="radio"] {{ min-height: 1.6rem; padding: 0.05rem 0.55rem;
+  background: {card}; border: 1px solid {edge2}; }}
+.stApp [class*="st-key-attr_box_"] button[role="radio"] p {{ font-size: 0.82rem; font-weight: 500;
+  color: light-dark(#0B2A5B, #CFE3FA); }}
+.stApp [class*="st-key-attr_box_"] button[role="radio"]:hover {{ background: light-dark(#E8F1FB, rgba(0,156,222,0.12));
+  border-color: {blue}; }}
+.stApp [class*="st-key-attr_box_"] button[role="radio"][aria-checked="true"] {{ background: {navy};
+  border-color: {navy}; box-shadow: none; }}
+.stApp [class*="st-key-attr_box_"] button[role="radio"][aria-checked="true"] p {{ color: #FFFFFF; }}
+.stApp [class*="st-key-attr_more_"] {{ max-width: 11rem; }}
+/* ---- the main action of steps 2 and 3 (Apply, Clean), larger */
+.stApp .st-key-run_go_2 [data-testid="stBaseButton-primary"],
+.stApp .st-key-run_go_imp [data-testid="stBaseButton-primary"] {{ min-height: 3.1rem; padding: 0.7rem 2rem;
+  border-radius: 12px; font-size: 1.08rem; font-weight: 700; }}
+/* ---- the boxes of step 3 (boundary, grower's data, combine factor): white with a navy edge */
+.stApp [class*="st-key-field_box_"] {{ background: {card}; border: 1px solid {edge2}; border-left: 5px solid {navy};
+  border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
+/* the grower's weight of step 3: an expander with the navy edge of the boxes beside it */
+.stApp [class*="st-key-gw_box_"] details {{ border-left: 5px solid {navy}; border-radius: 12px; }}
+.stApp [class*="st-key-gw_box_"] [class*="st-key-gw_more_"] details {{ border-left-width: 1px; }}
+.oced-verdict {{ border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.95rem; border: 1px solid {edge2}; }}
+/* ---- the result strip of step 3: the titles take two lines in every card, so the values line up; the note under
+   the value is a small box (not the rounded pill of st.metric) whose text wraps inside it; one row on a wide
+   screen, on a narrower one a grid of equal tracks of at least 150 px (two per row on a phone) */
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricValue"] {{ font-size: 1.65rem; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricLabel"] p,
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] div,
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ white-space: normal; overflow: visible;
+  text-overflow: clip; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stHorizontalBlock"] {{ display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: 1fr; gap: 0.75rem; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stColumn"] {{ width: auto !important; min-width: 0 !important;
+  flex: none !important; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricLabel"] {{ min-height: 2.45rem; align-items: flex-start; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] {{ display: block; width: 100%; height: auto;
+  box-sizing: border-box; margin-top: 0.4rem; padding: 0.3rem 0.55rem; border-radius: 6px; background: {note_bg};
+  border-left: 3px solid {blue}; color: {muted}; }}
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ margin: 0; font-size: 0.8rem; line-height: 1.35;
+  white-space: normal; overflow: visible; text-overflow: clip; }}
+/* ---- the yield path of step 3, the legend of a map */
+.oced-path {{ border-radius: 10px; padding: 0.55rem 0.9rem; font-size: 0.95rem; color: {body}; background: {note_bg};
+  border: 1px solid {edge2}; border-left: 5px solid {blue}; margin: 0.2rem 0 0.6rem; }}
+.oced-path .oced-note {{ font-size: 0.86rem; color: {muted}; }}
+.oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
+  color: {body}; }}
+.oced-bar {{ flex: 1; height: 14px; border-radius: 7px; border: 1px solid {edge2}; }}
 </style>"""
 
 
 def step_header(num: int, title: str, subtitle: str = "") -> None:
     """The heading of a step card: a numbered navy badge, the title and a one-line subtitle (the .oced-step classes
-    of inject())."""
+    of inject()); its id oced-step-<num> is the anchor next_step() links to."""
     import html
     import streamlit as st
-    st.html(f'<div class="oced-step"><div class="oced-step-num">{int(num)}</div><div><div class="oced-step-title">'
-            f'{html.escape(title)}</div>' + (f'<div class="oced-step-sub">{html.escape(subtitle)}</div>' if subtitle
-                                             else "") + "</div></div>")
+    st.html(f'<div class="oced-step" id="oced-step-{int(num)}"><div class="oced-step-num">{int(num)}</div><div>'
+            f'<div class="oced-step-title">{html.escape(title)}</div>'
+            + (f'<div class="oced-step-sub">{html.escape(subtitle)}</div>' if subtitle else "") + "</div></div>")
+
+
+# the import of a file, as a badge: kind -> its words (the .oced-badge-<kind> classes of inject())
+BADGE_WORDS = {"default": "SMS default", "custom": "Your settings", "as_is": "As it is", "as_logged": "As logged",
+               "older": "Older rule", "failed": "Import failed"}
+
+
+def import_badge(kind: str) -> str:
+    """The badge of an import (HTML, for st.markdown(..., unsafe_allow_html=True)): 'SMS default' (navy), 'Your
+    settings' (light blue), 'As it is' / 'As logged' (light-blue outline), 'Older rule' / 'Import failed' (orange
+    outline)."""
+    import html
+    k = kind if kind in BADGE_WORDS else "as_is"
+    return f'<span class="oced-badge oced-badge-{k}">{html.escape(BADGE_WORDS[k])}</span>'
+
+
+def next_step(num: int, title: str, note: str = "") -> None:
+    """The last line of a step, small and right-aligned: 'Next: 3 · Cleaning ↓' (a link to that step's heading) and
+    an optional note in brackets."""
+    import html
+    import streamlit as st
+    st.html(f'<div class="oced-next"><a href="#oced-step-{int(num)}">Next: {int(num)} · {html.escape(title)} ↓</a>'
+            + (f' &nbsp;({html.escape(note)})' if note else "") + "</div>")
+
+
+def group_label(text: str) -> None:
+    """The small upper-case label of a group of fields (OPERATION, FILTER ...)."""
+    import html
+    import streamlit as st
+    st.html(f'<div class="oced-group">{html.escape(text)}</div>')
 
 
 def brand_block(name: str | None = None, version: str | None = None, tagline: str | None = None) -> None:
@@ -295,5 +413,5 @@ def rule():
 
 
 def footer_caption() -> str:
-    """The sidebar footer: 'OCED 0.3.0 · Olds College Smart Farm (OFPE)'."""
+    """The sidebar footer: 'OCED 0.3.1 · Olds College Smart Farm (OFPE)'."""
     return f"{NAME} {VERSION} · {ORG}"

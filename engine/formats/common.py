@@ -90,13 +90,16 @@ CROPS = {
 }
 
 
-# What Ag Leader SMS makes of John Deere Gen4 / G5 logs (.jdl) and of Operations Center exports: the weight to volume
-# and dry moisture of SMS's own crop for the file's CROP, not the test weight and standard moisture the file states
-# (logs of 'Wheat (Hard Red Spring)' and 'Wheat (Durum)' are read at 60 lb/bu and 13.5 % where the files say 60.01
-# lb/bu and 13.0 %, 'Barley' at 48 lb/bu and 15.0 % where they say 47.99 lb/bu and 14.0 %); John Deere crop name
-# (lower case) -> (key of CROPS, lb/bu, dry moisture %).
+# What Ag Leader SMS makes of John Deere Gen4 / G5 logs (.jdl): the weight to volume and dry moisture of SMS's own
+# crop for the file's CROP, not the test weight and standard moisture the file states (logs of 'Wheat (Hard Red
+# Spring)' and 'Wheat (Durum)' are read at 60 lb/bu and 13.5 % where the files say 60.01 lb/bu and 13.0 %, 'Barley' at
+# 48 lb/bu and 15.0 % where they say 47.99 lb/bu and 14.0 %); John Deere crop name (lower case) -> (key of CROPS,
+# lb/bu, dry moisture %).
 # A crop not listed is not established (values None: the product table applies). JD_MIN_YIELD / JD_MAX_YIELD: the
-# Min. / Max. Yield Volume of these sources (the owner's decision: SMS's 10,000 bu/ac for John Deere files).
+# Min. / Max. Yield Volume of these logs (the owner's decision: SMS's 10,000 bu/ac for John Deere files).
+# An Operations Center export carries the same record (jd_monitor_product, for its crop), but it is a point export:
+# engine.sms_import.resolve imports it as SMS's generic import of a point file (SMS's product table for the weight to
+# volume and dry moisture, no yield volume limits) and does not use these values.
 JD_SMS_CROPS = {"wheat (hard red spring)": ("wheat", 60.0, 13.5), "wheat (durum)": ("wheat", 60.0, 13.5),
                 "barley": ("barley", 48.0, 15.0)}
 # the John Deere crop ids of these names (.jdl definition 21.1.1, Operations Center 'CropId')
@@ -118,7 +121,8 @@ def jd_monitor_product(crop_name, source: str, crop_id=None, file_values: dict |
     values for the file's crop (the crop name, else its id), min / max JD_MIN_YIELD / JD_MAX_YIELD, source = where
     the crop is in the file; file_values = what the file itself states (kept for the record, not used by SMS);
     basis = "sms_crop" when the weight to volume and dry moisture are SMS's for the crop (not the file's own: the
-    import says so, engine.sms_import.SRC_JD_CROP), None when no value is established for the crop."""
+    import says so, engine.sms_import.SRC_JD_CROP), None when no value is established for the crop. The import of a
+    Gen4 log uses these values; that of an Operations Center export (a point export) keeps only the crop from them."""
     name = str(crop_name or "").strip() or JD_CROP_IDS.get(crop_id) or ""   # the id only without a name
     hit = JD_SMS_CROPS.get(name.lower())
     out = {"crop": hit[0] if hit else crop_key_of(name), "test_weight_lb_bu": hit[1] if hit else None,

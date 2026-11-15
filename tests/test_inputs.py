@@ -25,6 +25,7 @@ sys.path.insert(0, ROOT)
 from engine import run as er  # noqa: E402
 from engine import sms_import as si  # noqa: E402
 from engine.formats import detect  # noqa: E402
+from tests.app_steps import _switch_off, switch  # noqa: E402
 
 APP = os.path.join(ROOT, "app", "oced.py")
 LAT0, LON0, M_PER_DEG = 51.80, -114.10, 111_320.0
@@ -224,9 +225,10 @@ def test_operations_center_units_note(tmp_path):
 
 
 def test_app_operations_center_export(tmp_path, monkeypatch):
-    """The app on an Operations Center export: the product comes from the Deere metadata (barley), so the import
-    computes the dry yield with what SMS gives a John Deere barley (UPDATE 4: 48 lb/bu, 15.0 %, 5-10,000 bu/ac)
-    instead of leaving the file's own, and says that the weight and moisture are SMS's for the crop, not the file's."""
+    """The app on an Operations Center export: the product comes from the Deere metadata (barley), and the export is
+    imported as SMS's generic import of a point file holds it: the dry yield computed again with SMS's product table
+    (48 lb/bu, 14.5 %) instead of the file's own, and every reading kept (the readings below 5 bu/ac too, no
+    maximum); the panels say where each value came from."""
     from streamlit.testing.v1 import AppTest
     df = _ops_frame(300)
     shp = _write_points(df, str(tmp_path / "in" / "Synthetic_Harvest_2026-09-14_00.shp"))
@@ -238,14 +240,25 @@ def test_app_operations_center_export(tmp_path, monkeypatch):
     at.button(key="open_btn").click().run()
     assert not at.exception, at.exception
     rd = next(m for m in at.metric if m.label == "Readings")
-    assert "product barley; weight to volume 48.00 lb/bu; dry moisture 15.00 %" in rd.help
-    assert "yield volume 5.000-10,000.00 bu/ac" in rd.help
+    assert rd.value == "300" and not rd.delta and "none left out" in rd.help
     assert "recomputed: VRYIELDVOL" in rd.help and "not recognised" not in rd.help
-    assert ("weight to volume 48.00 lb/bu (SMS's value for this John Deere crop, not the file's own)" in rd.help
-            and "(from the file)" not in rd.help)
+    det = " ".join(str(c.value) for c in at.caption)                  # step 1's Import details
+    assert "product barley; weight to volume 48.00 lb/bu; dry moisture 14.50 %" in det
+    assert "yield volume from 0.000 bu/ac, no maximum" in det
+    point = "SMS's generic import of a point file, which keeps every reading"
+    src = next(c.value for c in at.caption if c.value.startswith("Where the values came from"))
+    assert ("weight to volume 48.00 lb/bu (SMS product table)" in src and f"min. yield volume 0.000 bu/ac "
+            f"({point})" in src and "John Deere crop" not in src and "(from the file)" not in src)
+    IM = at.session_state["datasets"][at.session_state["active"]]["sms_import"]
+    assert IM["fmt"] == "jd_ops_center" and IM["family"] == "point" and IM["n_in"] == IM["n_all"] == 300
+    assert "Point export: SMS's generic import, every reading kept" in str(switch(at).help)
+    _switch_off(at)                                                    # step 2's fields
+    mn = next(w for w in at.number_input if str(w.key or "").startswith("fi_min_"))
     mx = next(w for w in at.number_input if str(w.key or "").startswith("fi_max_"))
-    assert mx.value == 10_000.0 and "From: SMS for John Deere files." in mx.help
-    assert "When SMS holds another maximum for the product" in mx.help and "200 bu/ac" not in mx.help
+    assert mn.value == 0.0 and f"From: {point}." in mn.help
+    assert mx.value is None and f"From: {point}." in mx.help
+    assert "When SMS holds another maximum for the product" not in mx.help
+    assert any(str(c.value).startswith("Imported as SMS's generic import of a point file holds it") for c in at.caption)
 
 
 # ------------------------------------------------------------------------------------------------ unpacking

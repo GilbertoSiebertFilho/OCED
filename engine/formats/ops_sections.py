@@ -20,7 +20,8 @@ zero-area record. The columns keep the export's names (SECTIONID is dropped, N_E
 reading), so detection and cleaning read the result as a per-second Ops Center export. Checked against a collapse
 made by hand and imported into SMS: the same readings and area. The export's '<stem>-Deere-Metadata.json'
 (crop, units) is copied beside the result as '<result stem>-Deere-Metadata.json', so that the collapsed file keeps
-its crop; collapse() returns it as "crop" and "monitor_product" (common.jd_monitor_product: what SMS imports it with).
+its crop; collapse() returns it as "crop" and "monitor_product" (common.jd_monitor_product of that crop; the import,
+a point export's, takes the crop from it: engine.sms_import.resolve).
 
     from engine.formats import ops_sections as ops
     if ops.is_section_export(path):

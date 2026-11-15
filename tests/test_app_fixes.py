@@ -27,6 +27,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from tests.app_steps import _apply_import, _badge_lines, _starts_from, _switch_off, switch  # noqa: E402
 from tests.synthetic import make_applied, make_field, make_two_combines  # noqa: E402
 
 APP = os.path.join(ROOT, "app", "oced.py")
@@ -95,9 +96,13 @@ def test_as_applied_file_cleaned_twice(tmp_path, monkeypatch):
 def test_a_change_after_the_cleaning_survives_save_and_open(field, tmp_path, monkeypatch):
     """R3: the cleaning's config is saved with the work: a standard moisture changed after the cleaning still says
     'clean again' once the work is saved and opened again (it was compared with a config rebuilt from the changed
-    state). VA-9: the 'clean it again' line of an opened work goes once that file is cleaned again."""
+    state). VA-9: the 'clean it again' line of an opened work goes once that file is cleaned again. A minimum typed
+    in step 2 is the import's, and S0 names it once."""
     at = _app(tmp_path / "ws", monkeypatch)
     _open(at, field["shp"])
+    _apply_import(at, min=5.0)
+    IM = at.session_state["datasets"][at.session_state["active"]]["sms_import"]
+    assert IM["resolved"]["min_yield"] == 5.0 and IM["sources"]["min_yield"] == "you"
     _by_key(at.number_input, "gw_w_").set_value(110_000.0).run()
     C0 = _clean(at)
     assert not any(STALE in w.value for w in at.warning)
@@ -189,7 +194,7 @@ def test_a_file_extracted_by_an_older_version_is_said(tmp_path, monkeypatch):
     line = f"- {t}: extracted by an older version of OCED"
     kind, text = at.session_state["work_msg"]
     assert kind == "warning" and line in text
-    assert any("extracted by an older version of OCED: importing it again" in c.value for c in at.caption)
+    assert any("extracted by an older version of OCED: importing it again" in (c.help or "") for c in at.caption)
     bs = {b.key[len("nw_go_"):].rsplit("_", 1)[0]: b for b in at.button if str(b.key or "").startswith("nw_go_")}
     assert bs["jd_jdl"].disabled and not bs["isoxml"].disabled
     _clean(at)
@@ -256,7 +261,7 @@ def test_an_export_imported_by_an_older_version_is_said(tmp_path, monkeypatch):
     _open(at, F["shp"])
     t, wd = at.session_state["active"], at.session_state["workdir"]
     IM = at.session_state["datasets"][t]["sms_import"]
-    assert IM["fmt"] == "jd_ops_center" and IM["resolved"]["max_yield"] == 10_000.0
+    assert IM["fmt"] == "jd_ops_center" and IM["resolved"]["max_yield"] is None
     _clean(at)
     at.button(key="work_save").click().run()
     p = os.path.join(wd, "oced_work.json")
@@ -266,7 +271,7 @@ def test_an_export_imported_by_an_older_version_is_said(tmp_path, monkeypatch):
     assert not at.exception, at.exception
     line = f"- {t}: imported by an older version of OCED (product unknown"
     kind, text = at.session_state["work_msg"]
-    assert kind == "warning" and line in text and "10,000 bu/ac" in text, text
+    assert kind == "warning" and line in text and "from 0 bu/ac, no maximum" in text, text
     _clean(at)
     kind, text = at.session_state["work_msg"]
     assert kind == "warning" and line in text
@@ -282,7 +287,7 @@ def test_an_export_imported_by_an_older_version_is_said(tmp_path, monkeypatch):
 
 
 def test_import_again_of_an_export_imported_by_an_older_version(tmp_path, monkeypatch):
-    """C-2: 'Import this file again' on an Operations Center export whose import the first published version recorded
+    """C-2: step 2's Apply on an Operations Center export whose import the first published version recorded
     (product unknown, 5-300 bu/ac). The panel shows the values a fresh open gives (also after another product is
     chosen), so with nothing typed the file gets the fresh open's import (no value labelled 'you', the readings above
     300 bu/ac kept) and the older-version line goes; a value typed in the panel is the user's ('you')."""
@@ -302,7 +307,7 @@ def test_import_again_of_an_export_imported_by_an_older_version(tmp_path, monkey
     t, wd = at.session_state["active"], at.session_state["workdir"]
     D = at.session_state["datasets"][t]
     n_fresh, R_fresh = D["n"], dict(D["sms_import"]["resolved"])
-    assert R_fresh["max_yield"] == 10_000.0 and R_fresh["product"] == "wheat"
+    assert R_fresh["max_yield"] is None and R_fresh["product"] == "wheat"
     shown = ("product", "test_weight_lb_bu", "dry_moisture_pct", "min_yield", "max_yield")
     p = os.path.join(wd, "oced_work.json")
     line = f"- {t}: imported by an older version of OCED"
@@ -317,7 +322,7 @@ def test_import_again_of_an_export_imported_by_an_older_version(tmp_path, monkey
 
     reopen_old()
     assert _by_key(at.selectbox, "fi_prod_").value == "wheat"
-    assert _by_key(at.number_input, "fi_max_").value == 10_000.0
+    assert _by_key(at.number_input, "fi_max_").value is None
     assert _by_key(at.number_input, "fi_tw_").value == 60.0
     _by_key(at.button, "fi_go_").click().run()
     assert not at.exception, at.exception
@@ -327,10 +332,11 @@ def test_import_again_of_an_export_imported_by_an_older_version(tmp_path, monkey
     assert si.SRC_YOU not in IM["sources"].values(), IM["sources"]
     assert D["n"] == n_fresh
     assert line not in at.session_state["work_msg"][1]
-    # another product: the panel gives what this version gives that product for this export (max 10,000)
+    # another product: the panel gives what this version gives that product for this export (no maximum)
     reopen_old()
     _by_key(at.selectbox, "fi_prod_").select("barley").run()
-    assert _by_key(at.number_input, "fi_max_").value == 10_000.0
+    assert _by_key(at.number_input, "fi_max_").value is None
+    assert _by_key(at.number_input, "fi_dm_").value == 14.5
     # a value typed in the panel is the user's: labelled 'you'
     reopen_old()
     _by_key(at.number_input, "fi_max_").set_value(300.0).run()
@@ -340,6 +346,111 @@ def test_import_again_of_an_export_imported_by_an_older_version(tmp_path, monkey
     assert IM["resolved"]["max_yield"] == 300.0 and IM["sources"]["max_yield"] == si.SRC_YOU
     assert at.session_state["datasets"][t]["n"] == n_fresh - len(ok)
     assert line not in at.session_state["work_msg"][1]
+
+
+def _as_saved_before_point_rules(p, t, fmt, limits_from):
+    """The work's import record of `t` as a version that cut point exports at the source's yield volume limits kept
+    it: sources kept, no revision, the limits labelled as that version labelled them."""
+    rec = json.load(open(p, encoding="utf-8"))
+    IM = rec["datasets"][t]["sms_import"]
+    IM.pop("revision", None)
+    IM["fmt"], IM["family"] = fmt, ("john_deere" if fmt else None)
+    IM["sources"] = {**IM["sources"], "min_yield": limits_from, "max_yield": limits_from}
+    for k in ("import_default", "import_mode"):            # an earlier version kept one import per file
+        rec["datasets"][t].pop(k, None)
+    json.dump(rec, open(p, "w", encoding="utf-8"))
+
+
+def _reopen(at, wd):
+    """Start over and open the saved work of the work folder wd."""
+    at.button(key="start_over").click().run()
+    at.selectbox(key="work_pick").set_value(wd).run()
+    at.button(key="work_open").click().run()
+    assert not at.exception, at.exception
+
+
+@pytest.mark.parametrize("kind", ["point", "ops_center"])
+def test_a_point_export_imported_with_the_earlier_limits(kind, tmp_path, monkeypatch):
+    """A point export (and an Operations Center export) is imported as SMS's generic import holds it: readings at 0,
+    below 5 bu/ac and above the product's maximum are kept, and the S0 of the cleaning keeps them too. A work saved by
+    a version that cut such an export at the product's limits (or at John Deere's 5-10,000) opens as it was saved,
+    says that this version imports it with no limits and how to import it again; step 2's Apply with nothing typed
+    then holds every reading, and the line goes. The same record with limits the user typed is not
+    said."""
+    from engine import sms_import as si
+    F = make_field(str(tmp_path / "exp"))
+    g = pyogrio.read_dataframe(F["shp"])
+    ok = g.index[(g["Yld_Vol_Dr"].between(40, 120)) & (g["Moisture__"] < 20) & (g["Speed_mph_"] < 6)]
+    low, zero, high = ok[:20], ok[20:30], ok[30:40]
+    for idx, v in ((low, 2.0), (zero, 0.0), (high, 450.0)):
+        k = v / g.loc[idx, "Yld_Vol_Dr"]
+        for c in ("Yld_Vol_Dr", "Yld_Vol_We", "Yld_Mass_W", "Yld_Mass_D"):
+            g.loc[idx, c] = g.loc[idx, c] * k
+    pyogrio.write_dataframe(g, F["shp"])
+    if kind == "ops_center":
+        json.dump({"CropName": "Wheat (Hard Red Spring)", "CropId": 25},
+                  open(os.path.splitext(F["shp"])[0] + "-Deere-Metadata.json", "w", encoding="utf-8"))
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, F["shp"])
+    t, wd = at.session_state["active"], at.session_state["workdir"]
+    D = at.session_state["datasets"][t]
+    IM = D["sms_import"]
+    assert IM["family"] == "point" and IM["revision"] == si.IMPORT_REVISION and IM["n_in"] == IM["n_all"] == len(g)
+    assert (IM["resolved"]["min_yield"], IM["resolved"]["max_yield"]) == (0.0, None)
+    assert IM["sources"]["min_yield"] == IM["sources"]["max_yield"] == si.SRC_POINT
+    n_all, hi = D["n"], (300.0 if kind == "point" else 10_000.0)
+    y = pyogrio.read_dataframe(D["shp"], read_geometry=False)["Yld_Vol_Dr"].astype(float)
+    assert (y == 0).sum() >= len(zero) and (y > 300).sum() == len(high)
+    S0 = _clean(at)["R"]["cascade"][0]
+    assert S0["filter"] == "S0" and S0["removed"] == 0 and "no minimum yield" in S0["criterion"]
+    hlp = _starts_from(at).help or ""
+    assert "S0 minimum: none" in hlp and "readings at 0 stay" in hlp
+    # the same export as the earlier version imported it (its limits typed here give the same readings), in a
+    # workspace of its own
+    at = _app(tmp_path / "ws_old", monkeypatch)
+    _open(at, F["shp"])
+    _apply_import(at, min=5.0, max=hi)
+    t, wd = at.session_state["active"], at.session_state["workdir"]
+    n_old = at.session_state["datasets"][t]["n"]
+    assert n_old == int(((y >= 5.0) & (y <= hi)).sum()) < n_all - len(low) - len(zero)
+    _clean(at)
+    at.button(key="work_save").click().run()
+    p = os.path.join(wd, "oced_work.json")
+    old_src = si.SRC_TABLE if kind == "point" else si.SRC_JD
+    _as_saved_before_point_rules(p, t, None if kind == "point" else "jd_ops_center", old_src)
+    _reopen(at, wd)
+    line = f"- {t}: imported by an older version of OCED (product wheat, 60.00 lb/bu, 13.5 %, 5-"
+    kind_, text = at.session_state["work_msg"]
+    assert kind_ == "warning" and line in text, text
+    assert "opened again it is imported as SMS with product wheat, 60.00 lb/bu, 13.5 %, from 0 bu/ac, no maximum" in text
+    assert "generic import of a point file" in text and "import it again in step 2" in text
+    assert at.session_state["datasets"][t]["n"] == n_old and t in at.session_state["cleaned"]
+    assert at.session_state["datasets"][t]["import_mode"] == "default"            # D7: kept, labelled
+    assert any("Older rule" in b for b in _badge_lines(at))
+    assert any("Imported by an older OCED rule" in c.value for c in at.caption)
+    _switch_off(at)                                       # the fields show today's values: one Apply updates it
+    assert _by_key(at.number_input, "fi_min_").value == 0.0 and _by_key(at.number_input, "fi_max_").value is None
+    _by_key(at.button, "fi_go_").click().run()
+    assert not at.exception, at.exception
+    D = at.session_state["datasets"][t]
+    assert D["n"] == n_all and D["sms_import"]["revision"] == si.IMPORT_REVISION
+    assert D["sms_import"]["sources"]["max_yield"] == si.SRC_POINT and si.SRC_YOU not in D["sms_import"]["sources"].values()
+    assert t not in at.session_state["cleaned"] and line not in at.session_state["work_msg"][1]
+    # limits the user typed in that version stay the user's: nothing to say
+    at = _app(tmp_path / "ws_you", monkeypatch)
+    _open(at, F["shp"])
+    _apply_import(at, min=5.0)
+    t, wd = at.session_state["active"], at.session_state["workdir"]
+    at.button(key="work_save").click().run()
+    p = os.path.join(wd, "oced_work.json")
+    rec = json.load(open(p, encoding="utf-8"))
+    rec["datasets"][t]["sms_import"].pop("revision")
+    for k in ("import_default", "import_mode"):
+        rec["datasets"][t].pop(k, None)
+    json.dump(rec, open(p, "w", encoding="utf-8"))
+    _reopen(at, wd)
+    assert at.session_state["datasets"][t]["import_mode"] == "custom"
+    assert "imported by an older version" not in str((at.session_state["work_msg"] or ("", ""))[1])
 
 
 def _extract(at):
@@ -373,15 +484,67 @@ def test_old_decode_of_several_files_is_one_line(tmp_path, monkeypatch):
     assert f"- 2 files ({', '.join(sorted([t, 'Second_file'], key=list(rec['datasets']).index))}): extracted" in text
 
 
+def test_a_file_removed_leaves_the_one_line_of_several_old_decodes(tmp_path, monkeypatch):
+    """The work of the test above with three files extracted by an older version (one line naming them). Their points
+    deleted while the session runs, the file on screen is removed with 'Remove this file from the work': the line
+    names the two others; another removed: the line becomes the last file's own; the last removed: the line goes."""
+    from tests import synthetic_jdl as SJ
+    card = SJ.make_card(str(tmp_path / "jdl"))["root"]
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, card)
+    _extract(at)
+    at.run()
+    t, wd = at.session_state["active"], at.session_state["workdir"]
+    at.button(key="work_save").click().run()
+    p = os.path.join(wd, "oced_work.json")
+    rec = json.load(open(p, encoding="utf-8"))
+    rec["datasets"][t]["report"].pop("points")
+    for t2 in ("Second_file", "Third_file"):
+        rec["datasets"][t2] = json.loads(json.dumps(rec["datasets"][t]))
+        rec["datasets"][t2]["tag"] = t2
+    json.dump(rec, open(p, "w", encoding="utf-8"))
+    at.button(key="start_over").click().run()
+    at.button(key="work_open").click().run()
+    assert not at.exception, at.exception
+    tags = list(rec["datasets"])
+    old = ("extracted by an older version of OCED: {} not the current ones (a new cleaning keeps them); open the raw "
+           "data again (step 1) for the current decode and import as SMS")
+    assert f"- 3 files ({', '.join(tags)}): " + old.format("their readings and imports are") in (
+        at.session_state["work_msg"][1].split("\n")), at.session_state["work_msg"]
+    for q in glob.glob(os.path.splitext(at.session_state["datasets"][at.session_state["active"]]["shp"])[0] + ".*"):
+        os.remove(q)                                      # (the three files share these readings)
+    left = list(tags)
+    for want in (f"- 2 files ({', '.join(tags[1:])}): " + old.format("their readings and imports are"),
+                 f"- {tags[2]}: " + old.format("its readings and their import are"), None):
+        at.run()
+        act = at.session_state["active"]
+        _by_key(at.button, "rm_file_").click().run()
+        assert not at.exception, at.exception
+        left.remove(act)
+        assert list(at.session_state["datasets"]) == left
+        msg = at.session_state["work_msg"]
+        lines = [] if not msg else str(msg[1]).split("\n")[1:]
+        assert lines == ([want] if want else []), msg
+        assert not any(act in x for x in lines), msg
+
+
 def test_step_one_texts_say_where_the_values_come_from(tmp_path, monkeypatch):
-    """E2E-2 / E2E-3: the step-1 weight to volume and dry moisture name where each John Deere source's values come
-    from (not 'the file's' for every John Deere file), and the path box does not promise 'nothing is copied'."""
+    """E2E-2 / E2E-3, in the steps of 0.3.1: the path box does not promise 'nothing is copied'; the sidebar's SMS
+    default import by source says that point exports keep every reading (SMS's generic import), raw data SMS's
+    limits; step 2's switch names the source's default, and a Gen4 file's weight to volume names SMS's value for its
+    crop (not the file's own)."""
+    from tests import synthetic_jdl as SJ
     at = _app(tmp_path / "ws", monkeypatch)
     assert "nothing is copied" not in str(at.text_input(key="path_in").placeholder)
-    at.selectbox(key="si_prod").set_value("wheat").run()
-    tw, dm = at.number_input(key="si_tw"), at.number_input(key="si_dm")
-    assert "the file's" not in str(tw.placeholder) and "the file's" not in str(dm.placeholder)
-    assert "Gen4 logs and Operations Center exports: SMS's value for the file's crop" in str(tw.help)
+    side = " ".join(str(c.value) for c in at.sidebar.caption)
+    assert "(a shapefile, a KML / KMZ, an Operations Center or SMS export): as SMS's generic import" in side
+    assert "every reading kept (min 0, no max)" in side and "min 5.000 and max 10,000.00 bu/ac" in side
+    _open(at, SJ.make_card(str(tmp_path / "jdl"))["root"])
+    _extract(at)
+    assert "Gen4 logs: SMS's weight and dry moisture for the file's crop" in str(switch(at).help)
+    _switch_off(at)
+    tw = str(_by_key(at.number_input, "fi_tw_").help)
+    assert tw.startswith("From: ") and "from the file" not in tw and "the file's" not in tw, tw
 
 
 def test_the_sidebar_holds_the_work_in_the_run_of_the_extract_click(tmp_path, monkeypatch):
@@ -500,8 +663,9 @@ def test_a_library_value_error_keeps_its_traceback():
 
 # ------------------------------------------------------------------------------------------------ steps 1 and 2
 def test_an_import_that_leaves_no_reading(field, tmp_path, monkeypatch):
-    """VA-2: every yield below the min. yield volume: step 2 says so, offers the import settings, and does not crash
-    (it crashed drawing an empty map)."""
+    """VA-2: every yield below the min. yield volume (one applied in step 2: a point export has none of its own):
+    step 2 says so, keeps its import settings, the page stops there (no cleaning) and nothing crashes (it crashed
+    drawing an empty map); a lower minimum applied brings the map back."""
     g = pyogrio.read_dataframe(field["shp"])
     for c in [c for c in g.columns if c.startswith(("Yld_Vol", "Yld_Mass"))]:
         g[c] = 0.5
@@ -510,8 +674,14 @@ def test_an_import_that_leaves_no_reading(field, tmp_path, monkeypatch):
     g.to_file(low, engine="pyogrio")
     at = _app(tmp_path / "ws", monkeypatch)
     _open(at, low)
-    assert any("The import left no reading" in w.value for w in at.warning)
-    assert not [b for b in at.button if b.key == "clean_one"]
+    assert [b for b in at.button if b.key == "clean_one"]            # SMS's generic import keeps them
+    _apply_import(at, min=5.0)
+    assert any("leave no reading" in w.value for w in at.warning)
+    assert not [b for b in at.button if b.key == "clean_one"] and switch(at) is not None
+    _apply_import(at, min=0.0)                                        # SMS's default again
+    assert at.session_state["datasets"][at.session_state["active"]]["import_mode"] == "default"
+    assert [b for b in at.button if b.key == "clean_one"] and any(str(g.key).startswith("attr_raw_")
+                                                                    for g in at.button_group)
 
 
 def test_isoxml_input_message(tmp_path, monkeypatch):
@@ -531,7 +701,7 @@ def test_isoxml_input_message(tmp_path, monkeypatch):
 
 
 def test_reimport_reaches_the_writer_options(tmp_path, monkeypatch):
-    """R6: 'Import this file again' with another weight to volume also sets the decode options the writer of the
+    """R6: step 2's Apply with another weight to volume also sets the decode options the writer of the
     monitor's format decodes the card with, so its totals are on the clean file's weight (the dry totals of the
     written card and the clean file then differ as their wet ones do)."""
     from tests.synthetic_cn1 import make_card
@@ -545,9 +715,7 @@ def test_reimport_reaches_the_writer_options(tmp_path, monkeypatch):
     assert "Average dry yield of the readings" in labels and "Average dry yield (SMS)" not in labels
     t = at.session_state["active"]
     tw0 = float(at.session_state["datasets"][t]["sms_import"]["resolved"]["test_weight_lb_bu"])
-    _by_key(at.number_input, "fi_tw_").set_value(round(tw0 * 1.10, 2)).run()
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
+    _apply_import(at, tw=round(tw0 * 1.10, 2))
     D = at.session_state["datasets"][t]
     tw1 = float(D["sms_import"]["resolved"]["test_weight_lb_bu"])
     assert tw1 == pytest.approx(tw0 * 1.10, abs=0.01)
@@ -638,6 +806,150 @@ def test_readings_below_the_minimum_as_the_written_set_reads(variant, tmp_path, 
     n_read = int((P["dry_lbac"].astype(float) / tw < 5.0).sum())
     assert n_read > 0 and (rec.get("below_min") or {}).get("n") == n_read, (rec.get("below_min"), n_read)
     assert any(c.value.startswith(f"{n_read:,} of the readings written fall below the minimum yield") for c in at.caption)
+
+
+def test_the_minimum_a_written_harvest_is_read_with():
+    """The minimum yield SMS reads a clean harvest written in a monitor's format with: raw monitor data the minimum
+    of its own import; a point export, imported with none (SMS's generic import), is written as ISOXML task data,
+    which SMS reads with its task-data minimum (raised); a minimum the user typed for the export stays."""
+    import types
+    from engine import sms_import as si
+    ss = types.SimpleNamespace(datasets={})
+    [wm] = _app_function("written_min_yield", ss=ss, si=si)
+
+    def rec(fam, mn, src, prod="wheat"):
+        return {"sms_import": {"family": fam, "resolved": {"min_yield": mn, "product": prod},
+                               "sources": {"min_yield": src}}}
+    ss.datasets.update(point=rec("point", 0.0, si.SRC_POINT), point_none=rec("point", None, si.SRC_POINT, None),
+                       point_you=rec("point", 0.0, si.SRC_YOU), point_ten=rec("point", 10.0, si.SRC_YOU),
+                       card=rec("cnh", 5.0, si.SRC_TABLE), card_zero=rec("cnh", 0.0, si.SRC_TABLE, "rye"),
+                       gen4=rec("john_deere", 5.0, si.SRC_JD))
+    iso = si.resolve(si.settings({"product": "wheat"}), None, None, "isoxml")["min_yield"]
+    assert iso == 5.0
+    assert wm("point") == (iso, True) and wm("point_none") == (iso, True)
+    assert wm("point_you") == (0.0, False) and wm("point_ten") == (10.0, False)
+    assert wm("card") == (5.0, False) and wm("card_zero") == (0.0, False) and wm("gen4") == (5.0, False)
+    assert wm("not_there") == (None, False)
+
+
+def test_a_point_export_written_as_task_data_counts_the_readings_below_5(field, tmp_path, monkeypatch):
+    """A point export keeps its readings below 5 bu/ac (no import minimum; here S5 is off, so the cleaning keeps
+    them too). Written as ISOXML task data, which SMS reads with its 5 bu/ac minimum, they are counted also without
+    factors and with the clean widths, and the page says so."""
+    g = pyogrio.read_dataframe(field["shp"])
+    ok = g.index[(g["Yld_Vol_Dr"].between(40, 120)) & (g["Moisture__"] < 20) & (g["Speed_mph_"] < 6)][:25]
+    k = 2.0 / g.loc[ok, "Yld_Vol_Dr"]
+    for c in ("Yld_Vol_Dr", "Yld_Vol_We", "Yld_Mass_W", "Yld_Mass_D"):
+        g.loc[ok, c] = g.loc[ok, c] * k
+    shp = str(tmp_path / "low" / "Synthetic_low_ones.shp")
+    os.makedirs(os.path.dirname(shp))
+    g.to_file(shp, engine="pyogrio")
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, shp)
+    at.toggle(key="t_yield").set_value(False).run()
+    C = _clean(at)
+    cl = pyogrio.read_dataframe(C["shp"], read_geometry=False)
+    n = int((cl["Yld_Vol_Dr"].astype(float) < 5.0).sum())
+    assert n > 0
+    _by_key(at.button, "nw_go_isoxml_").click().run()
+    assert not at.exception, at.exception
+    [p] = glob.glob(os.path.join(at.session_state["workdir"], "native", "*", "isoxml.json"))
+    rec = json.load(open(p, encoding="utf-8"))
+    assert not rec["options"]["factors"] and rec["options"]["widths"] is True
+    assert rec["below_min"] == {"n": n, "min_yield": 5.0, "in_totals": True}
+    assert any(c.value.startswith(f"{n:,} of the readings written fall below the minimum yield (5 bu/ac dry): SMS "
+                                  "leaves them out") for c in at.caption)
+
+
+def test_step_3_shows_the_import_minimum_of_the_file(field, tmp_path, monkeypatch):
+    """Step 3's Import minimum is the file's own (S0 takes it): 0 for a point export at the defaults, said to come
+    from SMS's generic import of a point file; a minimum of 0 from another source (a card's product, a value typed) is
+    said as that source's, never as the point-file rule; a minimum above 0 is shown as it is."""
+    from engine import sms_import as si
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, field["shp"])
+    t = at.session_state["active"]
+    assert not [x for x in at.number_input if x.key == "min_yield"]       # one minimum per file: the import's
+    sf = _starts_from(at)
+    assert "S0 minimum 0.000 bu/ac" in sf.value                 # as steps 1 and 2 write it
+    assert "SMS's generic import of a point file" in sf.help and "readings at 0 stay" in sf.help
+    for src in (si.SRC_TABLE, si.SRC_YOU):
+        DS = at.session_state["datasets"]
+        DS[t]["sms_import"]["sources"]["min_yield"] = src
+        at.session_state["datasets"] = DS
+        at.run()
+        assert not at.exception, at.exception
+        h = _starts_from(at).help
+        assert "generic import" not in h and "readings at 0 stay" not in h, h
+        assert f"none above 0 ({'you' if src == si.SRC_YOU else src})" in h, h
+    DS = at.session_state["datasets"]
+    DS[t]["sms_import"]["resolved"]["min_yield"] = 3.0
+    at.session_state["datasets"] = DS
+    at.run()
+    sf = _starts_from(at)
+    assert "S0 minimum 3.000 bu/ac" in sf.value and "S0 takes the minimum of this file's import" in sf.help
+    # a file not imported as SMS: the step's own minimum, editable, as before
+    DS = at.session_state["datasets"]
+    DS[t].pop("sms_import")
+    at.session_state["datasets"] = DS
+    at.run()
+    m = at.number_input(key="min_yield")
+    assert not m.disabled and m.value == 5.0
+
+
+def test_a_point_export_whose_crop_is_not_known_is_warned(field, tmp_path, monkeypatch):
+    """A point export whose crop names no product keeps the file's own yields (no weight to volume, no dry moisture).
+    Without its own dry mass, SMS's generic import needs a product, so step 1 warns and says where to choose it."""
+    g = pyogrio.read_dataframe(field["shp"]).drop(columns=["Yld_Mass_D"])
+    g["Product"] = "Mystery grain"
+    shp = str(tmp_path / "unk" / "Synthetic_unknown_crop.shp")
+    os.makedirs(os.path.dirname(shp))
+    g.to_file(shp, engine="pyogrio")
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, shp)
+    IM = at.session_state["datasets"][at.session_state["active"]]["sms_import"]
+    assert IM["family"] == "point" and IM["resolved"]["test_weight_lb_bu"] is None and not IM["changed"]
+    assert any("generic import of a point file needs a product" in x for x in IM["notes"]) and not IM["own_yields"]
+    assert any(w.value.startswith("The crop of this point export is not recognised") for w in at.warning)
+    at2 = _app(tmp_path / "ws2", monkeypatch)
+    _open(at2, field["shp"])
+    assert not any(w.value.startswith("The crop of this point export is not recognised") for w in at2.warning)
+
+
+def test_a_point_export_with_its_own_dry_yields_says_its_product_is_not_known(field, tmp_path, monkeypatch):
+    """A point export whose product is a variety (an SMS export of John Deere data) and that carries its own dry yield
+    (bu/ac) and dry mass, as SMS's exports do: the file's own yields are used, said plainly in the import note, in step
+    1's caption and in step 2 (no warning box in step 1); choosing the product in step 2 converts them. A product
+    naming durum takes SMS's Wheat - Durum values."""
+    from engine import sms_import as si
+    g = pyogrio.read_dataframe(field["shp"])
+    paths = {}
+    for k, prod in (("var", "Variety 7"), ("durum", "Wheat - Durum")):
+        paths[k] = str(tmp_path / k / f"Synthetic_{k}.shp")
+        os.makedirs(os.path.dirname(paths[k]))
+        g.assign(Product=prod).to_file(paths[k], engine="pyogrio")
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, paths["var"])
+    t = at.session_state["active"]
+    IM = at.session_state["datasets"][t]["sms_import"]
+    assert IM["own_yields"] is True and IM["notes"] == [si.OWN_YIELDS_NOTE] and not IM["changed"]
+    assert not any("not recognised" in w.value for w in at.warning)
+    assert any("no column recomputed: its product is not known, so the file's own yields are used" in c.value
+               for c in at.caption)
+    text = ("The product of this point export is not known (its crop or product column names none, e.g. a variety), "
+            "so the file's own dry yields are used as it gives them. Choosing the product in the import settings of "
+            "this file converts them")
+    assert any(str(c.help or "").startswith(text) for c in at.caption)            # step 2's "Product not known"
+    assert any(si.OWN_YIELDS_NOTE in str(m.help) for m in at.metric if m.label == "Readings")
+    _apply_import(at, prod="wheat")
+    IM = at.session_state["datasets"][t]["sms_import"]
+    assert not IM["own_yields"] and "Yld_Vol_Dr" in IM["changed"] and IM["resolved"]["dry_moisture_pct"] == 13.5
+    assert not any(str(c.help or "").startswith(text) for c in at.caption)
+    at2 = _app(tmp_path / "ws2", monkeypatch)
+    _open(at2, paths["durum"])
+    IM = at2.session_state["datasets"][at2.session_state["active"]]["sms_import"]
+    assert IM["sms_product"] == "Wheat - Durum"
+    assert (IM["resolved"]["test_weight_lb_bu"], IM["resolved"]["dry_moisture_pct"]) == (60.0, 13.0)
 
 
 def _longest(root):

@@ -904,6 +904,9 @@ def test_app_writes_and_offers_the_shapefile_for_difm(field, tmp_path, monkeypat
     assert os.path.exists(zp) and C["difm"]["zip"] == zp and C["difm"]["error"] is None
     assert any(d.label == "Shapefile for DIFM (.zip)" for d in at.get("download_button"))
     assert any("the layout of an SMS shapefile export, the layout DIFM reads" in c.value for c in at.caption)
+    # step 4 shows one line on it (the rest under About the file for DIFM)
+    assert any(c.value.startswith("For DIFM: Yld_Vol_Dr as the yield; swath and moisture mapped") and "Swth_Wdth_" in
+               str(c.help) for c in at.caption)
     # this cleaning adjusted nothing: no question, the plain 3-sigma file only, and the caption says which it is
     assert not [r for r in at.radio if str(r.key or "").startswith("difm_y_")]
     assert sorted(f for f in os.listdir(os.path.dirname(zp)) if f.endswith("_DIFM.zip")) == [os.path.basename(zp)]
@@ -951,9 +954,10 @@ def test_app_writes_and_offers_the_shapefile_for_difm(field, tmp_path, monkeypat
     at.session_state["cleaned"][tag].pop("clean_again", None)
     at.session_state["cleaned"][tag].pop("difm", None)
     at.run()
-    # imported again: the cleaning is dropped and its DIFM zip leaves clean_shapefiles/ with the clean set
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
+    # another import applied in step 2: the cleaning is dropped and its DIFM zip leaves clean_shapefiles/ with the
+    # clean set
+    from tests.app_steps import _apply_import
+    _apply_import(at, max=10_000.0)
     assert not os.path.exists(zp)
     assert glob.glob(os.path.join(wd, "superseded", "*", "p", f"{tag}_sms3s_clean_DIFM.zip"))
     assert not any(d.label == "Shapefile for DIFM (.zip)" for d in at.get("download_button"))

@@ -7,18 +7,26 @@ and reports.
 
 Four steps on one page:
 
-  1 Machine data: upload the files or type a file or folder on this computer. Combines: a raw monitor dataset (a
+  1 Raw data: upload the files or type a file or folder on this computer. Combines: a raw monitor dataset (a
     zipped Case IH / New Holland card, a John Deere JD-Data folder, the files of a GreenStar 3 card, the TASKDATA
     sets of ISOXML harvest task data) lists its units
     (tasks / machines / loads), and the chosen units are extracted as ONE POINT SHAPEFILE PER FIELD, SEASON AND CROP
-    (engine.run.decode on each group); a yield point export (or its .kml / .kmz) is imported like any other file
-    (Import as SMS below: its dry yield computed again from its wet mass). Planters and
+    (engine.run.decode on each group); a yield point export (or its .kml / .kmz) is imported as SMS's generic import
+    of a point file holds it (Import as SMS below: every reading kept, its dry yield computed again from its wet
+    mass when its crop names a product; else the file's own yields: said in its import note and in step 2 when it
+    carries its own dry yield and dry mass, as SMS's exports do, with a warning when it does not). Planters and
     sprayers: the as-applied point export (a shapefile); any other point shapefile of a machine too. What a point
     file is (harvest, seeding, application, other points) is read from its columns (engine.clean.applied3s.
-    detect_operation).
-  2 Map and attributes: one button per attribute of the file colours the map (the strips the header swept over the
-    satellite image, or the points); the legend, the statistics and the histogram of that attribute sit beside it;
-    the attribute table and the first records below. The field boundary of the file, when given, is drawn on it.
+    detect_operation). Step 1 shows the file's default import only (SMS's, no import setting here): its import line
+    with a badge, its strip of cards and its map (one button per attribute colours the strips the header swept over
+    the satellite image, or the points; the legend, the statistics and the histogram beside it; the field boundary,
+    when given, drawn on it), then the details in compact expanders (the header width as logged, the import record,
+    the decoder's report, the attributes, the first records, the extracted points).
+  2 Import settings: the switch 'Use SMS's default settings' (on: the data is step 1's). Off: the import settings of
+    the file, editable, with Apply (this file, or every harvest file on its own SMS default), or no import as SMS
+    ('None': an export as written, raw data decoded again as the monitor logged it); applied, step 2 shows its own
+    strip of cards (against step 1) and map (on step 1's colour scale). Back on: back to the default, asked first in a
+    dialog when the file has a cleaning (it is set aside). Planter and sprayer files have no import settings.
   3 Cleaning. A harvest file: the SMS 3-sigma sequence of Ag Leader SMS Advanced (engine.run.clean, method
     sms3sigma): S0 import check, S1 Clip To Field Boundary, S2 Optimize Swath Widths (once; 2 or 3 passes repeat
     an SMS chain where Clip + Optimize Swath Widths was added that many times), S3 moisture, S4 speed (the
@@ -32,8 +40,13 @@ Four steps on one page:
     the same 3-sigma rule on the attributes chosen (engine.clean.applied3s: S0 import check with the minimum of the
     main attribute, S1 clip, one 3-sigma step per attribute, the speed first, the main one repeated while its SD
     falls). Each file keeps its own boundary (.zip / .shp / .geojson / .gpkg / .kml / .kmz; a file of several fields
-    asks which one) and its own settings. One file or every file; the steps, the limits and the maps of the result.
-  4 Clean shapefiles and reports: the clean shapefile of each file (the kept points with every attribute), all of
+    asks which one) and its own settings. One file or every file. On screen: the import the cleaning starts from
+    (with S0's minimum) and the sequence in one line each, the settings (folded into one line once the file is
+    cleaned; the grower's weight folded while empty), then the strip of the result, the clean map under it (six
+    attributes on pills and the others under 'More', the statistics and the histogram at its side; a corrected yield
+    one pill away, compared with the clean map) and the details in tabs (yield path, steps, limits, removed points,
+    grower's data, combines). The maps of steps 1 and 2 fold once the file is cleaned (a click opens them again).
+  4 Clean files and reports: the clean shapefile of each file (the kept points with every attribute), all of
     them in one zip, the flagged points (every point with Keep and the step that removed it, Rem_By), the cleaning
     report (PDF) and the cleaning record (JSON). A clean file also comes as a shapefile for DIFM (engine/difm.py: a
     harvest's readings in the layout of an SMS shapefile export, <tag>_sms3s_clean_DIFM.zip, a planter / sprayer
@@ -51,18 +64,28 @@ Four steps on one page:
     the fallback (the only format besides the
     shapefile for a point export); every such output is marked not yet tested in SMS. They are written to native/<tag>/
     in the work folder (never inside the input), each with a small record (native/<tag>/<format>.json) that brings its
-    result back when the work is opened again.
+    result back when the work is opened again. On screen: 'What each file is' folded at the top, the table of the
+    cleaned files (with the import each cleaning started from), then per file its downloads, one line on the file for
+    DIFM (the rest under 'About the file for DIFM') and the box to save the clean file in the monitor's format.
 
-Import as SMS (step 1 defaults, the import settings of each file in step 2): the values SMS gives the source when a
-setting is left empty (engine/sms_import.py resolve): John Deere files (GreenStar 3 cards, Gen4 .jdl logs, Operations
-Center exports) the crop definition of the file, min 5 / max 10,000 bu/ac; Case IH / New Holland cards and other
-point exports SMS's product table by the crop name; expand dry moisture off. A value typed by the user wins; the
-panels say where each value came from ('from the file', 'SMS product table', 'you' ...).
+Import as SMS: every harvest file opens with SMS's default import (its Processing Settings untouched), kept as the
+file's default import beside the active one (import_default / import_mode); the import settings of each file (step 2)
+apply own values to that file (or to every harvest file), go back to the default, or use the file with no import as
+SMS (an export as written, a raw file as the monitor logged it). The values SMS gives the source when a setting is
+left empty (engine/sms_import.py resolve): John Deere files (GreenStar 3 cards, Gen4 .jdl logs) the crop
+definition of the file, min 5 / max 10,000 bu/ac; ISOXML task data what SMS gives the task's crop, min 5 / max 10,000;
+Case IH / New Holland cards SMS's product table by the crop name; point exports (shapefiles, .kml / .kmz, Operations
+Center and SMS exports) as SMS's generic import of a point file: every reading kept (min 0, no max), the weight to
+volume and dry moisture of SMS's product table; expand dry moisture off. A value typed by the user wins; the panels
+say where each value came from ('from the file', 'SMS product table', 'SMS's generic import of a point file', 'you'
+...). A work saved by an older version that imported a point export with other values says so when it is opened.
 
 Work folder: workspace/<YYYYmmdd-HHMMSS>_<name>/ (OCED_WORKSPACE moves it), with uploads/ (the files uploaded; an
 uploaded zip is removed once unpacked) or input/ (what was unpacked), decoded/ (the extracted files: <tag>_decoded.shp,
 <tag>_decode_report.json and <tag>_imported.shp, the file as SMS imports it), imported/ (point exports as SMS imports
-them), sections/ (Operations Center section exports collapsed to one reading per second), boundary/<tag>/ (the boundary
+them), <tag>_imported_custom.* (an import with the user's settings), <tag>_imported_default.* (SMS's default import
+built again for a work of an earlier version), as_logged/decoded/ (a raw file decoded again as the monitor logged it),
+sections/ (Operations Center section exports collapsed to one reading per second), boundary/<tag>/ (the boundary
 files uploaded), clean/<tag>/ (the cleaning outputs), clean_shapefiles/ (what step 4 hands out), superseded/ (the
 outputs of a cleaning that an import or an extraction made obsolete), native/<tag>/ (the clean harvest in the
 monitor's format) and oced_work.json (the saved work). An input left out when the data was opened (a damaged zip
@@ -72,11 +95,14 @@ when it is opened. Every value
 on the maps is a reading's own value: nothing is interpolated or smoothed.
 """
 import base64
+import copy
 import dataclasses
 import datetime as dt
+import functools
 import hashlib
 import html
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -223,57 +249,14 @@ ATTR_COLORS = {"moisture": "#1565C0", "speed": "#00B4D8", "dry yield": "#FF5252"
 st.set_page_config(page_title=NAME, page_icon=brand.page_icon(), layout="wide")
 if os.path.exists(brand.LOGO_H):
     st.logo(brand.LOGO_H, icon_image=brand.LOGO_SHIELD if os.path.exists(brand.LOGO_SHIELD) else None, size="large")
-brand.inject()
-# the attribute buttons (st.pills in a keyed box): large, navy when chosen
-st.html(f"""<style>
-.stApp [class*="st-key-attr_box_"] {{ background: #F3F7FC; border: 1px solid #C9D8EC;
-  border-left: 5px solid {brand.LIGHT_BLUE}; border-radius: 12px; padding: 0.7rem 1rem 0.8rem !important; }}
-.stApp [class*="st-key-attr_box_"] [data-testid="stWidgetLabel"] p {{ font-weight: 700; font-size: 1.02rem;
-  color: {brand.NAVY}; }}
-.stApp [class*="st-key-attr_box_"] button[role="radio"] {{ min-height: 2.35rem; padding: 0.3rem 0.95rem;
-  background: #FFFFFF; border: 1px solid #C9D8EC; }}
-.stApp [class*="st-key-attr_box_"] button[role="radio"] p {{ font-weight: 600; color: #0B2A5B; }}
-.stApp [class*="st-key-attr_box_"] button[role="radio"]:hover {{ background: #E8F1FB; border-color: {brand.LIGHT_BLUE}; }}
-.stApp [class*="st-key-attr_box_"] button[role="radio"][aria-checked="true"] {{
-  background: {brand.NAVY}; border-color: {brand.NAVY}; box-shadow: 0 2px 8px rgba(0,53,142,0.28); }}
-.stApp [class*="st-key-attr_box_"] button[role="radio"][aria-checked="true"] p {{ color: #FFFFFF; }}
-.stApp .st-key-run_go_2 [data-testid="stBaseButton-primary"] {{ min-height: 3.1rem; padding: 0.7rem 2rem;
-  border-radius: 12px; font-size: 1.08rem; font-weight: 700; }}
-.stApp [class*="st-key-field_box_"] {{ background: #FFFFFF; border: 1px solid #C9D8EC; border-left: 5px solid {brand.NAVY};
-  border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
-.oced-verdict {{ border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.95rem; border: 1px solid #C9D8EC; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricValue"] {{ font-size: 1.65rem; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricLabel"] p,
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] div,
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ white-space: normal; overflow: visible;
-  text-overflow: clip; }}
-/* the cards above the clean map: the titles take two lines in every card, so the values line up; the note
-   under the value is a small box (not the rounded pill of st.metric) whose text wraps inside it */
-/* one row on a wide screen; on a narrower one the cards wrap, every card keeping the same width (a grid of
-   equal tracks of at least 175 px) */
-.stApp [class*="st-key-res_cards"] [data-testid="stHorizontalBlock"] {{ display: grid !important;
-  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); grid-auto-rows: 1fr; gap: 0.75rem; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stColumn"] {{ width: auto !important; min-width: 0 !important;
-  flex: none !important; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricLabel"] {{ min-height: 2.45rem; align-items: flex-start; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] {{ display: block; width: 100%; height: auto;
-  box-sizing: border-box; margin-top: 0.4rem; padding: 0.3rem 0.55rem; border-radius: 6px; background: #F3F7FC;
-  border-left: 3px solid {brand.LIGHT_BLUE}; color: #4B5563; }}
-.stApp [class*="st-key-res_cards"] [data-testid="stMetricDelta"] p {{ margin: 0; font-size: 0.8rem; line-height: 1.35;
-  white-space: normal; overflow: visible; text-overflow: clip; }}
-.oced-path {{ border-radius: 10px; padding: 0.55rem 0.9rem; font-size: 0.95rem; color: #1F2937; background: #F3F7FC;
-  border: 1px solid #C9D8EC; border-left: 5px solid {brand.LIGHT_BLUE}; margin: 0.2rem 0 0.6rem; }}
-.oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
-  color: #1F2937; }}
-.oced-bar {{ flex: 1; height: 14px; border-radius: 7px; border: 1px solid #C9D8EC; }}
-</style>""")
+brand.inject()                       # the page's CSS, all of it in brand.py (light / dark pairs)
 
 ss = st.session_state
 for k, v in {"workdir": None, "cands": None, "open_error": None, "open_exc": None, "open_request": None,
              "open_log": [], "units": {}, "datasets": {}, "cleaned": {}, "active": None, "boundary": {},
-             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None, "smsimp": None, "cfset": {},
+             "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None, "cfset": {},
              "work_saved_at": None, "work_msg": None, "work_nonce": 0, "last_cand": None, "open_fail_log": [],
-             "last_open_path": None, "left_out": []}.items():
+             "last_open_path": None, "left_out": [], "away": {}, "away_order": []}.items():
     ss.setdefault(k, v)
 
 
@@ -293,6 +276,32 @@ def mtime(p: str) -> float:
     return os.path.getmtime(p) if p and os.path.exists(p) else 0.0
 
 
+def content_sig(shp: str | None) -> str | None:
+    """The md5 of a shapefile's .shp and .dbf (None when it is not there): the same file whatever its time on disk (a
+    work copied or unzipped without its files' times) and whatever day it was written (the date of the last update
+    in the .dbf header, bytes 1-3, is left out: the same import written again on another day is the same import)."""
+    if not shp or not os.path.exists(str(shp)):
+        return None
+    h = hashlib.md5()
+    for e in (".shp", ".dbf"):
+        p = os.path.splitext(str(shp))[0] + e
+        try:
+            with open(p, "rb") as fh:
+                if e == ".dbf":
+                    h.update(fh.read(1))                 # the version byte; the date after it is left out
+                    fh.read(3)
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            return None
+    return h.hexdigest()
+
+
+def stamp(shp: str | None) -> dict:
+    """{mtime, sig} of the file of an import (a default import's block keeps them: default_needs_build)."""
+    return {"mtime": mtime(shp), "sig": content_sig(shp)}
+
+
 # the import settings of a value: where the value came from (engine/sms_import.py resolve, R["sources"])
 SOURCE_LABEL = {"you": "you", "file": "from the file", "SMS product table": "SMS product table",
                 "SMS for this John Deere crop": "SMS's value for this John Deere crop, not the file's own",
@@ -301,9 +310,11 @@ SOURCE_LABEL = {"you": "you", "file": "from the file", "SMS product table": "SMS
                                                          "log's own",
                 "SMS for ISOXML task data": "SMS for ISOXML task data",
                 "SMS for ISOXML task data without a product": "SMS's value for an ISOXML dataset without a product",
+                "SMS generic import of point files": "SMS's generic import of a point file, which keeps every reading",
                 "OCED default": "OCED default"}
 WORK_PER_FILE_KEYS = ("cand_idx", "units_", "attr_", "draw_", "bnd_", "gw_", "a3_", "cf_", "fi_", "cnh_tot_", "cal_",
-                      "tb_", "fd_", "md_", "al_", "pts_", "isl_", "extract_")
+                      "tb_", "fd_", "md_", "al_", "pts_", "isl_", "extract_", "src_collapse_", "set_box_", "gw_box_",
+                      "src_box_", "map_box_")
 PATH_LIMIT = 250                 # the longest path written in a work folder (Windows opens a file up to 259)
 LONGEST_OUTPUT = "_sms3s_cleaning_report.pdf"     # the longest name the cleaning writes after the tag
 TAG_FLOOR = 12                   # the fewest characters tag_budget gives a tag, however deep the work folder
@@ -337,7 +348,7 @@ def free_tag(base: str, src: str | None = None, also=()) -> str:
     """A tag no other file of the work (nor any of `also`) has, ignoring case (tags become file and folder names, and
     Windows does not tell 'Harvest' from 'harvest'): the base tag; else the base with the folder of src (the folder
     itself for a raw dataset's folder, the parent folder of a file); else base_2, base_3 ..."""
-    taken = {str(t).casefold() for t in list(ss.datasets) + list(also)}
+    taken = {str(t).casefold() for t in list(ss.datasets) + list(ss.get("away") or {}) + list(also)}
     b = tag_budget()
     t = fit_tag(base, b)
     if t.casefold() not in taken:
@@ -399,6 +410,21 @@ def cand_labels(cands) -> list:
     return out
 
 
+CAND_LINE_MAX = 150
+
+
+def cand_line(label: str) -> str:
+    """Step 1's line of the dataset opened: its label, or, when longer than CAND_LINE_MAX, its format and first clause
+    ('<format> · 53 log file(s), 1 machine(s) (...)'); the rest (field, crop, farm) is in the units table and the
+    Unpacking log."""
+    lab = str(label or "")
+    if len(lab) <= CAND_LINE_MAX:
+        return lab
+    head, sep, rest = lab.partition(" · ")
+    s = head + sep + rest.split("; ")[0]
+    return s if len(s) <= CAND_LINE_MAX else s[:CAND_LINE_MAX - 2].rsplit(" ", 1)[0] + " …"
+
+
 def totals_only_of(cand: dict, chosen) -> list:
     """The Case IH / New Holland tasks of the chosen units' fields and seasons whose totals are on the card without
     their log (engine/formats/cnh_cn1.totals_only_tasks), read once per card and choice of units."""
@@ -452,10 +478,11 @@ def _forget_work(clear_inputs: bool = False):
         ss[k] = None
     ss.open_log, ss.units, ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set = [], {}, {}, {}, {}, {}, {}
     ss.cfset, ss.open_fail_log = {}, []
+    ss.away, ss.away_order = {}, []   # files of the work set aside while their points are away (restore_work)
     ss.left_out = []                 # the inputs left out when this work's data was opened (a damaged zip)
     ss.workdir = None
     ss.input_label = ss.work_saved = ss.work_saved_at = ss.work_msg = None
-    for k in ("work_name", "work_name_for", "active_pick", "save_request"):
+    for k in ("work_name", "work_name_for", "active_pick", "save_request", "default_failed"):
         ss.pop(k, None)
     prefixes = WORK_PER_FILE_KEYS + (("path_in", "uploads") if clear_inputs else ())
     for k in [k for k in ss if str(k).startswith(prefixes)]:
@@ -575,7 +602,7 @@ def do_open(source) -> bool:
     except ValueError as e:
         err = str(e)
     except Exception as e:                               # shown with its traceback, never swallowed
-        err, exc = f"Opening failed ({type(e).__name__}): {e}", e
+        err, exc = f"Opening failed ({_error_reason(e)})", e
     if err is None and not cands:
         notes = list(getattr(cands, "notes", None) or [])
         msg = str(getattr(cands, "message", "") or "Nothing that OCED can read was found.")
@@ -770,8 +797,9 @@ def deck(layers, lon, lat, height, tooltip=None, width=900):
                                  tooltip=tooltip), height=height)
 
 
-def legend(kind, cmap, lo, hi, unit, t0=None, cats=None, counts=None):
-    """Under the map: the colour bar from lo to hi, or one chip per category with its points."""
+def legend(kind, cmap, lo, hi, unit, t0=None, cats=None, counts=None, note: str = ""):
+    """Under the map: the colour bar from lo to hi (note: what the scale is, e.g. step 1's), or one chip per
+    category with its points."""
     if kind == "cat":
         items = []
         for i, c in enumerate(cats[:MAX_CATEGORIES]):
@@ -788,7 +816,8 @@ def legend(kind, cmap, lo, hi, unit, t0=None, cats=None, counts=None):
     stops = ", ".join(matplotlib.colors.to_hex(cm(x)) for x in np.linspace(0, 1, 11))
     st.html(f'<div class="oced-legend"><span>{html.escape(fmt_value(lo, unit, kind, t0))}</span>'
             f'<div class="oced-bar" style="background:linear-gradient(90deg,{stops})"></div>'
-            f'<span>{html.escape(fmt_value(hi, unit, kind, t0))}</span></div>')
+            f'<span>{html.escape(fmt_value(hi, unit, kind, t0))}</span>'
+            + (f'<span>· {html.escape(note)}</span>' if note else "") + '</div>')
 
 
 def stats_of(v: np.ndarray) -> dict:
@@ -872,13 +901,54 @@ def corrected_column(C: dict, cols, ycol) -> tuple[str, str] | None:
     return None
 
 
-def explorer(shp: str, key: str, title: str = "", height: int = 520, default: str | None = None, outline=None,
-             fixed: str | None = None, base_col: str | None = None, extras: bool = True):
-    """The map of a point file coloured by the attribute chosen on the buttons, with its legend, statistics and
-    histogram beside it, and the attribute table and the first records below. outline: the field boundary (rings of
-    [lon, lat]) drawn over the strips. fixed: one column, no buttons; base_col: a column of the same file whose
-    statistics every statistic is compared with (the column "change"); extras False: no attribute table and first
-    records."""
+TOP_N = 6                        # the attributes on the pills of a map; the others are under 'More'
+_STD_COL = {"yield": "Yld_Vol_Dr", "moisture": "Moisture__", "speed_mph": "Speed_mph_", "width_ft": "Swth_Wdth_",
+            "yield_wet": "Yld_Vol_We", "machine": "Machine", "dataset": "Dataset"}
+DRAW_HELP = ("Strips: the ground the header swept by each reading. Points: one dot per reading (used when the strips "
+             "cannot be built).")
+
+
+def top_attrs(names: list, op: dict | None = None, first=(), n: int = TOP_N) -> list:
+    """The attributes on the pills of a map (the others are under 'More'): for a yield file the first n present of
+    the dry yield, the columns in `first` (a corrected yield), Yld_Level, Yld_Harm, the moisture, speed, width, wet
+    yield and machine / dataset; for a planter or sprayer file its rates, speed, width and machine; then the other
+    attributes in their order until there are n."""
+    det = yc.detect_columns(list(names))
+
+    def c(k):
+        return det.get(k) or _STD_COL.get(k)
+    rates = [r for r in (op or {}).get("rates") or []]
+    if c("yield") in names or not rates:
+        pref = [c("yield"), *first, "Yld_Level", "Yld_Harm", c("moisture"), c("speed_mph"), c("width_ft"),
+                c("yield_wet"), c("machine"), c("dataset")]
+    else:
+        pref = [*first, *rates, (op or {}).get("speed") or c("speed_mph"), c("width_ft"),
+                (op or {}).get("machine") or c("machine")]
+    top = [x for x in dict.fromkeys(pref) if x and x in names][:n]
+    return top + [x for x in names if x not in top][:max(n - len(top), 0)]
+
+
+def _more_pick(key: str):
+    """The 'More' select of a map: its choice goes onto the pills (as the attribute shown), the select empties."""
+    v = ss.get(f"attr_more_{key}")
+    if v:
+        ss[f"attr_{key}"] = v
+    ss[f"attr_more_{key}"] = None
+
+
+def explorer(shp: str, key: str, height: int = 520, default: str | None = None, outline=None, extras: bool = True,
+             scale_of: str | None = None, base_for: dict | None = None, labels: dict | None = None,
+             col_help: dict | None = None, data: str | None = None):
+    """The map of a point file coloured by the attribute chosen on the pills (six of them, the others under 'More',
+    the way the readings are drawn at the right), with its legend under it and its statistics and histogram beside
+    it. outline: the field boundary (rings of [lon, lat]) drawn over the strips; extras False: no attribute table and
+    first records (the caller draws explorer_extras where it wants them); scale_of: another point file whose values
+    of the same column give the colour scale (step 2's map on step 1's scale: the same colour is the same value);
+    base_for: {column: base column}: while that column is shown, every statistic is also given as the change against
+    the base column (the column "change vs the clean map"); labels: {column: pill label} (a corrected yield is
+    'Final yield (Yld_Level)'); col_help: {column: the "?" of the side heading while it is shown}; data: which data
+    the map shows, after the column in the side heading ('SMS default (step 1)', 'your settings (step 2)', 'clean
+    (step 3)')."""
     if not shp or not os.path.exists(shp):
         st.error("The file is no longer on disk.", icon=":material/error:")
         return
@@ -887,30 +957,51 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
     if not attrs:
         st.warning("This file holds no attribute to map.", icon=":material/warning:")
         return
+    labels, col_help = dict(labels or {}), dict(col_help or {})
     names = [a[0] for a in attrs]
     info = {a[0]: a for a in attrs}
     akey = f"attr_{key}"
     if ss.get(akey) not in names:
         ss[akey] = default if default in names else names[0]
-    if fixed is not None and fixed in names:
-        pick = fixed
-    else:
-        with st.container(key=f"attr_box_{key}"):
-            pick = st.pills("Attribute on the map", names, selection_mode="single", key=akey,
-                            format_func=lambda c: info[c][1] + (f" ({info[c][2]})" if info[c][2] else ""))
-    col = pick or names[0]
+    top = top_attrs(names, operation_of(shp, mtime(shp)), first=[c for c in labels if c in names])
+    shown = top + ([ss[akey]] if ss[akey] not in top else [])          # a pick from 'More' joins the pills
+    rest = [c for c in names if c not in shown]
+
+    def pill_text(c):
+        return labels.get(c) or (info[c][1] + (f" ({info[c][2]})" if info[c][2] else ""))
+    with st.container(key=f"attr_box_{key}"):
+        with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+            pick = st.pills("Attribute on the map", shown, selection_mode="single", required=True, key=akey,
+                            format_func=pill_text, label_visibility="collapsed")
+            if rest:
+                st.selectbox("More attributes", rest, index=None, placeholder=f"More ({len(rest)})",
+                             key=f"attr_more_{key}", format_func=pill_text, label_visibility="collapsed",
+                             on_change=_more_pick, args=(key,), width=190)
+            st.space("stretch")
+            draw = st.segmented_control("Draw the readings as", ["strips", "points"], default="strips", required=True,
+                                        key=f"draw_{key}", format_func={"strips": "Strips",
+                                                                        "points": "Points"}.get,
+                                        label_visibility="collapsed", help=DRAW_HELP)
+    col = pick if pick in names else ss.get(akey) if ss.get(akey) in names else names[0]
     _, label, unit, cmap = info[col]
+    label = labels.get(col) or label
+    base_col = (base_for or {}).get(col)
     kind = "cat" if cmap == "cat" else "time" if cmap == "time" else "num"
     v, cats, t0 = values_of(df, col, kind)
     S = stats_of(v) if kind != "cat" else None
     lo, hi = ((S["p2"], S["p98"]) if (S and S.get("valid")) else (0.0, max(len(cats or []) - 1, 1)))
     if kind == "num" and S and S.get("valid") and hi <= lo:
         lo, hi = S["min"], S["max"]
+    scale_note = ""
+    if scale_of and kind == "num" and os.path.exists(scale_of):
+        df_s = read_points(scale_of, mtime(scale_of))
+        if col in df_s:
+            S_s = stats_of(values_of(df_s, col, "num")[0])
+            if S_s.get("valid"):
+                lo, hi = (S_s["p2"], S_s["p98"]) if S_s["p98"] > S_s["p2"] else (S_s["min"], S_s["max"])
+                scale_note = "scale of step 1"
     c_map, c_side = st.columns([2.6, 1], gap="medium")
     with c_map:
-        draw = st.segmented_control("Draw the readings as", ["strips", "points"], default="strips", required=True,
-                                    key=f"draw_{key}", format_func={"strips": "Strips the header swept",
-                                                                    "points": "Points"}.get)
         pv = strips_of(shp, mtime(shp)) if draw == "strips" else pd.DataFrame()
         if draw == "strips" and ("polygon" not in pv or "row" not in pv):
             st.caption("The strips cannot be built for this file (no heading, width or distance): points instead.")
@@ -947,16 +1038,20 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
                  tooltip={"html": f"<b>{html.escape(label)}</b>: {{v}}",
                           "style": {"backgroundColor": "#00358E", "color": "white", "fontSize": "12px"}})
         counts = pd.Series(v[np.isfinite(v)].astype(int)).value_counts().to_dict() if kind == "cat" else None
-        legend(kind, cmap, lo, hi, unit, t0, cats, counts)
-        st.caption((f"All {len(df):,} readings" if len(pv) >= len(df) else
-                    f"A random {len(pv):,} of the {len(df):,} readings")
-                   + (" as the strips their header swept" if "polygon" in pv else " as points")
-                   + f", coloured by {label}" + (" (2nd to 98th percentile; beyond it the end colours)"
-                                                 if kind != "cat" else "")
-                   + ". Point at a strip to read its value. Nothing is interpolated or smoothed."
-                   + (" The cyan line is the field boundary." if outline else ""))
+        legend(kind, cmap, lo, hi, unit, t0, cats, counts, note=scale_note)
+    # what the map shows, behind the "?" of the side heading (the column's own text first when the caller gives one)
+    how = ((f"All {len(df):,} readings" if len(pv) >= len(df) else f"A random {len(pv):,} of the {len(df):,} readings")
+           + (" as the strips their header swept" if "polygon" in pv else " as points")
+           + (", coloured from the 2nd to the 98th percentile" + (" of step 1's file" if scale_note else "")
+              if kind != "cat" else "")
+           + ". Point at a strip to read its value; nothing is interpolated."
+           + (" The cyan line is the field boundary." if outline else "")
+           + (" Values beyond the scale are counted in the end bars of the histogram." if kind == "num" else ""))
     with c_side:
-        st.markdown(f"**{label}**" + (f" · {unit}" if unit else "") + f"  \n`{col}`")
+        st.markdown(f"**{label}**" + (f" · {unit}" if unit else "") + f"  \n`{col}`"
+                    + (f" · {html.escape(data)}" if data else ""),
+                    help=(col_help[col] + (" Values beyond the scale are counted in the end bars of the histogram."
+                                           if kind == "num" else "")) if col_help.get(col) else how)
         if kind == "cat":
             vc = pd.Series(df[col].astype(str).replace({"": "(empty)", "nan": "(empty)"})).value_counts()
             st.dataframe(pd.DataFrame({"value": vc.index, "points": vc.values,
@@ -1008,15 +1103,35 @@ def explorer(shp: str, key: str, title: str = "", height: int = 520, default: st
                               tooltip=[alt.Tooltip("from:Q", format=".3~g"), alt.Tooltip("to:Q", format=".3~g"),
                                        "points:Q"]))
                 st.altair_chart(ch, width="stretch")
-                st.caption("Values beyond the scale are counted in the end bars.")
         else:
             st.caption("No point has a value.")
     if not extras:
         return
-    with st.expander(f"The attributes of this file ({len(df.columns) - 2} columns)", icon=":material/table_view:"):
+    explorer_extras(shp)
+
+
+def map_folded(tag: str) -> bool:
+    """True once the file has a cleaning with its clean shapefile on disk: the maps of steps 1 and 2 are folded then
+    (a rerun of step 3 draws its own maps only, as quick as with one map per step)."""
+    C = ss.cleaned.get(tag)
+    return bool(C) and os.path.exists(str(C.get("shp") or ""))
+
+
+def map_box(key: str, folded: bool):
+    """The expander of the map of step 1 or 2: open until the file is cleaned, folded after (a click opens it again).
+    It runs its content only while open: the caller draws the map when .open is True."""
+    return st.expander("Map", expanded=not folded, key=f"map_box_{key}", icon=":material/map:", on_change="rerun")
+
+
+def explorer_extras(shp: str):
+    """Under a map: the table of the file's attributes and its first 1,000 records (compact expanders)."""
+    if not shp or not os.path.exists(shp):
+        return
+    df = read_points(shp, mtime(shp))
+    with st.expander(f"Attributes ({len(df.columns) - 2})", type="compact"):
         st.dataframe(attribute_table_of(shp, mtime(shp)), hide_index=True,
                      column_config={"points with a value": st.column_config.NumberColumn(format="%d")})
-    with st.expander("The first 1,000 records", icon=":material/list:"):
+    with st.expander("First 1,000 records", type="compact"):
         st.dataframe(df.drop(columns=["lon", "lat"]).head(1000), hide_index=True)
 
 
@@ -1030,11 +1145,11 @@ def zip_shapefile(shp: str, zpath: str, stem: str | None = None) -> str:
     return zpath
 
 
-def download(label, path, mime, key, primary=False, icon=":material/download:"):
+def download(label, path, mime, key, primary=False, icon=":material/download:", help: str | None = None):
     if path and os.path.exists(path):
         with open(path, "rb") as fh:
             st.download_button(label, fh.read(), file_name=os.path.basename(path), mime=mime, key=key,
-                               type="primary" if primary else "secondary", icon=icon)
+                               type="primary" if primary else "secondary", icon=icon, help=help)
 
 
 # ------------------------------------------------------------------------------------------------ field boundary
@@ -1289,9 +1404,24 @@ def settings_of(tag: str, sset: dict) -> dict:
         S["sms_import"] = {k: v for k, v in IM.items() if k != "all_readings"}
         S["sms_import"]["all_readings"] = os.path.basename(str(IM.get("all_readings") or ""))
         S["sms_import"].setdefault("text", IM.get("settings"))       # the settings line the report prints
-    applied = (IM or {}).get("applied")
-    wm = (bool(applied.get("weight_and_moisture")) if isinstance(applied, dict)
-          else bool(RS.get("test_weight_lb_bu")) and RS.get("dry_moisture_pct") is not None)
+        # the report names the import as steps 3 and 4 do: the user's settings (also those a work of an earlier
+        # version kept), an older OCED rule's import kept as saved
+        D_ = ss.datasets.get(tag) or {}
+        if import_mode(D_) == "custom":
+            S["sms_import"]["mode"] = "custom"
+        elif import_mode(D_) == "default" and default_of(D_).get("older"):
+            S["sms_import"]["mode"] = "older"
+            S["sms_import"]["older"] = list(default_of(D_)["older"])
+            if default_of(D_).get("older_decode"):     # an older version's decode, not an older rule
+                S["sms_import"]["older_decode"] = str(default_of(D_)["older_decode"])
+                if yields_converted(IM):
+                    # the import converted those readings' yields with its own product: the report names that
+                    # product, its weight and moisture (the import's own line)
+                    S["sms_import"]["older_decode_converted"] = True
+                else:
+                    # the weight and moisture its yields carry (the report names them, not 'product unknown')
+                    S["sms_import"]["older_decode_values"] = older_decode_values(default_view(D_).get("report"))
+    wm = yields_converted(IM)
     if wm and RS.get("test_weight_lb_bu"):
         S["test_weight_lb_bu"] = float(RS["test_weight_lb_bu"])     # the import's weight to volume
     if wm and RS.get("dry_moisture_pct") is not None:
@@ -1345,19 +1475,12 @@ def dbf_drop_fields(dbf: str, names) -> list:
     return gone
 
 
-def import_settings() -> dict:
-    """The SMS import settings of the panel in step 1 (engine/sms_import.py), SMS's defaults where it is not set."""
-    try:
-        return si.settings(ss.get("smsimp") or {})
-    except ValueError:
-        return si.settings({})
-
-
-def data_crops(shp: str) -> tuple[str | None, str | None]:
+def data_crops(shp: str, strict: bool = False) -> tuple[str | None, str | None]:
     """(crop, note) of a point file: the crop its Crop column names, else its Product column (which may hold a
     variety, e.g. 'Variety X'), read over EVERY record. One known crop (sms_import.crop_key): its most frequent name.
     Several known crops: None and a note (one crop's weight, moisture and limits would convert the other's readings
-    too). No known crop: the most frequent name, else None."""
+    too). No known crop: the most frequent name, else None. strict: a file that cannot be read raises (OSError),
+    never (None, None), which would say the file names no crop."""
     try:
         import pyogrio
         fields = list(pyogrio.read_info(shp)["fields"])
@@ -1383,7 +1506,9 @@ def data_crops(shp: str) -> tuple[str | None, str | None]:
                               "with one crop's weight to volume, dry moisture and limits: choose the product in the "
                               "import settings of the file (step 2), or open each crop as its own file")
         return first, None
-    except Exception:
+    except Exception as e:
+        if strict:
+            raise OSError(f"{os.path.basename(str(shp))} could not be read ({_error_reason(e)})") from e
         return None, None
 
 
@@ -1402,25 +1527,38 @@ def iso_crops() -> dict:
 
 
 def import_fmt(source: dict | None = None, cand: dict | None = None) -> str | None:
-    """The source format sms_import.resolve takes: a decoded raw dataset's decoder (cnh_cn1, jd_jdl, jd_gs3_rcd,
-    isoxml);
-    'jd_ops_center' for an Operations Center export (the Deere metadata's crop or monitor product, or collapsed from
-    section elements); None for any other point export."""
-    for x in (source, cand):
-        if isinstance(x, dict) and x.get("format") in detect.DECODERS:
-            return x["format"]
-    c = cand if isinstance(cand, dict) else {}
-    if c.get("kind") == "export" and (c.get("monitor_product") or c.get("crop") or c.get("sections")):
-        return "jd_ops_center"
-    return None
+    """The source format sms_import.resolve takes (engine.run.import_format): a decoded raw dataset's decoder
+    (cnh_cn1, jd_jdl, jd_gs3_rcd, isoxml); 'jd_ops_center' for an Operations Center export (the Deere metadata's crop
+    or monitor product, or collapsed from section elements); 'point_export' for any other point export (both are
+    imported as SMS's generic import of a point file); None when neither says what the source is."""
+    return er.import_format(source, cand)
 
 
-def export_import_basis(D: dict) -> tuple:
-    """(crop, monitor product, format) that opening a point export again gives its import as SMS, for an import
-    recorded without them (made by an older version of OCED): an Operations Center export's crop from the
+def export_import_basis_of(path: str, cand: dict | None = None, strict: bool = False) -> dict:
+    """What any import of a point export starts from (the 'basis' of its default import): {all_readings: the export
+    (sections/<stem>_per_second.shp for one collapsed from section elements), crop, monitor (the crop definition an
+    Operations Center export carries), fmt}. From the candidate when it is given (an export being opened), else read
+    again from the export (its Deere metadata); the crop the file's Crop / Product column names when neither gives
+    one, as import_as_sms does. strict: an export that cannot be read raises OSError (its crop not read is not a crop
+    not known: export_basis_now)."""
+    if cand is not None:
+        crop, mon, fmt = cand.get("crop"), cand.get("monitor_product"), import_fmt(None, cand)
+    else:
+        crop, mon, fmt = _export_meta(path or "")
+    if crop is None and mon is None and path and os.path.exists(path):
+        try:
+            crop = data_crops(path, strict=strict)[0]
+        except Exception:                                # the crop stays unknown
+            if strict:
+                raise
+            crop = None
+    return {"all_readings": path, "crop": crop, "monitor": mon, "fmt": fmt}
+
+
+def _export_meta(src: str) -> tuple:
+    """(crop, monitor product, format) of the point export at src: an Operations Center export's crop from the
     '-Deere-Metadata.json' beside it (for a file collapsed from section elements, beside the export in the work's
-    input/ folder) and format 'jd_ops_center'; (None, None, None) for any other export."""
-    src = ew.resolve_moved((D.get("sms_import") or {}).get("all_readings") or "", ss.workdir) or ""
+    input/ folder) and format 'jd_ops_center'; (None, None, 'point_export') for any other export."""
     stem = os.path.splitext(os.path.basename(src))[0]
     sections = os.path.basename(os.path.dirname(src)).lower() == "sections" and stem.endswith("_per_second")
     orig = src
@@ -1437,30 +1575,176 @@ def export_import_basis(D: dict) -> tuple:
 
 
 IMPORT_KEYS_SHOWN = ("product", "test_weight_lb_bu", "dry_moisture_pct", "min_yield", "max_yield")
+UNKNOWN_POINT_PRODUCT = ("The crop of this point export is not recognised: its yields are taken as the file gives them "
+                         "(no dry yield computed again from the wet mass). SMS's generic import of a point file needs "
+                         "a product, so this import cannot be SMS's: choose the product in step 2 (switch off SMS's "
+                         "default) and Apply.")
+
+
+OWN_YIELDS_TEXT = ("The product of this point export is not known (its crop or product column names none, e.g. a "
+                   "variety), so the file's own dry yields are used as it gives them. Choosing the product in the "
+                   "import settings of this file converts them with its weight to volume and dry moisture (the dry "
+                   "yield computed again from the wet mass).")
+
+
+def unknown_point_product(IM) -> bool:
+    """True for the import record of a point export whose crop OCED could not map to a product (no weight to volume
+    or no dry moisture) and which does not carry its own dry yield and dry mass (own_point_yields): its yields stay
+    as the file gives them, which SMS's generic import (it needs a product) never does: step 1 warns."""
+    if not isinstance(IM, dict) or IM.get("family") != "point" or IM.get("own_yields"):
+        return False
+    RS = IM.get("resolved") or {}
+    return RS.get("test_weight_lb_bu") is None or RS.get("dry_moisture_pct") is None
+
+
+def own_point_yields(IM) -> bool:
+    """True for the import record of a point export whose product is not known and which carries its own dry yield
+    (bu/ac) and dry mass (SMS's exports do; one of John Deere data names the variety as its product): the file's own
+    yields are used, said plainly in the import note and in step 2 (OWN_YIELDS_TEXT), not warned in step 1."""
+    if not isinstance(IM, dict) or IM.get("family") != "point" or not IM.get("own_yields"):
+        return False
+    RS = IM.get("resolved") or {}
+    return RS.get("test_weight_lb_bu") is None or RS.get("dry_moisture_pct") is None
+
+
+def older_import_rules(IM) -> bool:
+    """True for an import record made by a version of OCED whose import rules were not this version's: recorded
+    without 'sources' (the first published version) or with a revision below sms_import.IMPORT_REVISION (a point
+    export cut at the product's yield volume limits, before point exports followed SMS's generic import)."""
+    if not isinstance(IM, dict):
+        return False
+    try:
+        rev = int(IM.get("revision") or 0)
+    except (TypeError, ValueError):
+        rev = 0
+    return "sources" not in IM or rev < si.IMPORT_REVISION
 
 
 def fresh_export_import(D: dict) -> dict | None:
-    """For a point export whose import as SMS was recorded by an older version of OCED (no 'sources'), what opening
-    it again gives: {"crop", "monitor", "fmt", "R": engine/sms_import.resolve of the default settings}. None for any
-    other file, or when the export's crop or format cannot be read again."""
+    """For a point export whose import as SMS was recorded by an older version of OCED (older_import_rules), what
+    opening it again gives: {"crop", "monitor", "fmt", "R": engine/sms_import.resolve, "own": the record keeps
+    settings of the user's (a product chosen, a value labelled 'you', a flag, a delay or flow shift)}. The basis is
+    always read from the export itself (export_basis_unrecorded: its Deere metadata, then its Crop / Product column;
+    never the crop the record names: amendment A1.3), with a monitor product the record keeps. A record without
+    'sources': today's default settings on that basis. A record with them: its settings under this version's rules
+    (format 'point_export' for an export recorded with none), keeping what the user set (the values labelled 'you', a
+    product chosen that is not the data's crop). None for any other file, or while the export cannot be read (its
+    basis pending)."""
     IM = D.get("sms_import") if isinstance(D, dict) else None
-    if not isinstance(IM, dict) or D.get("kind") != "export" or "sources" in IM:
+    if not isinstance(IM, dict) or D.get("kind") != "export" or not older_import_rules(IM):
         return None
     try:
-        crop, mon, fmt = export_import_basis(D)
-        if crop is None and mon is None:
-            crop = data_crops(ew.resolve_moved(IM.get("all_readings") or D["shp"], ss.workdir))[0]
-        return {"crop": crop, "monitor": mon, "fmt": fmt, "R": si.resolve(si.settings({}), crop, mon, fmt)}
+        # the data's crop read from the export (never the crop the record names: amendment A1.3); not known yet
+        # while the export cannot be read: nothing to compare with
+        B_ = export_basis_unrecorded(D, IM)
+        if B_.get("pending"):
+            return None
+        crop, mon, fmt = B_["crop"], B_["monitor"], B_["fmt"] or si.POINT_EXPORT
+        if "sources" not in IM:                          # a record of the first version: today's default settings
+            return {"crop": crop, "monitor": mon, "fmt": fmt, "R": si.resolve(si.settings({}), crop, mon, fmt),
+                    "own": False}
+        RS, SRC = dict(IM.get("resolved") or {}), IM.get("sources") or {}
+        S = {k: RS[k] for k in si.DEFAULTS if k in RS and k not in si.RESOLVED_KEYS and k != "product"}
+        S.update({k: RS.get(k) for k in si.RESOLVED_KEYS if SRC.get(k) == si.SRC_YOU})
+        S["on"] = True
+        if S.get("manual_moisture_pct") is not None and not S.get("use_manual_moisture"):
+            S["manual_moisture_pct"] = None              # the dry moisture, as the import resolves it again
+        data_prod = si.crop_key(crop) or si.crop_key((mon or {}).get("crop") if isinstance(mon, dict) else None)
+        if RS.get("product") and RS["product"] != data_prod:
+            S["product"] = RS["product"]
+        own = bool(S.get("product")) or any(SRC.get(k) == si.SRC_YOU for k in si.RESOLVED_KEYS) or any(
+            RS.get(k) for k in FLAG_KEYS) or any(abs(float(RS.get(k) or 0.0)) > 1e-9 for k in DELAY_KEYS)
+        return {"crop": crop, "monitor": mon, "fmt": fmt, "R": si.resolve(si.settings(S), crop, mon, fmt),
+                "own": own}
     except Exception:                                    # nothing to compare with
         return None
 
 
+def export_basis_now(D: dict, IM: dict | None) -> dict:
+    """The basis of a point export saved without one (a work of an earlier version), read from the export itself as a
+    fresh open reads it (its Deere metadata, then its Crop / Product column), never from the crop its record names:
+    0.3.0 recorded no crop when step 1 had a product, and the product chosen as the crop when its file panel imported
+    again a file whose record had none (amendment A1.3). Where 0.3.0 recorded the data's crop this gives the same
+    value. A monitor product the record keeps is the data's (0.3.0 took it only from the export's Deere metadata):
+    it stays when the metadata is no longer beside the export, with the recorded crop only when it is that crop. When
+    the export cannot be read now (its folder away, or its files there but not readable), nothing is taken for the
+    data's crop: the basis is marked 'pending' and read again once the readings are back (settle_basis).
+    {all_readings (as recorded), crop, monitor, fmt[, pending]}."""
+    IM = IM if isinstance(IM, dict) else {}
+    allr = IM.get("all_readings") or D.get("shp")
+    path = ew.resolve_moved(allr, ss.workdir) if allr else None
+    mon_r = IM.get("monitor") if isinstance(IM.get("monitor"), dict) and IM.get("monitor") else None
+    crop_r = (IM.get("crop") if (mon_r and IM.get("crop") and _crop(IM["crop"]) == _crop(mon_r.get("crop")))
+              else None)                                 # the metadata's crop name, beside its crop definition
+    def not_read(why=None):
+        if mon_r:
+            return {"all_readings": allr, "crop": crop_r, "monitor": mon_r, "fmt": IM.get("fmt") or si.POINT_EXPORT}
+        # why: the reason a file that is there could not be read (none: its folder away)
+        return {"all_readings": allr, "crop": None, "monitor": None, "fmt": IM.get("fmt") or si.POINT_EXPORT,
+                "pending": True, **({"why": why} if why else {})}
+    if not path or not os.path.exists(path):
+        return not_read()
+    part = path
+    try:
+        # a file there that cannot be read (held open by another program, a cloud folder offline, a network read
+        # that fails) is not read: its crop is not taken as 'none' (amendment A1.3 R2)
+        # (GDAL opens a shapefile whose .dbf it cannot open as one with no columns: each part is opened first)
+        stem_ = os.path.splitext(path)[0]
+        for part in (path, stem_ + ".dbf", stem_ + ".shx", stem_ + "-Deere-Metadata.json"):
+            if os.path.isfile(part):
+                with open(part, "rb") as fh_:
+                    fh_.read(1)
+        # a .dbf there whose header is not valid (shorter than its 33 bytes, or a header length beyond the file):
+        # not read, never a file with no crop column (amendment A1.3 R2)
+        dbf_ = stem_ + ".dbf"
+        if os.path.isfile(dbf_):
+            size_ = os.path.getsize(dbf_)
+            with open(dbf_, "rb") as fh_:
+                head_ = fh_.read(32)
+            if size_ < 33 or int.from_bytes(head_[8:10], "little") > size_:
+                return not_read(f"{os.path.basename(dbf_)} could not be read: its header is not valid (the file is "
+                                "cut or damaged)")
+        part = path
+        B = export_import_basis_of(path, strict=True)
+    except OSError as e:
+        # (a reader that names the file in its error: the reason under it)
+        return not_read(f"{os.path.basename(part)} could not be read: "
+                        f"{_first_sentence(_error_reason(e.__cause__ or e))}")
+    if B.get("monitor") is None and mon_r:               # the Deere metadata no longer beside the export
+        B.update({"crop": crop_r, "monitor": mon_r, "fmt": IM.get("fmt") or B.get("fmt")})
+    return {"all_readings": allr, "crop": B.get("crop"), "monitor": B.get("monitor"),
+            "fmt": B.get("fmt") or si.POINT_EXPORT}
+
+
+def _first_sentence(text: str) -> str:
+    """The first sentence of a reader's message, with no full stop at its end ('DataSourceError: Unable to open x.shx
+    or x.SHX. Set SHAPE_RESTORE_SHX ...': up to 'x.SHX'); a full stop inside a file name does not end it."""
+    m = re.search(r"\.[;:]?\s+\S", str(text))
+    return (str(text)[:m.start()] if m else str(text)).rstrip(" .")
+
+
+def export_basis_unrecorded(D: dict, IM: dict) -> dict:
+    """The basis of a point export whose import was recorded by an earlier version: the file's basis once it has one
+    that was read, else read from the export now (export_basis_now; 'pending' when it cannot be read)."""
+    B = import_basis(D)
+    if B is None or B.get("pending"):
+        return export_basis_now(D, IM)
+    return {"all_readings": IM.get("all_readings") or D.get("shp"), "crop": B.get("crop"),
+            "monitor": B.get("monitor"), "fmt": B.get("fmt")}
+
+
 def import_values_line(R: dict) -> str:
-    """'product unknown, - lb/bu, - %, 5-300 bu/ac': the values of a resolved import the old-import line compares."""
+    """'product unknown, - lb/bu, - %, 5-300 bu/ac' ('from 0 bu/ac, no maximum' ...): the values of a resolved import
+    the old-import line compares."""
     def f(v, d):
         return "-" if v in (None, si.AUTO) else f"{float(v):,.{d}f}"
+    mn, mx = R.get("min_yield"), R.get("max_yield")
+    mn = None if mn == si.AUTO else mn
+    lim = (f"{f(mn, 0)}-{f(mx, 0)} bu/ac" if mn is not None and mx is not None else
+           f"from {f(mn, 0)} bu/ac, no maximum" if mn is not None else
+           f"no minimum, up to {f(mx, 0)} bu/ac" if mx is not None else "no yield volume limits")
     return (f"product {R.get('product') or 'unknown'}, {f(R.get('test_weight_lb_bu'), 2)} lb/bu, "
-            f"{f(R.get('dry_moisture_pct'), 1)} %, {f(R.get('min_yield'), 0)}-{f(R.get('max_yield'), 0)} bu/ac")
+            f"{f(R.get('dry_moisture_pct'), 1)} %, {lim}")
 
 
 def import_differences(R: dict, F: dict, S_f: dict | None = None) -> list:
@@ -1476,27 +1760,35 @@ def import_differences(R: dict, F: dict, S_f: dict | None = None) -> list:
 
 
 def old_export_import(D: dict, FR: dict | None = None) -> str:
-    """For a point export whose import as SMS was recorded by an older version of OCED (no 'sources'): '' when
+    """For a point export whose import as SMS was recorded by an older version of OCED (older_import_rules): '' when
     opening it again gives the same product, weight to volume, dry moisture and yield volume limits; else what the
-    old import used and what this version uses ('product unknown, -, 5-300 bu/ac' ...). FR: fresh_export_import(D)
-    when known."""
+    old import used and what this version uses ('product unknown, -, 5-300 bu/ac' ...) and how to import it again.
+    FR: fresh_export_import(D) when known."""
     IM = D.get("sms_import") if isinstance(D, dict) else None
-    if (not isinstance(IM, dict) or D.get("kind") != "export" or not D.get("yield", True) or "sources" in IM
-            or not isinstance(IM.get("resolved"), dict)):
+    if (not isinstance(IM, dict) or D.get("kind") != "export" or not D.get("yield", True)
+            or not older_import_rules(IM) or not isinstance(IM.get("resolved"), dict)):
         return ""
     FR = FR or fresh_export_import(D)
     if FR is None or not import_differences(IM["resolved"], FR["R"]):
         return ""
-    return (f"imported by an older version of OCED ({import_values_line(IM['resolved'])}); opened again it is "
-            f"imported as SMS with {import_values_line(FR['R'])}: open the export again (step 1) for the current "
+    why = (" (this version imports a point export as SMS's generic import of a point file does: every reading kept, "
+           "the product's weight to volume and dry moisture)" if "sources" in IM else "")
+    # with settings of the user's (a product chosen, values typed) the line says what importing it again with them
+    # gives, not what a fresh open does (a fresh open imports the data's crop: step 1 has no product)
+    how = ("imported again with your settings under today's rule it is imported as SMS with" if FR.get("own") else
+           "opened again it is imported as SMS with")
+    return (f"imported by an older version of OCED ({import_values_line(IM['resolved'])}); {how} "
+            f"{import_values_line(FR['R'])}{why}: import it again in step 2 (switch off "
+            "SMS's default and Apply; its cleaning is set aside) or open the export again (step 1) for the current "
             "import (a new cleaning keeps the old one)")
 
 
 def _import_record(R: dict, rep: dict, src: str, monitor=None, fmt=None, crop=None) -> dict:
     """The record of one import as SMS the app keeps per file (and the cleaning receives): the resolved settings and
     where each value came from, the readings in the data and those left out (per reason and per combine), what was
-    recomputed, the notes; plus what is needed to import it again (the file of all readings, the monitor's crop
-    definition, the format, the crop)."""
+    recomputed, the notes, whether a point export of an unknown product keeps its own dry yields (own_yields); plus
+    what is needed to import it again (the file of all readings, the monitor's crop definition, the format, the crop)
+    and the revision of the import rules (sms_import.IMPORT_REVISION)."""
     return {"resolved": {k: R.get(k) for k in si.DEFAULTS}, "settings": si.describe(R),
             "sources": dict(R.get("sources") or {}), "defaults": dict(R.get("defaults") or {}),
             "sms_product": R.get("sms_product"), "family": R.get("family"), "sources_text": si.describe_sources(R),
@@ -1505,7 +1797,8 @@ def _import_record(R: dict, rep: dict, src: str, monitor=None, fmt=None, crop=No
             "left_out": dict(rep["left_out"]),
             "left_out_by_group": {k: dict(v) for k, v in (rep.get("left_out_by_group") or {}).items()},
             "applied": dict(rep.get("applied") or {}), "n_all": int(rep["n_in"]), "n_in": int(rep["n_out"]),
-            "all_readings": src, "changed": list(rep["changed"]), "notes": list(rep["notes"])}
+            "all_readings": src, "changed": list(rep["changed"]), "notes": list(rep["notes"]),
+            "own_yields": bool(rep.get("own_yields")), "revision": si.IMPORT_REVISION}
 
 
 def sources_line(IM: dict) -> str:
@@ -1532,7 +1825,7 @@ def sms_summary_view(rep: dict | None, IM: dict | None):
     """(total, datasets table or None, how) of a card's SMS Summary (report['sms_summary']: the display's own area,
     wet weight and moisture per dataset). The dry volume and yield follow the file's import settings: wet weight /
     weight to volume x the shrink at the dataset's moisture (one-sided unless expand dry moisture), as the decoder
-    computes them, so another weight or dry moisture in 'Import this file again' changes them too. Without an import
+    computes them, so another weight or dry moisture applied in step 2 changes them too. Without an import
     (or without its weight and moisture) the volume is the decoder's and `how` says so."""
     SM = (rep or {}).get("sms_summary") or {}
     T0, rows = dict(SM.get("total") or {}), [dict(r) for r in (SM.get("datasets") or [])]
@@ -1569,19 +1862,36 @@ def sms_summary_view(rep: dict | None, IM: dict | None):
     return T0, df, how
 
 
-def _fi_product_changed(TKi: str, monitor=None, fmt=None):
-    """A new product in the import settings of a file: the weight to volume, dry moisture and yield volume limits SMS
-    gives that product from this source (the file's crop definition for a John Deere file of that crop)."""
+def _fi_product_changed(TKi: str, monitor=None, fmt=None, crop=None):
+    """A new product in the import settings of a file: the weight to volume and dry moisture SMS gives that product
+    from this source (the file's crop definition for a John Deere file of that crop), and each yield volume limit
+    only where the product changes it on this file's basis (crop: its data's crop; the product the field showed
+    before against the new one, as Apply to all decides it for every file it reaches: amendment A1.3); a limit the
+    product does not change keeps the value shown, typed or not. Every value written is the one the new product gives
+    on this file's basis, the value the comparison uses: for 'unknown' (the product taken back) the values of the
+    data's own product, so that Apply puts the file back on its SMS default, as it does every file Apply to all takes
+    the product back from."""
     p = ss.get(f"fi_prod_{TKi}")
+    was = ss.get(f"fi_prodwas_{TKi}")
     try:
         R = si.resolve(si.settings({"product": p}), None, monitor, fmt)
     except ValueError:
         return
-    ss[f"fi_tw_{TKi}"] = None if R.get("test_weight_lb_bu") is None else float(R["test_weight_lb_bu"])
-    ss[f"fi_dm_{TKi}"] = None if R.get("dry_moisture_pct") is None else float(R["dry_moisture_pct"])
+    Bp = {"crop": crop, "monitor": monitor, "fmt": fmt}
+
+    def value(k):
+        v = _product_value(Bp, p, k)
+        if v is not None and v != si.AUTO and not isinstance(v, (int, float)):
+            v = R.get(k)                                 # (not resolved on this basis: the product's own value)
+        return None if v in (None, si.AUTO) else float(v)
+    ss[f"fi_tw_{TKi}"] = value("test_weight_lb_bu")
+    ss[f"fi_dm_{TKi}"] = value("dry_moisture_pct")
     ss[f"fi_mm_{TKi}"] = ss[f"fi_dm_{TKi}"]
-    ss[f"fi_min_{TKi}"] = None if R.get("min_yield") is None else float(R["min_yield"])
-    ss[f"fi_max_{TKi}"] = None if R.get("max_yield") is None else float(R["max_yield"])
+    for k, key in (("min_yield", f"fi_min_{TKi}"), ("max_yield", f"fi_max_{TKi}")):
+        if key in ss and _same_value(_product_value(Bp, was, k), _product_value(Bp, p, k)):
+            continue                                     # not changed by this product here: the value shown stays
+        ss[key] = value(k)
+    ss[f"fi_prodwas_{TKi}"] = p
 
 
 def superseded_dir(tag: str) -> str:
@@ -1626,14 +1936,14 @@ def drop_cleaning(tag: str) -> list:
         try:
             _move_free(nat, os.path.join(dest, NATIVE_DIR))
         except OSError as e:
-            warn.append(f"{NATIVE_DIR}/{tag} could not be moved ({e}): it holds the monitor-format files of the "
-                        "previous import")
+            warn.append(f"{NATIVE_DIR}/{tag} could not be moved ({_error_reason(e)}): it holds the monitor-format "
+                        "files of the previous import")
     for p in moves:
         try:
             _move_free(p, os.path.join(dest, "p"))
         except OSError as e:
-            warn.append(f"{os.path.basename(p)} could not be moved out of clean_shapefiles ({e}): close it in the "
-                        "other program; it is the clean file of the previous import")
+            warn.append(f"{os.path.basename(p)} could not be moved out of clean_shapefiles ({_error_reason(e)}): "
+                        "close it in the other program; it is the clean file of the previous import")
     if os.path.isdir(cl):
         for n in sorted(os.listdir(cl)):
             if n == LOCK_NAME:
@@ -1641,7 +1951,7 @@ def drop_cleaning(tag: str) -> list:
             try:
                 _move_free(os.path.join(cl, n), dest)
             except OSError as e:
-                warn.append(f"clean/{tag}/{n} could not be moved ({e}): it is of the previous import")
+                warn.append(f"clean/{tag}/{n} could not be moved ({_error_reason(e)}): it is of the previous import")
         try:
             if not os.listdir(cl):
                 os.rmdir(cl)
@@ -1652,67 +1962,1982 @@ def drop_cleaning(tag: str) -> list:
     return warn
 
 
-def reimport_file(tag: str, S_f: dict) -> str:
-    """Import one open harvest file again from all its readings with the settings S_f (engine/sms_import.py), with the
-    crop, the monitor's crop definition and the format of its first import; its cleaning no longer applies and is
-    dropped (its files move to superseded/). Returns a line for the user; ValueError when the readings it was imported
-    from are gone."""
-    D = ss.datasets[tag]
-    IM = D.get("sms_import") or {}
-    src = IM.get("all_readings") or D["shp"]
-    src = ew.resolve_moved(src, ss.workdir) if hasattr(ew, "resolve_moved") else src
-    if not src or not os.path.exists(src):
-        raise ValueError(f"the readings this file was imported from are no longer at {src}: open the data again "
-                         "(step 1) to import it with other settings")
-    monitor, fmt = IM.get("monitor"), IM.get("fmt")
-    crop0 = None
-    FR = fresh_export_import(D)                           # an export imported by an older version: as a fresh open
-    if monitor is None and fmt is None:                   # an import recorded before the source was kept
-        monitor = (D.get("report") or {}).get("monitor_product")
-        fmt = import_fmt(D.get("source"))
-        if FR is not None:
-            crop0, monitor, fmt = FR["crop"], FR["monitor"], FR["fmt"]
-    crop = S_f.get("product") or IM.get("crop") or crop0 or (D.get("report") or {}).get("crop_name")
-    R = si.resolve(S_f, crop, monitor, fmt)
-    folder = os.path.dirname(D["shp"]) if os.path.abspath(D["shp"]) != os.path.abspath(src) else \
-        os.path.join(ss.workdir, "imported")
-    rep = si.apply(src, os.path.join(folder, f"{tag}_imported.shp"), R)
-    D["shp"], D["n"] = rep["path"], int(rep["n_out"])
-    D["sms_import"] = _import_record(R, rep, src, monitor, fmt, IM.get("crop") if IM.get("crop") else crop)
-    if isinstance(D.get("source"), dict) and isinstance(D["source"].get("options"), dict) and \
-            rep.get("applied", {}).get("weight_and_moisture"):
-        # the shrink, weight to volume and dry moisture the file's dry yield now has (the report's source paragraph
-        # and the cleaning read them; a writer of the monitor's format decodes the card again with these options, so
-        # that its totals are on the clean file's basis)
+# ------------------------------------------------------------------------------------------------ the two imports
+# Each harvest file keeps two imports: the DEFAULT import (step 1: what SMS's import gives the source with its
+# Processing Settings untouched, written when the file is opened or extracted and never overwritten by step 2) and
+# the ACTIVE import (D["shp"], D["n"], D["sms_import"], D["source"]: what the cleaning and every output read; the
+# default until the user applies own settings in step 2). D["import_default"] = {shp, n, mtime, sms_import, source
+# (raw files), basis {all_readings, crop, monitor, fmt}: what any import of the file starts from, error: SMS's
+# default import failed (shp = the readings as they are), older: a saved import made under an older OCED rule (what
+# differs)}; D["import_mode"] = "default" | "custom" (the user's settings) | "as_is" (no import as SMS: an export as
+# written, a raw file as the monitor logged it, the readings as they are when SMS's import failed).
+IMPORT_MODES = ("default", "custom", "as_is")
+AS_LOGGED_DIR = "as_logged"      # <work>/as_logged/decoded/<tag>_decoded.*: a raw file decoded again as logged
+DEFAULT_DECODE_DIR = "sms_default"   # <work>/sms_default/decoded/<tag>_decoded.*: a raw file an earlier version
+#                                      decoded with a product, decoded again for SMS's default (decode_default)
+CUSTOM_SUFFIX = "_imported_custom"               # the user's import of a file (step 2)
+NEXT_SUFFIX = "_imported_next"                   # an import being written: swapped in once it is complete
+DEFAULT_SUFFIX = "_imported_default"             # SMS's default import built again (a work of an earlier version)
+NO_PRODUCT_TAIL = "; choose the product in step 2"
+NO_PRODUCT_DECODE = ("crop not known on the card: decoded with SMS's values for data without a product ({:g} lb/bu, "
+                     "{:g} %)" + NO_PRODUCT_TAIL)
+DEFAULT_GONE_NOTE = "step 1 shows the import in use: its readings are no longer on disk"
+FLAG_KEYS = ("expand_dry_moisture", "use_manual_swath", "use_manual_moisture")
+DELAY_KEYS = ("start_delay_s", "stop_delay_s", "flow_shift_s")
+CROP_SETTING_KEYS = ("product", "test_weight_lb_bu", "dry_moisture_pct")    # they belong to a crop
+
+
+def import_mode(D: dict) -> str:
+    """The mode of a file's active import: 'default', 'custom' or 'as_is' ('default' when not recorded)."""
+    m = D.get("import_mode") if isinstance(D, dict) else None
+    return m if m in IMPORT_MODES else "default"
+
+
+def default_of(D: dict) -> dict:
+    """The default-import block of a file ({} when it has none)."""
+    DF = D.get("import_default") if isinstance(D, dict) else None
+    return DF if isinstance(DF, dict) else {}
+
+
+def import_basis(D: dict) -> dict | None:
+    """What any import of a harvest file starts from ({all_readings, crop, monitor, fmt}), or None (a planter or
+    sprayer file, a folder of an older version rebuilt from its files, an import that kept no record)."""
+    B = default_of(D).get("basis")
+    return B if isinstance(B, dict) and B.get("all_readings") else None
+
+
+def default_view(D: dict) -> dict:
+    """What step 1 shows of a file: its default import ({shp, n, sms_import, report, op, yield, area_ac, zip, source,
+    error, older, is_default}); a file without a default block (or one not built yet) shows its active import
+    (is_default False)."""
+    DF = default_of(D)
+    has = bool(DF.get("shp"))
+    out = {k: D.get(k) for k in ("report", "op", "yield", "area_ac", "zip", "kind", "label", "import_min")}
+    out.update({"shp": DF["shp"] if has else D.get("shp"),
+                "n": DF.get("n") if has else D.get("n"),
+                "sms_import": DF.get("sms_import") if has else D.get("sms_import"),
+                "source": DF["source"] if (has and "source" in DF) else D.get("source"),
+                "error": DF.get("error"), "older": DF.get("older"), "older_decode": DF.get("older_decode"),
+                "raw_gone": DF.get("raw_gone"), "is_default": has})
+    if has and isinstance(DF.get("report"), dict):      # decoded again for SMS's default (decode_default)
+        out["report"] = DF["report"]
+        out["area_ac"] = (DF["report"].get("totals") or {}).get("area_ac")
+        out["zip"] = DF.get("zip") or out.get("zip")
+    return out
+
+
+def has_cleaning(tag: str) -> bool:
+    """The file has a cleaning in this work."""
+    return tag in ss.cleaned
+
+
+def failed_in_use(D: dict) -> bool:
+    """The file is on the readings its failed SMS import left (as they are), not on an import chosen in step 2 ('None:
+    as the monitor logged it' gives a raw file another file; own settings are mode custom)."""
+    DF = default_of(D)
+    if not DF.get("error") or import_mode(D) != "as_is" or D.get("as_is_chosen"):
+        return False
+    a, b = D.get("shp"), DF.get("shp")
+    return not a or not b or os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
+
+
+def default_resolved(B: dict) -> dict:
+    """The settings of SMS's default import of a file (engine/sms_import.resolve with the settings untouched)."""
+    return si.resolve(si.settings({}), (B or {}).get("crop"), (B or {}).get("monitor"), (B or {}).get("fmt"))
+
+
+def _fmt_setting(v, d) -> str:
+    if d == "flag":
+        return "on" if v else "off"
+    if d == "product":
+        return str(v) if v else "unknown"
+    if v is None or v == si.AUTO:
+        return "none"
+    return f"{float(v):,.{d}f}"
+
+
+def import_changes(R_from: dict | None, R_to: dict | None, keys=None) -> list:
+    """['Max. yield volume 300.00 → 150.00', 'Manual swath off → on (30.00 ft)', ...]: the import settings in which
+    R_to differs from R_from, in the order of step 2's fields ('none' for no value, flags 'on' / 'off'). keys: only
+    these settings (e.g. IMPORT_KEYS_SHOWN)."""
+    a, b = R_from or {}, R_to or {}
+    out = []
+
+    def want(k):
+        return keys is None or k in keys
+    for k, lab, d in (("product", "Product", "product"), ("test_weight_lb_bu", "Weight to volume", 2),
+                      ("dry_moisture_pct", "Dry moisture", 2), ("expand_dry_moisture", "Expand dry moisture", "flag")):
+        if want(k) and not (((a.get(k) or None) == (b.get(k) or None)) if d == "product" else
+                            (bool(a.get(k)) == bool(b.get(k))) if d == "flag" else _same_value(a.get(k), b.get(k))):
+            out.append(f"{lab} {_fmt_setting(a.get(k), d)} → {_fmt_setting(b.get(k), d)}")
+    for flag, k, lab, unit in (("use_manual_swath", "manual_swath_ft", "Manual swath", "ft"),
+                               ("use_manual_moisture", "manual_moisture_pct", "Manual moisture", "%")):
+        if not want(flag):
+            continue
+        fa, fb = bool(a.get(flag)), bool(b.get(flag))
+        if fa != fb:
+            out.append(f"{lab} {'on' if fa else 'off'} → {'on' if fb else 'off'}"
+                       + (f" ({_fmt_setting(b.get(k), 2)} {unit})" if fb and b.get(k) is not None else ""))
+        elif fa and not _same_value(a.get(k), b.get(k)):
+            out.append(f"{lab} {_fmt_setting(a.get(k), 2)} → {_fmt_setting(b.get(k), 2)} {unit}")
+    for k, lab, d in (("min_yield", "Min. yield volume", 3), ("max_yield", "Max. yield volume", 2),
+                      ("start_delay_s", "Start delay", 2), ("stop_delay_s", "Stop delay", 2),
+                      ("flow_shift_s", "Flow shift", 2)):
+        if want(k) and not _same_value(a.get(k), b.get(k)):
+            out.append(f"{lab} {_fmt_setting(a.get(k), d)} → {_fmt_setting(b.get(k), d)}")
+    return out
+
+
+def same_import(A: dict, B: dict) -> bool:
+    """Two resolved imports are the same on every setting of sms_import.DEFAULTS (a manual swath or moisture value
+    counts only while its box is ticked)."""
+    for k in si.DEFAULTS:
+        if k == "manual_swath_ft" and not (A.get("use_manual_swath") or B.get("use_manual_swath")):
+            continue
+        if k == "manual_moisture_pct" and not (A.get("use_manual_moisture") or B.get("use_manual_moisture")):
+            continue
+        if k == "product":
+            if (A.get(k) or None) != (B.get(k) or None):
+                return False
+        elif not _same_value(A.get(k), B.get(k)):
+            return False
+    return True
+
+
+def changed_settings(R: dict, R0: dict, S_typed: dict | None = None) -> dict:
+    """The settings in which the import R differs from the file's default R0, as sms_import settings: a product
+    chosen, the values the user typed (labelled 'you'; for a record without labels, every value that differs), the
+    flags with their values, the delays and the flow shift. S_typed: the values as typed (an empty manual moisture
+    stays empty: the dry moisture of each file)."""
+    out = {}
+    if (R.get("product") or None) != (R0.get("product") or None) and R.get("product"):
+        out["product"] = R["product"]
+    SRC = R.get("sources")
+    for k in si.RESOLVED_KEYS:
+        you = (SRC.get(k) == si.SRC_YOU) if isinstance(SRC, dict) else not _same_value(R.get(k), R0.get(k))
+        if you:
+            out[k] = R.get(k)
+    for k in FLAG_KEYS + DELAY_KEYS:
+        if not _same_value(R.get(k), R0.get(k)):
+            out[k] = R.get(k)
+    if R.get("use_manual_swath"):
+        out["use_manual_swath"], out["manual_swath_ft"] = True, R.get("manual_swath_ft")
+    if R.get("use_manual_moisture"):
+        out["use_manual_moisture"] = True
+        out["manual_moisture_pct"] = (S_typed or {}).get("manual_moisture_pct") if S_typed is not None else \
+            R.get("manual_moisture_pct")
+    return out
+
+
+def _decoded_totals(shp: str | None, tw: float, dm: float, shrink: str) -> dict | None:
+    """The totals of every decoded reading (engine/formats/common.summarize: the wet mass over the readings' areas)
+    with another weight to volume, dry moisture and shrink: {wet_lb, area_ac, bu_wet, bu_dry}; None when the file or
+    a column is missing."""
+    try:
+        import pyogrio
+        df = pyogrio.read_dataframe(shp, read_geometry=False,
+                                    columns=["Distance_f", "Swth_Wdth_", "Yld_Mass_W", "Moisture__"])
+        num = {c: pd.to_numeric(df[c], errors="coerce").to_numpy(float) for c in df.columns}
+        area = num["Distance_f"] * num["Swth_Wdth_"] / common.SQFT_PER_AC
+        wet = num["Yld_Mass_W"] * area
+        dry = wet * common.shrink_factor(num["Moisture__"], dm, shrink)
+    except Exception:
+        return None
+    return {"wet_lb": float(np.nansum(wet)), "area_ac": float(np.nansum(area)),
+            "bu_wet": float(np.nansum(wet)) / float(tw), "bu_dry": float(np.nansum(dry)) / float(tw)}
+
+
+def source_with_import(source: dict | None, R: dict, applied: dict | None, src_shp: str | None = None,
+                       report: dict | None = None) -> dict | None:
+    """The decode source of a raw file (engine.run.decode_source) for the import R: the shrink, weight to volume and
+    dry moisture its dry yield now has, when the import computed it with them (the report's source paragraph and the
+    cleaning read them; a writer of the monitor's format decodes the card again with these options, so that its
+    totals are on the clean file's basis), the dry totals of every decoded reading (src_shp) and of the card's SMS
+    Summary (report) on that basis, and the crop of a product chosen that is not the data's (the re-decode uses it as
+    a product of the decode did; the decoder's 'choose the product in step 2' then names the product chosen). A copy;
+    the source unchanged when it has no options."""
+    if not isinstance(source, dict) or not isinstance(source.get("options"), dict):
+        return copy.deepcopy(source)
+    s = copy.deepcopy(source)
+    o = s["options"]
+    tw, dm = R.get("test_weight_lb_bu"), R.get("dry_moisture_pct")
+    if (applied or {}).get("weight_and_moisture"):
         sh = "symmetric" if R.get("expand_dry_moisture") else "one_sided"
+        if tw and dm is not None:
+            T = _decoded_totals(src_shp, tw, dm, sh) if src_shp else None
+            if T and isinstance(s.get("totals"), dict):
+                s["totals"] = {**s["totals"], "bu_wet": T["bu_wet"], "bu_dry": T["bu_dry"]}
+            if report and isinstance(s.get("sms_summary"), dict):
+                SS_T = sms_summary_view(report, {"resolved": {"test_weight_lb_bu": tw, "dry_moisture_pct": dm,
+                                                              "expand_dry_moisture": R.get("expand_dry_moisture")}})[0]
+                s["sms_summary"] = {**s["sms_summary"], **{k: SS_T[k] for k in ("dry_bu", "bu_ac") if k in SS_T}}
         o_new = {"shrink": sh}
         if R.get("test_weight_lb_bu"):
             o_new["test_weight_lb_bu"] = float(R["test_weight_lb_bu"])
         if R.get("dry_moisture_pct") is not None:
             o_new["std_moisture_pct"] = float(R["dry_moisture_pct"])
-        D["source"] = {**D["source"], "options": {**D["source"]["options"], **o_new}}
-        cs = str(D["source"].get("calibration_summary") or "")
+        o.update(o_new)
+        cs = str(s.get("calibration_summary") or "")
         cs = re.sub(r"shrink [a-z-]+", f"shrink {sh.replace('_', '-')}", cs)
         for k, pat, txt in (("test_weight_lb_bu", r"test weight [^;]*? lb/bu", "test weight {:g} lb/bu"),
                             ("std_moisture_pct", r"standard moisture [^;]*? %", "standard moisture {:g} %")):
             if k in o_new:
+                m = re.search(pat, cs)
+                was = re.search(r"-?\d[\d,]*(?:\.\d+)?", m.group(0)) if m else None
+                if was and _same_value(float(was.group(0).replace(",", "")), o_new[k]):
+                    continue                             # the decoder's own words for the same value stay
                 new = txt.format(round(o_new[k], 4))
-                cs = re.sub(pat, new, cs) if re.search(pat, cs) else (cs + "; " if cs else "") + new
-        D["source"]["calibration_summary"] = cs
-    warn = drop_cleaning(tag)
+                cs = re.sub(pat, new, cs) if m else (cs + "; " if cs else "") + new
+        s["calibration_summary"] = cs
+    pk = si.crop_key(R.get("product")) if R.get("product") else None
+    ck = si.crop_key(source.get("crop_name")) if source.get("crop_name") else None
+    if pk and o.get("crop") != pk and (pk != ck or o.get("crop")):
+        o["crop"] = pk
+    if pk and isinstance(s.get("warnings"), list):
+        chosen = (f"; product {R['product']} chosen in step 2"
+                  + (f" ({float(tw):g} lb/bu, {float(dm):g} %)" if tw and dm is not None else ""))
+        s["warnings"] = [str(w).replace(NO_PRODUCT_TAIL, chosen) for w in s["warnings"]]
+    return s
+
+
+def crop_labels(D: dict, B: dict | None, R: dict, rep: dict | None = None) -> dict | None:
+    """The Product and Crop a raw file's import writes in every reading when its yields are converted with another
+    crop than the one its decoded readings are labelled with (a product chosen in step 2: what 0.3.0's decoder wrote
+    for a product chosen before extracting; SMS's default of a file an earlier version decoded with another product):
+    {"Product": name, "Crop": crop key} ({"Crop": crop key} only when the data names no crop OCED knows). None for a
+    point export (its columns are the vendor's) or when the labels already name that crop. rep: the decode report of
+    the readings of B (default: the default import's own decode, else the file's)."""
+    if D.get("kind") != "raw":
+        return None
+    P = si.crop_key(R.get("product")) if R.get("product") else None
+    if not P:
+        return None
+    if not isinstance(rep, dict):
+        rep = default_of(D).get("report")
+        rep = rep if isinstance(rep, dict) else (D.get("report") if isinstance(D.get("report"), dict) else {})
+    o_crop = (rep.get("options") or {}).get("crop") if isinstance(rep.get("options"), dict) else None
+    data_crop = (B or {}).get("crop")
+    labelled = si.crop_key(o_crop) if o_crop else (si.crop_key(data_crop) if data_crop else None)
+    if P == labelled:
+        return None
+    if labelled is None:                                 # a crop the card does not name: its Product stays (0.3.0)
+        return {"Crop": P}
+    name = str(data_crop) if (data_crop and "," not in str(data_crop) and si.crop_key(data_crop) == P) else P
+    return {"Product": name, "Crop": P}
+
+
+def _summary_crop(source: dict | None, labels: dict | None) -> dict | None:
+    """The source of a raw file with the crop of its summary ('crop <name>; test weight ...') set to the label the
+    import wrote (the report's source paragraph reads it)."""
+    if not labels or not isinstance(source, dict) or not source.get("calibration_summary"):
+        return source
+    s = dict(source)
+    name = labels.get("Product") or labels.get("Crop")
+    s["calibration_summary"] = re.sub(r"(^|; )crop [^;]*", lambda m: f"{m.group(1)}crop {name}",
+                                      str(s["calibration_summary"]), count=1)
+    return s
+
+
+def _parts(stem: str) -> list:
+    """The files of one shapefile stem (<stem>.shp, .shx, .dbf ... and <stem>.<anything>), never another stem's."""
+    folder, base = os.path.split(stem)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    return [os.path.join(folder, n) for n in names if n.lower().startswith(base.lower() + ".")]
+
+
+def _norm_p(p) -> str:
+    return os.path.normcase(os.path.abspath(str(p))) if p else ""
+
+
+def _where(p) -> str:
+    """'x_decoded.shp in the folder decoded': a file named by its name and its folder's (never its full path)."""
+    q = os.path.normpath(str(p)) if p else ""
+    name, folder = os.path.basename(q), os.path.basename(os.path.dirname(q))
+    return f"{name} in the folder {folder}" if (name and folder) else (name or "its folder")
+
+
+def _folder_name(root) -> str:
+    """'the folder <name>' of a folder (its name, not its full path), 'its folder' when not recorded."""
+    name = os.path.basename(os.path.normpath(str(root))) if root else ""
+    return f"the folder {name}" if name else "its folder"
+
+
+def _own_import(tag: str, shp: str) -> bool:
+    """The shapefile is one of the imports the app writes for this file (<tag>_imported*), never its readings or
+    another file's."""
+    return os.path.basename(os.path.splitext(str(shp))[0]).lower().startswith((tag + "_imported").lower())
+
+
+def _in_folder(p, folder) -> bool:
+    """The path lies inside the folder (compared as Windows compares them)."""
+    if not p or not folder:
+        return False
+    a, b = os.path.normcase(os.path.abspath(str(p))), os.path.normcase(os.path.abspath(str(folder)))
+    try:
+        return os.path.commonpath([a, b]) == b
+    except ValueError:                                   # (another drive)
+        return False
+
+
+def derived_import(tag: str, shp) -> bool:
+    """The file in use is one the app derived for this file inside its work folder: its import with the user's
+    settings (<tag>_imported*) or its readings decoded again as the monitor logged them (as_logged/). When such a file
+    is gone, the file goes back to its default import. Any other file in use (the input read in place: 'None' on an
+    export, an import that left nothing out; the readings a raw file decoded) holds the file's points: when it is
+    missing, its points are away, not its import gone (amendment A1.3)."""
+    if not shp or not ss.get("workdir") or not _in_folder(shp, ss.workdir):
+        return False
+    return _own_import(tag, shp) or _in_folder(shp, os.path.join(ss.workdir, AS_LOGGED_DIR))
+
+
+def away_line(t: str, D: dict, cleaned: bool) -> str:
+    """The line of the work message for a file set aside when its work is opened (its points not at hand): where
+    they were and the way back, in the words of where they were (inside the work folder they cannot come back by
+    themselves: its data opened again, or the file removed from the work in step 1)."""
+    shp = str(D.get("shp") or "")
+    with_ = " with its cleaning" if cleaned else ""
+    if ss.get("workdir") and _in_folder(shp, ss.workdir):
+        return (f"{t}: its points are no longer in the work folder ({_folder_name(os.path.dirname(shp))}): it stays "
+                f"in this work, set aside{with_}; open its data again (step 1) to import it again, or remove it "
+                "from this work (step 1)")
+    return (f"{t}: its points are no longer in {_folder_name(os.path.dirname(shp))}: it stays in this work, set "
+            f"aside{with_}, until they are back (reconnect the drive and open the work again), or remove it from "
+            "this work (step 1)")
+
+
+def _remove_files(paths) -> list:
+    """Deletes the files; one warning per shapefile (stem) another program holds open, naming its parts held (the
+    reason without the full path)."""
+    held = {}
+    for p in paths:
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            st_, ext = os.path.splitext(os.path.basename(p))
+            held.setdefault(st_, {"ext": [], "why": e.strerror or type(e).__name__})["ext"].append(ext)
+    return [f"{st_}{'/'.join(h['ext'])} could not be deleted ({h['why']}): close it in the other program; it is no "
+            "longer used" for st_, h in held.items()]
+
+
+def delete_custom_import(tag: str, keep=(), as_logged: bool = True, keep_next: bool = False) -> list:
+    """Deletes the user's import of a file: <tag>_imported_custom.* and <tag>_imported_next.* in decoded/, imported/
+    and the default's folder, and (as_logged) <work>/as_logged/decoded/<tag>_decoded.* and <tag>_decode_report.json;
+    never a file of another stem, never one of the stems of `keep` (shapefiles in use). Custom imports are derived
+    data (the record and the file of all readings build them again): they are not kept. Returns the warnings (a
+    file held open)."""
+    if not ss.get("workdir"):
+        return []
+    DF = default_of(ss.datasets.get(tag) or {})
+    folders = {os.path.join(ss.workdir, "decoded"), os.path.join(ss.workdir, "imported")}
+    if DF.get("shp"):
+        folders.add(os.path.dirname(os.path.abspath(DF["shp"])))
+    kept = {os.path.normcase(os.path.splitext(os.path.abspath(p))[0]) for p in keep if p}
+    stems = [os.path.join(f, tag + CUSTOM_SUFFIX) for f in folders]
+    if not keep_next:
+        stems += [os.path.join(f, s) for f in folders for s in _next_stems(f, tag)]
+    if as_logged:
+        al = os.path.join(ss.workdir, AS_LOGGED_DIR, "decoded")
+        stems += [os.path.join(al, f"{tag}_decoded"), os.path.join(al, f"{tag}_decode_report")]
+    files = [p for st_ in stems if os.path.normcase(os.path.abspath(st_)) not in kept for p in _parts(st_)]
+    return _remove_files(files)
+
+
+def _referenced_paths(*recs, exts=None) -> set:
+    """The paths (normalised) of every file with one of these extensions (default: a shapefile's) a record names
+    (nested dicts and lists; a relative path is of the work folder)."""
+    exts = tuple(exts or er.SHP_EXTS)
+    out = set()
+
+    def walk(v):
+        if isinstance(v, dict):
+            for w in v.values():
+                walk(w)
+        elif isinstance(v, (list, tuple)):
+            for w in v:
+                walk(w)
+        elif isinstance(v, str) and os.path.splitext(v)[1].lower() in exts:
+            out.add(_norm_p(v if os.path.isabs(v) else os.path.join(str(ss.get("workdir") or ""), v)))
+    for r in recs:
+        walk(r)
+    return out
+
+
+def _referenced_stems(*recs) -> set:
+    """The stems (normalised, no extension) of every shapefile path a record names (nested dicts and lists; a
+    relative path is of the work folder)."""
+    return {os.path.splitext(p)[0] for p in _referenced_paths(*recs)}
+
+
+def drop_unreferenced(tag: str, cands=(), dec_too: bool = False) -> list:
+    """After an import of a file was replaced: the shapefiles of the import it had (one of the file's own
+    <tag>_imported stems, as 0.3.0's <tag>_imported, or one a swap blocked earlier left under a temporary name) and
+    of the readings an older version decoded it into (decoded/<tag>_decoded, with the zip of its extracted points and
+    its decode report) that nothing of the file references any more go (never another stem, never a file outside the
+    work folder; the user's own import is delete_custom_import's). dec_too: decoded/<tag>_decoded is looked at too,
+    named or not in cands (an action of the user's replaced the import). Returns the warnings (a file held open)."""
+    wd = ss.get("workdir")
+    if not wd:
+        return []
+    recs = (ss.datasets.get(tag) or {}, ss.cleaned.get(tag) or {})
+    refs = _referenced_stems(*recs)
+    dec = _norm_p(os.path.join(wd, "decoded", f"{tag}_decoded"))
+    files = []
+    mine = re.compile(re.escape((tag + CUSTOM_SUFFIX).lower()) + r"$")        # delete_custom_import's: said there
+    for stem in sorted({_norm_p(os.path.splitext(str(c))[0]) for c in list(cands) + ([dec + ".shp"] if dec_too else [])
+                        if c}):
+        if (stem in refs or not stem.startswith(_norm_p(wd) + os.sep) or mine.match(os.path.basename(stem))
+                or not (_own_import(tag, stem) or stem == dec)):
+            continue
+        files += [q for q in _parts(stem) if os.path.splitext(q)[1].lower() in er.SHP_EXTS]
+        if stem == dec:                                  # its zip and decode report, when nothing names them either
+            named = _referenced_paths(*recs, exts=(".zip", ".json"))
+            files += [q for q in (os.path.join(wd, "decoded", f"{tag}_decoded.zip"),
+                                  os.path.join(wd, "decoded", f"{tag}_decode_report.json"))
+                      if os.path.exists(q) and _norm_p(q) not in named]
+    return _remove_files(files)
+
+
+def _next_stems(folder: str, tag: str) -> list:
+    """The names (no extension) of the imports being written for a file in a folder: <tag>_imported_next,
+    <tag>_imported_next2 ..."""
+    pat = re.compile(r"(" + re.escape(tag + NEXT_SUFFIX) + r"\d*)\.", re.IGNORECASE)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    return sorted({m.group(1) for m in (pat.match(n) for n in names) if m})
+
+
+def _next_path(folder: str, tag: str, in_use=()) -> str:
+    """<folder>/<tag>_imported_next.shp, or _imported_next2, 3 ... when that name is an import in use (a swap that a
+    file held open blocked keeps the complete import under its temporary name): a new import is never written over
+    the one the file uses."""
+    used = {os.path.normcase(os.path.splitext(os.path.abspath(str(p)))[0]) for p in in_use if p}
+    k = 1
+    while True:
+        p = os.path.join(folder, f"{tag}{NEXT_SUFFIX}{'' if k == 1 else k}.shp")
+        if os.path.normcase(os.path.splitext(os.path.abspath(p))[0]) not in used:
+            return p
+        k += 1
+
+
+def _swap_in(nxt_shp: str, target_shp: str) -> tuple:
+    """The parts of a complete import written under <tag>_imported_next renamed to the target stem (its old parts
+    removed first). (path in use, warnings): a part that cannot be removed or renamed (held open) leaves the complete
+    _next file in use, with a warning."""
+    t_stem, n_stem = os.path.splitext(target_shp)[0], os.path.splitext(nxt_shp)[0]
+    held = _remove_files(_parts(t_stem))
+    if held:
+        return nxt_shp, [f"The previous import {os.path.basename(target_shp)} could not be removed (it is open in "
+                         f"another program): the new one is {os.path.basename(nxt_shp)}"]
+    done = []
+    for p in sorted(_parts(n_stem)):
+        q = t_stem + p[len(n_stem):]
+        try:
+            os.replace(p, q)
+            done.append((p, q))
+        except OSError as e:
+            for a, b in reversed(done):
+                try:
+                    os.replace(b, a)
+                except OSError:
+                    pass
+            return nxt_shp, [f"{os.path.basename(p)} could not be renamed ({_error_reason(e)}): the new import is "
+                             f"{os.path.basename(nxt_shp)}"]
+    return target_shp, []
+
+
+def _forget_old_import_line(tag: str):
+    """The 'imported by an older version of OCED' line of the work message goes (the file is imported by this
+    version now)."""
     msg = ss.get("work_msg")
-    # imported by this version now: the old-import line goes, unless a value still differs from a fresh open's
-    # without the user having set it
-    if msg and msg[0] in ("warning", "ok") and not (FR is not None and import_differences(R, FR["R"], S_f)):
+    if msg and msg[0] in ("warning", "ok"):
         lines = str(msg[1]).split("\n")
         keep = [x for x in lines[1:] if not x.startswith(f"- {tag}: imported by an older version of OCED")]
         if len(keep) != len(lines) - 1:
             ss.work_msg = ("warning" if keep else "ok", "\n".join(lines[:1] + keep))
+
+
+def _set_aside(had: bool, warn: list) -> str:
+    """' Its cleaning was set aside ...' and the warnings, each a sentence of its own (a warning starts with a
+    capital or with a file name)."""
+    return ((" Its cleaning was set aside: clean it again in step 3." if had else "")
+            + "".join(f" {w}." for w in warn if w))
+
+
+def _done_line(line: str, had: bool, warn: list, warns: list | None) -> str:
+    """The line of what was done, with ' Its cleaning was set aside ...'; the warnings (a file held open ...) joined
+    to it, or, with the list warns, passed there once each (step 2 shows them as warnings, apart from that line)."""
+    warn = list(dict.fromkeys(w for w in warn if w))     # a file held open is said once
+    if warns is None:
+        return line + _set_aside(had, warn)
+    warns.extend(w for w in warn if w and w not in warns)
+    return line + _set_aside(had, [])
+
+
+def apply_custom(tag: str, S_f: dict, warns: list | None = None, product_from: dict | None = None) -> str:
+    """Step 2's Apply with 'As SMS': the file imported again from all its readings (its default's basis) with the
+    settings S_f. Values equal to SMS's default go back to the default import (or, when the default failed or was
+    made under an older rule, the new import becomes the default). The import is written under a temporary stem and
+    swapped in once complete: when it fails, the file, its import and the files on disk are unchanged (ValueError).
+    The cleaning of the file no longer applies and is set aside (superseded/), unless the new import is the one in use
+    reading for reading (the same settings, the same file content): then it stays. Returns a line for the user; warns:
+    receives the warnings (a file held open) instead of that line. product_from: where a product chosen came from
+    (Apply to all), kept in the record while the file has that product of its own (product_group); without it the
+    record keeps what it had for the same product."""
+    D = ss.datasets[tag]
+    if import_basis(D) is None:
+        raise ValueError(f"{tag} keeps no record of its import: open the data again (step 1) to change it")
+    tried = default_needs_build(tag, retry=True)
+    if tried:
+        ensure_default(tag, retry=True)
+    DF = default_of(D)
+    B = DF["basis"]
+    src = ew.resolve_moved(B["all_readings"], ss.workdir)
+    if not src or not os.path.exists(src):
+        raise ValueError(f"the readings this file was imported from ({_where(src or B['all_readings'])}) are no longer "
+                         "on disk: reconnect the drive, or open the data again (step 1) to import it with other "
+                         "settings")
+    S_f = si.settings(S_f)
+    R = si.resolve(S_f, S_f.get("product") or B.get("crop"), B.get("monitor"), B.get("fmt"))
+    R0 = default_resolved(B)
+    becomes_default = same_import(R, R0)
+    if becomes_default and DF.get("older_decode"):
+        # the default is made from the readings an older version decoded with a product (its raw data not at hand):
+        # importing them again gives the same import, so nothing is imported again; SMS's default needs the raw data
+        way = older_decode_way(D)
+        if import_mode(D) == "default":
+            return (f"{tag} is on the import of the older version's readings (Older rule): these values change "
+                    f"nothing in it. To get SMS's default (today's rule), {way}.")
+        return back_to_default(tag, warns=warns, tried=tried)
+    if becomes_default and not (DF.get("error") or DF.get("older")):
+        return back_to_default(tag, msg=f"{tag}: these are SMS's default settings: back to the default import.",
+                               warns=warns, tried=tried)
+    n_older = DF.get("n") if (becomes_default and DF.get("older")) else None
+    def_shp = DF.get("shp")
+    folder = (os.path.dirname(os.path.abspath(def_shp)) if def_shp and os.path.normcase(os.path.abspath(def_shp))
+              != os.path.normcase(os.path.abspath(src)) else os.path.join(ss.workdir, "imported"))
+    os.makedirs(folder, exist_ok=True)
+    # a temporary name no import in use has (a swap blocked earlier leaves the import in use under a _next name)
+    nxt = _next_path(folder, tag, in_use=(D.get("shp"), def_shp))
+    _remove_files(_parts(os.path.splitext(nxt)[0]))          # one an earlier failure left
+    labels = crop_labels(D, B, R)
+    try:
+        rep = si.apply(src, nxt, R, labels=labels)
+    except Exception as e:
+        _remove_files(_parts(os.path.splitext(nxt)[0]))
+        raise ValueError(f"{tag} could not be imported with these settings ({_error_reason(e)}): the file and its "
+                         "import are unchanged") from e
+    # the import in use made again reading for reading (the same settings, the same content: own settings made from
+    # the readings an older version decoded, imported again from step 1's): its cleaning stays
+    RS_use = (D.get("sms_import") or {}).get("resolved")
+    same_data = (has_cleaning(tag) and import_mode(D) != "as_is" and isinstance(RS_use, dict)
+                 and same_import(R, RS_use) and content_sig(rep["path"]) is not None
+                 and content_sig(rep["path"]) == content_sig(D.get("shp")))
+    had = has_cleaning(tag) and not same_data
+    warn = [] if same_data else drop_cleaning(tag)
+    prev = (D.get("shp"), (D.get("sms_import") or {}).get("all_readings"))     # the import replaced, its readings
+    held = ""                                            # the stem a blocked swap already named
+    if os.path.normcase(os.path.abspath(rep["path"])) == os.path.normcase(os.path.abspath(src)):
+        path = src                                       # nothing left out, nothing recomputed: the readings file
+    else:
+        target = os.path.join(folder, f"{tag}{DEFAULT_SUFFIX if becomes_default else CUSTOM_SUFFIX}.shp")
+        path, w = _swap_in(nxt, target)
+        warn += w
+        held = os.path.splitext(os.path.basename(target))[0] if w else ""
+    rec = _import_record(R, rep, src, B.get("monitor"), B.get("fmt"), B.get("crop"))
+    note = (DF.get("sms_import") or {}).get("crops_note")
+    if note and not S_f.get("product"):
+        rec["notes"].append(note)
+        rec["crops_note"] = note
+    if not becomes_default:
+        rec["mode"] = "custom"
+        pf = product_from
+        IMo = D.get("sms_import") or {}
+        if pf is None and _crop((IMo.get("resolved") or {}).get("product")) == _crop(R.get("product")):
+            pf = IMo.get("product_from")                 # the same product: where it came from stays
+        if isinstance(pf, dict) and R.get("product") and _crop(R.get("product")) != _crop(R0.get("product")):
+            rec["product_from"] = dict(pf)
+    D["shp"], D["n"], D["sms_import"] = path, int(rep["n_out"]), rec
+    D.pop("as_is_chosen", None)
+    _follow_default_decode(D, DF)                        # the decode the import is made from
+    if D.get("kind") == "raw" and isinstance(DF.get("source"), dict):
+        D["source"] = _summary_crop(source_with_import(DF["source"], R, rep.get("applied"), src_shp=src,
+                                                       report=D.get("report")),
+                                    labels if rep.get("relabelled") else None)
+    if becomes_default:
+        D["import_default"] = {**DF, "shp": path, "n": int(rep["n_out"]), **stamp(path),
+                               "sms_import": copy.deepcopy(rec), "error": None, "older": None}
+        if D.get("kind") == "raw" and "source" in D:
+            D["import_default"]["source"] = copy.deepcopy(D["source"])
+        D["import_mode"] = "default"
+    else:
+        D["import_mode"] = "custom"
+    # the parts of the stem the blocked swap named are said once
+    warn += [w for w in delete_custom_import(tag, keep=(path, default_of(D).get("shp")))
+             if not (held and w.startswith(held + "."))]
+    old = DF.get("shp")
+    if (becomes_default and DF.get("older") and old and _own_import(tag, old)
+            and _norm_p(old) not in (_norm_p(path), _norm_p(src))):
+        # the older rule's import is no longer referenced: its files go (only a stem of this file's own imports)
+        warn += _remove_files(_parts(os.path.splitext(os.path.abspath(old))[0]))
+    # (0.3.0's import of the file, the readings it decoded with their zip and report, once nothing names them)
+    warn += drop_unreferenced(tag, prev, dec_too=True)
+    _forget_old_import_line(tag)
     save_current(quiet=True)
-    n_left = int(rep["n_in"]) - int(rep["n_out"])
-    return (f"{tag} imported again: {int(rep['n_out']):,} of {int(rep['n_in']):,} readings ({n_left:,} left out); "
-            f"{si.describe(R)}. Where the values came from: {sources_line(D['sms_import'])}. Clean it again in step 3."
-            + "".join(f" {w}." for w in warn))
+    n_all, n_out = int(rep["n_in"]), int(rep["n_out"])
+    head = (f"{tag} imported again with SMS's default settings (today's rule)" if becomes_default
+            else f"{tag} imported again with your settings")
+    line = f"{head}: {n_out:,} of {n_all:,} readings ({n_all - n_out:,} left out)."
+    if n_older is not None:
+        line += f" Steps 1 and 2 now show it; the older rule's import had {int(n_older):,} readings."
+    if same_data:
+        line += " Its cleaning stays: the import is the one it was made from, reading for reading."
+    return _done_line(line, had, warn, warns)
+
+
+def _raw_root(D: dict, S0: dict | None = None) -> str | None:
+    """The input folder a raw file was decoded from (found again under a moved work folder), None when not recorded."""
+    S0 = S0 if isinstance(S0, dict) else (default_of(D).get("source") if isinstance(default_of(D).get("source"), dict)
+                                          else D.get("source"))
+    return ew.input_root({"source": S0 or {}, "report": D.get("report")}, ss.workdir)
+
+
+def _raw_candidate(tag: str, D: dict) -> tuple:
+    """(how the file was decoded: its source, the raw candidate of its input folder to decode it again). ValueError
+    when that is not recorded or the raw data is gone."""
+    S0 = default_of(D).get("source") if isinstance(default_of(D).get("source"), dict) else D.get("source")
+    if not isinstance(S0, dict) or S0.get("kind") != "decoded" or not S0.get("unit_ids"):
+        raise ValueError(f"{tag}: how this file was decoded is not recorded: open the raw data again (step 1)")
+    fid = S0.get("format")
+    root = _raw_root(D, S0)
+    if not root or not os.path.isdir(root):
+        raise ValueError(f"The raw data is no longer in {_folder_name(root)}: reconnect the drive or open it again "
+                         "(step 1).")
+    cands = detect.detect([root])
+    raw = [c for c in cands if c.get("kind") == "raw" and c.get("decoder") == fid]
+    cand = next((c for c in raw if os.path.normcase(os.path.abspath(c["probe"].root))
+                 == os.path.normcase(os.path.abspath(root))), raw[0] if raw else None)
+    if cand is None:
+        raise ValueError(f"The raw data is no longer in {_folder_name(root)}: reconnect the drive or open it again "
+                         "(step 1).")
+    cand["inputs_left_out"] = list(S0.get("inputs_left_out") or [])
+    return S0, cand
+
+
+def decoded_with_choice(D: dict) -> str | None:
+    """What an earlier version gave the decoder of a raw file beyond SMS's default (0.3.0's step 1: a product chosen,
+    or a weight to volume or dry moisture typed, before extracting): 'product barley', 'its own weight to volume and
+    dry moisture'; None for readings decoded as a fresh extraction decodes them (every file this version extracts).
+    The decode report read is the one of the readings the file's imports start from."""
+    if not isinstance(D, dict) or D.get("kind") != "raw":
+        return None
+    rep = default_of(D).get("report")
+    rep = rep if isinstance(rep, dict) else D.get("report")
+    o = (rep or {}).get("options") if isinstance(rep, dict) else None
+    if not isinstance(o, dict):
+        return None
+    B = import_basis(D) or {}
+    pk = si.crop_key(o["crop"]) if o.get("crop") else None
+    # against the data's crop: the label's (it always names the data's), else the basis's (never the report's crop,
+    # which 0.3.0's ISOXML reader set to the product it was given)
+    data_k = _crop(_label_crop(D.get("label"))) or _crop(B.get("crop"))
+    if pk and pk != data_k:
+        return f"product {o['crop']}"
+    fid = rep.get("format") or (D.get("source") or {}).get("format")
+    try:
+        d0 = detect.default_options(fid)
+        if si.format_family(fid) in si.FILE_CROP_FAMILIES:
+            tw0, dm0 = d0.test_weight_lb_bu, d0.std_moisture_pct
+        else:
+            R_pre = si.resolve(si.settings({}), _label_crop(D.get("label")), None, fid)
+            tw0, dm0 = ((R_pre["test_weight_lb_bu"], R_pre["dry_moisture_pct"]) if R_pre["product"]
+                        else (d0.test_weight_lb_bu, d0.std_moisture_pct))
+    except Exception:                                    # a decoder or crop not known here: nothing to compare
+        return None
+    tw, dm = o.get("test_weight_lb_bu"), o.get("std_moisture_pct")
+    # values given to the decoder (None: the monitor's own, as logged; an import converts them from the wet mass)
+    if (tw is None or _same_value(tw, tw0)) and (dm is None or _same_value(dm, dm0)):
+        return None
+    if tw0 is None and dm0 is None and _same_value(tw, no_product_values()[0]) \
+            and _same_value(dm, no_product_values()[1]):
+        return None                                      # SMS's values for data without a product (extract's retry)
+    return "its own weight to volume and dry moisture"
+
+
+OLDER_DECODE_WORD = "made from an older decode"
+
+
+def older_decode_word(D: dict) -> str | None:
+    """What an older OCED decoded the readings of a raw file's import in use with, when they are not SMS's default
+    decode ('product wheat', 'its own weight to volume and dry moisture'): its default still labelled as an older
+    decode (its raw data not at hand), its readings or its own decode report decoded with a product of 0.3.0's step 1
+    (decoded_with_choice); None for any other file. A file on its own settings with no value of the user's is then
+    named by its readings ('made from an older decode'), never 'your values' with nothing named."""
+    if not isinstance(D, dict) or D.get("kind") != "raw":
+        return None
+    DF = default_of(D)
+    if DF.get("older_decode"):
+        return str(DF["older_decode"])
+    w = decoded_with_choice(D)
+    if w:
+        return w
+    o = (D.get("report") or {}).get("options") if isinstance(D.get("report"), dict) else None
+    pk = _crop(o.get("crop")) if isinstance(o, dict) and o.get("crop") else None
+    if pk and pk != (_crop(_label_crop(D.get("label"))) or _crop((import_basis(D) or {}).get("crop"))):
+        return f"product {o['crop']}"
+    return None
+
+
+def older_decode_way(D: dict) -> str:
+    """What gives SMS's default import of a raw file whose default is still made from the readings an older version
+    decoded with a product (import_default older_decode): its raw data back in its folder (named, not its full path)
+    and the work opened again, or the raw data extracted again."""
+    DF = default_of(D)
+    if DF.get("raw_gone"):
+        return (f"put its raw data back in {_folder_name(_raw_root(D))} (reconnect the drive) and open the work again "
+                "for SMS's default")
+    return "extract its raw data again (step 1) for SMS's default"
+
+
+def older_decode_values(rep: dict | None) -> str:
+    """'48.00 lb/bu, 14.50 %': the weight to volume and dry moisture an older version decoded a raw file's readings
+    with (their yields are on that basis), from the decode report of those readings; '' when it does not say."""
+    o = rep.get("options") if isinstance(rep, dict) else None
+    o = o if isinstance(o, dict) else {}
+    return _tw_dm_text(o.get("test_weight_lb_bu"), o.get("std_moisture_pct"))
+
+
+def _tw_dm_text(tw, dm) -> str:
+    """'48.00 lb/bu, 14.50 %' ('' for what is not known)."""
+    return ", ".join(([f"{float(tw):,.2f} lb/bu"] if tw else []) + ([f"{float(dm):.2f} %"] if dm is not None else []))
+
+
+def yields_converted(IM: dict | None) -> bool:
+    """The import recomputed the dry yields with its weight to volume and dry moisture (sms_import.apply's
+    applied.weight_and_moisture; a record that does not say: both values known)."""
+    IM = IM if isinstance(IM, dict) else {}
+    a, RS = IM.get("applied"), IM.get("resolved") or {}
+    if isinstance(a, dict):
+        return bool(a.get("weight_and_moisture"))
+    return bool(RS.get("test_weight_lb_bu")) and RS.get("dry_moisture_pct") is not None
+
+
+def older_decode_text(V: dict, RS: dict) -> str:
+    """The import line of a default made from the readings an older version decoded with a product, with the
+    import's yield volume limits: 'decoded by an older OCED with product barley (48.00 lb/bu, 14.50 %) · 5.000-300.00
+    bu/ac' when the import keeps the yields those readings carry (no product to convert them with), 'decoded by an
+    older OCED with product barley, the yields converted with wheat (60.00 lb/bu, 13.50 %) · ...' when it converts
+    them with its own product's weight to volume and dry moisture (the card names its crop)."""
+    lims = import_values_text(RS).split(" · ")[-1]
+    if yields_converted(V.get("sms_import")):
+        vals = _tw_dm_text(RS.get("test_weight_lb_bu"), RS.get("dry_moisture_pct"))
+        return (f"decoded by an older OCED with {V['older_decode']}, the yields converted with "
+                f"{RS.get('product') or 'the product not known'}" + (f" ({vals})" if vals else "") + f" · {lims}")
+    vals = older_decode_values(V.get("report"))
+    return f"decoded by an older OCED with {V['older_decode']}" + (f" ({vals})" if vals else "") + f" · {lims}"
+
+
+def older_decode_help(D: dict, V: dict | None = None) -> str:
+    """The help of a default made from the readings an older version decoded with a product (import_default
+    older_decode; V: the file's default view). When the import converts their yields with its own product's weight
+    to volume and dry moisture (the card names its crop), it converts them as SMS's default does (the mass is the
+    decoder's either way): only decoding options that are not SMS's leave SMS's default to confirm from the raw data.
+    Else the yields are those the decode gave them: not SMS's default import, with the way to it."""
+    V = V if isinstance(V, dict) else default_view(D)
+    od = V.get("older_decode")
+    why = "; ".join(str(x) for x in (V.get("older") or []))
+    way = older_decode_way(D)
+    IM = V.get("sms_import") or {}
+    if yields_converted(IM):
+        prod = (IM.get("resolved") or {}).get("product")
+        txt = (f"Decoded by an older OCED with {od}" + (f" ({why})" if why else "") + "; the import converts its "
+               f"yields with {prod or 'its weight to volume and dry moisture'} as SMS's default does")
+        if decoding_not_sms(V.get("source"), V.get("report")):
+            txt += f"; its decoding options are not SMS's: to confirm SMS's default, {way}"
+        return txt + "."
+    return (f"Decoded by an older OCED with {od}, not as SMS's default decodes it, so this is not SMS's default "
+            "import" + (f" ({why})" if why else "") + f". To get SMS's default, {way}.")
+
+
+def decode_default(tag: str, D: dict) -> dict:
+    """A raw file an earlier version decoded with values of its own (decoded_with_choice) decoded again from its raw
+    data as a fresh extraction decodes it for SMS's default import (decode_for_default), into
+    <work>/sms_default/decoded/; the decoder's choices of the file (calibration, points ...) kept. ValueError when the
+    raw data is gone or the decoder refuses it."""
+    S0, cand = _raw_candidate(tag, D)
+    # the field and season the warnings name, as an extraction names them (the label '<field> · <season> · <crop>')
+    lab = str(D.get("label") or "").split(" · ")
+    where = (f"{lab[0]} {'' if lab[1] == 'no season' else lab[1]}" if len(lab) >= 3 else tag)
+    d, no_product, err = decode_for_default(
+        cand, list(S0["unit_ids"]), detect.default_options(S0.get("format")), _label_crop(D.get("label")),
+        dict(S0.get("decoder_kwargs") or {}), os.path.join(ss.workdir, DEFAULT_DECODE_DIR), tag, lambda m: None,
+        where)
+    if d is None:
+        raise ValueError(f"{tag}: the raw data could not be decoded again ({err})")
+    d.pop("df", None)
+    if no_product:
+        d["report"].setdefault("warnings", []).append(no_product)
+        if isinstance(d.get("source"), dict):
+            d["source"]["warnings"] = list(d["source"].get("warnings") or []) + [no_product]
+    return d
+
+
+def _follow_default_decode(D: dict, DF: dict):
+    """A file whose import is now made from its default's readings, when those were decoded again for SMS's default
+    (decode_default): the file's decode report, extracted points and area are that decode's."""
+    if isinstance(DF.get("report"), dict):
+        D["report"] = copy.deepcopy(DF["report"])
+        D["area_ac"] = (DF["report"].get("totals") or {}).get("area_ac", D.get("area_ac"))
+        if DF.get("zip"):
+            D["zip"] = DF["zip"]
+
+
+def decode_as_logged(tag: str, D: dict) -> dict:
+    """A raw file decoded again as the monitor logged it (the monitor's own weight and moisture, its dry-yield
+    convention: 0.3.0's extraction with the import off) into <work>/as_logged/decoded/. ValueError when the raw data
+    is gone or the decoder refuses it."""
+    S0, cand = _raw_candidate(tag, D)
+    fid = S0.get("format")
+    names = {f.name for f in dataclasses.fields(common.DecodeOptions)}
+    o = {**(S0.get("options") or {}), "crop": None, "test_weight_lb_bu": None, "std_moisture_pct": None,
+         "shrink": detect.default_options(fid).shrink}
+    opts = common.DecodeOptions(**{k: v for k, v in o.items() if k in names})
+    d = er.decode(cand, list(S0["unit_ids"]), opts, os.path.join(ss.workdir, AS_LOGGED_DIR), log=lambda m: None,
+                  tag=tag, **dict(S0.get("decoder_kwargs") or {}))
+    d.pop("df", None)
+    return d
+
+
+def apply_as_is(tag: str, warns: list | None = None) -> str:
+    """Step 2's Apply with 'None': no import as SMS. A point export: the export as written (nothing left out or
+    recomputed). A raw file: decoded again as the monitor logged it. The cleaning of the file is set aside. Returns a
+    line for the user (warns: as apply_custom); ValueError when the readings or the raw data are gone (the file
+    unchanged)."""
+    D = ss.datasets[tag]
+    B = import_basis(D)
+    if B is None:
+        raise ValueError(f"{tag} keeps no record of its import: open the data again (step 1) to change it")
+    DF = default_of(D)
+    had = has_cleaning(tag)
+    if D.get("kind") == "raw":
+        d = decode_as_logged(tag, D)
+        warn = drop_cleaning(tag)
+        D["shp"], D["n"], D["source"], D["sms_import"] = d["shp"], int(d["n"]), d["source"], None
+        D["import_mode"] = "as_is"
+        warn += delete_custom_import(tag, keep=(d["shp"], DF.get("shp")), as_logged=False)
+        line = f"{tag} decoded again as the monitor logged it: {int(d['n']):,} readings, no import as SMS."
+    else:
+        src = ew.resolve_moved(B["all_readings"], ss.workdir)
+        if not src or not os.path.exists(src):
+            raise ValueError(f"the readings of this file ({_where(src or B['all_readings'])}) are no longer on disk: "
+                             "reconnect the drive, or open the data again (step 1)")
+        n_shp, n_dbf = shapefile_counts(src)
+        # the file in use already the export as written (its SMS import failed): the same data, its cleaning stays
+        same = import_mode(D) == "as_is" and not D.get("sms_import") and _norm_p(D.get("shp")) == _norm_p(src)
+        warn = [] if same else drop_cleaning(tag)
+        had = had and not same
+        D["shp"], D["n"], D["sms_import"] = src, (n_shp if n_shp >= 0 else max(n_dbf, 0)), None
+        D["import_mode"] = "as_is"
+        D["as_is_chosen"] = True                         # 'None' chosen: not the failed import's readings
+        warn += delete_custom_import(tag, keep=(src, DF.get("shp")))
+        line = f"{tag} used as it is: {int(D['n']):,} readings, no import as SMS."
+    _forget_old_import_line(tag)
+    save_current(quiet=True)
+    return _done_line(line, had, warn, warns)
+
+
+def back_to_default(tag: str, msg: str | None = None, warns: list | None = None, tried: bool = False) -> str:
+    """The file back to its default import (SMS's default, step 1): a pointer swap, the user's import deleted, the
+    cleaning set aside. Safe in a callback. Returns a line for the user (warns: as apply_custom); ValueError when the
+    default cannot be made (the reason when its write failed: a file held open, a full disk). tried: the caller has
+    just tried to build the default (apply_custom): it is not imported a second time."""
+    D = ss.datasets[tag]
+    if not tried and default_needs_build(tag, retry=True):
+        ensure_default(tag, retry=True)
+    DF = default_of(D)
+    if not DF.get("shp") or not os.path.exists(DF["shp"]):
+        why = default_failed_reason(tag)
+        if why:
+            raise ValueError(f"{tag}: SMS's default import of this file could not be made ({why}): the file and its "
+                             f"import are unchanged; {retry_advice(why)}")
+        raise ValueError(f"{tag}: SMS's default import of this file cannot be made (its readings are no longer on "
+                         "disk): open the data again (step 1)")
+    had = has_cleaning(tag)
+    prev = (D.get("shp"), (D.get("sms_import") or {}).get("all_readings"))     # the import replaced, its readings
+    D["shp"], D["n"] = DF["shp"], DF.get("n")
+    D["sms_import"] = copy.deepcopy(DF.get("sms_import"))
+    if D.get("kind") == "raw" and "source" in DF:
+        D["source"] = copy.deepcopy(DF["source"])
+    _follow_default_decode(D, DF)
+    D["import_mode"] = "as_is" if DF.get("error") else "default"
+    D.pop("as_is_chosen", None)
+    warn = delete_custom_import(tag, keep=(DF["shp"],))
+    warn += drop_cleaning(tag)
+    # (0.3.0's import of the file, the readings it decoded with their zip and report, once nothing names them)
+    warn += drop_unreferenced(tag, prev, dec_too=True)
+    if not DF.get("older"):
+        _forget_old_import_line(tag)
+    save_current(quiet=True)
+    if not msg and DF.get("older_decode"):              # not SMS's default: the older version's readings
+        msg = (f"{tag}: back to the import of the older version's readings (Older rule), not SMS's default. To get "
+               f"SMS's default (today's rule), {older_decode_way(D)}.")
+    return _done_line(msg or f"{tag}: back to SMS's default import.", had, warn, warns)
+
+
+def _in_use_product(Dt: dict, Bt: dict) -> str | None:
+    """The product of a file's import in use (a product the user chose in step 2 counts), else its default's."""
+    RSt = (Dt.get("sms_import") or {}).get("resolved")
+    if import_mode(Dt) != "as_is" and isinstance(RSt, dict):
+        return RSt.get("product") or None
+    return default_resolved(Bt).get("product") or None
+
+
+def step2_start(D: dict) -> dict:
+    """What step 2's fields of a harvest file start from: {"R0": its SMS default, "RS": the values of its import in use
+    (with no import as SMS, the default's; SMS's default when it failed), "RP": the values the fields show (an import
+    of an older rule or a failed one: today's product, weight to volume, dry moisture and yield volume limits, so that
+    one Apply updates it), "SRCP": where those came from, "monitor" and "fmt": what a product chosen is resolved with,
+    "IMv": the record the values are read from, "crop": the data's crop a product chosen is compared on, "old_imp": a
+    point export imported under an older version's rules (old_export_import)}."""
+    B = import_basis(D) or {}
+    DF, mode = default_of(D), import_mode(D)
+    try:
+        R0 = default_resolved(B)
+    except ValueError:
+        R0 = si.resolve(si.settings({}))
+    IM = D.get("sms_import") or {}
+    IMv = IM if (IM and IM.get("resolved")) else (DF.get("sms_import") or {})
+    RS = dict(IMv.get("resolved") or {k: R0.get(k) for k in si.DEFAULTS})
+    SRC = IMv.get("sources") or R0.get("sources") or {}
+    FR = fresh_export_import(D)
+    old_imp = old_export_import(D, FR) if FR is not None else ""
+    mon, fmt, RP, SRCP, crop = B.get("monitor"), B.get("fmt"), RS, SRC, B.get("crop")
+    if old_imp:
+        mon, fmt, crop = FR["monitor"], FR["fmt"], FR["crop"]
+        RP = {**RS, **{k: FR["R"].get(k) for k in IMPORT_KEYS_SHOWN}}
+        SRCP = FR["R"].get("sources") or {}
+    elif DF.get("error") or (DF.get("older") and mode == "default"):
+        RP = {**RS, **{k: R0.get(k) for k in IMPORT_KEYS_SHOWN}}
+        SRCP = R0.get("sources") or {}
+    return {"R0": R0, "RS": RS, "RP": RP, "SRCP": SRCP, "monitor": mon, "fmt": fmt, "crop": crop, "IMv": IMv,
+            "old_imp": old_imp}
+
+
+def typed_fields(S_f: dict, RP: dict, RS: dict) -> list:
+    """The fields of step 2 whose value in S_f differs from the one they started from (RP): what the user typed,
+    including a field set back to SMS's default (a manual swath or moisture value counts only while its box is ticked,
+    now or in the import in use)."""
+    return [k for k, v in S_f.items() if k in RP and not _same_value(RP.get(k), v)
+            and not (k == "manual_swath_ft" and not (S_f.get("use_manual_swath") or RS.get("use_manual_swath")))
+            and not (k == "manual_moisture_pct" and not (S_f.get("use_manual_moisture")
+                                                           or RS.get("use_manual_moisture")))]
+
+
+# the fields 'Apply to all' carries, in the order of step 2 (a box and its value go together)
+CHANGE_GROUPS = (("test_weight_lb_bu",), ("dry_moisture_pct",), ("expand_dry_moisture",),
+                 ("use_manual_swath", "manual_swath_ft"), ("use_manual_moisture", "manual_moisture_pct"),
+                 ("min_yield",), ("max_yield",), ("start_delay_s",), ("stop_delay_s",), ("flow_shift_s",))
+
+
+def _crop(p) -> str | None:
+    """The crop key of a product (None: not known)."""
+    return si.crop_key(p) if p else None
+
+
+# where a product a file chose came from, kept in its import record ('product_from'): 0.3.0's step 1 gave one product
+# to the files opened together; Apply to all gives the group of the file it was chosen on (amendment A1.2)
+PRODUCT_FROM_030 = {"by": "0.3.0", "group": "0.3.0"}
+
+
+def product_group(D: dict, B: dict | None) -> str:
+    """Who gave a file the product it chose, as Apply to all compares it: the group its record keeps (given by Apply
+    to all, or by 0.3.0's step 1), else the file itself ('data:<the product of its data>': chosen on that file)."""
+    pf = (D.get("sms_import") or {}).get("product_from") if isinstance(D, dict) else None
+    if isinstance(pf, dict) and pf.get("group"):
+        return str(pf["group"])
+    try:
+        return f"data:{_crop(default_resolved(B or {}).get('product'))}"
+    except ValueError:
+        return "data:None"
+
+
+def field_changes(changed, S: dict, R: dict) -> tuple:
+    """What 'Apply to all' carries of the fields typed on a file (changed: their keys; S: the file's settings, R: their
+    import): ([(keys, values)] in the order of step 2, values None for a field taken back (set to SMS's default: each
+    file gets its own default for it again), the keys a product chosen filled in). A product chosen comes first:
+    (("product",), {"product": its crop key}) for the product named (the product of the file's data included: each
+    file it reaches gets that product), None for 'unknown' (taken back: each file it reaches goes back to its data's
+    product); the weight to volume, dry moisture or limits it filled in are part of it, not values of their own (each
+    file the product reaches gets that product's own, on its own basis)."""
+    ch = set(changed or ())
+    prod = "product" in ch
+    src, dfl = R.get("sources") or {}, R.get("defaults") or {}
+    out, borne = [], set()
+    if prod:
+        pk = _crop(S.get("product"))
+        out.append((("product",), {"product": pk} if pk else None))
+    for keys in CHANGE_GROUPS:
+        if not ch.intersection(keys):
+            continue
+        k = keys[0]
+        if k in si.RESOLVED_KEYS:
+            back = src.get(k) != si.SRC_YOU or _same_value(R.get(k), dfl.get(k))
+            if back and prod:
+                borne.add(k)
+                continue
+            out.append((keys, None if back else {k: S.get(k)}))
+        elif len(keys) == 2:                             # a manual swath or moisture: the box with its value
+            out.append((keys, {k: True, keys[1]: S.get(keys[1])} if S.get(k) else None))
+        elif k in FLAG_KEYS:
+            out.append((keys, {k: True} if S.get(k) else None))
+        else:                                            # a delay or the flow shift: 0 is SMS's default
+            out.append((keys, None if _same_value(S.get(k), 0.0) else {k: float(S.get(k) or 0.0)}))
+    return out, borne
+
+
+def own_settings(Dt: dict, R0t: dict) -> dict:
+    """A file's own import settings (mode custom: the product chosen, the values the user typed, the flags, delays and
+    flow shift, changed_settings); {} for a file on its default import."""
+    IM = Dt.get("sms_import") or {}
+    if import_mode(Dt) != "custom" or not isinstance(IM.get("resolved"), dict):
+        return {}
+    return changed_settings({**IM["resolved"], "sources": IM.get("sources")}, R0t)
+
+
+def _same_settings(a: dict, b: dict) -> bool:
+    """Two sets of import settings are the same, key by key (sms_import.settings fills in the others)."""
+    A, B_ = si.settings(a), si.settings(b)
+    return all(((A[k] or None) == (B_[k] or None)) if k == "product" else _same_value(A[k], B_[k]) for k in A)
+
+
+def _product_value(B: dict, p, k: str):
+    """The value SMS's import gives the setting k of a file (its basis B) with the product p (None: its data's)."""
+    try:
+        R = si.resolve(si.settings({"product": p} if p else {}), p or (B or {}).get("crop"), (B or {}).get("monitor"),
+                       (B or {}).get("fmt"))
+    except ValueError:
+        return object()                                  # (never the same as a value)
+    return R.get(k)
+
+
+def _left(out: dict, left: str, t: str, other, pt) -> None:
+    """A file Apply to all leaves as it is, in the list of its kind: a file of another product or another choice of
+    it (other: why the product, weight to volume or dry moisture typed do not go to it, as apply_to_all_plan's
+    other_why_of says it; False: they do) in its own words."""
+    if left == "same" and other:
+        out["other_product"].append(t)
+        out["other_of"][t] = pt
+        out["other_why_of"][t] = other if isinstance(other, str) else out["other_why"]
+    else:
+        out[left].append(t)
+
+
+def apply_to_all_plan(tag: str, S_f: dict, changed=None) -> dict:
+    """What 'Apply to all N harvest files' does with the settings S_f of `tag` (amendment A1 of the redesign: a merge
+    field by field). The change is the fields typed on `tag` (changed: their keys; default: typed_fields against what
+    its fields started from), a field set back to SMS's default included ('taken back'). Every other harvest file
+    starts from its own settings (its custom settings, none on its default) and gets only the fields changed: a field
+    taken back is removed from its own settings; the weight to volume and dry moisture only when the product of its
+    import in use is the product of `tag`'s import (after the change; 'not known' counts as one product). A product
+    named (or taken back: 'unknown') on `tag` goes to the files that were what `tag` was before the change: the same
+    product in their import in use and the same own choice of it (none: each on its data's product; or the same
+    product chosen by the same hands, product_group: on a file of the same data, or given with `tag`'s by Apply to all
+    or by 0.3.0's step 1; never a file of another product, nor one whose own product `tag` did not give it); it
+    travels with its own weight to volume and dry moisture, and with the limits it filled in on `tag` where it changes
+    them on the file's own basis, each file getting that product's values on its own basis (its other own settings
+    stay). A file whose settings this leaves as they were, or whose import they give again, is left exactly as it is
+    (import, own settings, cleaning).
+    {"targets": {t: its settings}, "changes": {t: ['Max. yield volume none → 150.00', ...]}, "how": {t: 'custom' |
+    'default' (back to its SMS default) | 'older_readings' (back to an older version's readings) | 'today' (an older
+    rule's import replaced by today's rule plus the change)}, "same": left as they are (the change brings them
+    nothing), "older": the same, on an older rule's import kept as their default (D7), "older_decode": the same, on the
+    readings an older version decoded, "other_product": the same, of another product or another choice of it (the
+    product, weight to volume or dry moisture typed do not go to them; "other_of": {t: the product of its import in
+    use}, "other_why": 'product' | 'crop', "other_why_of": {t: why it is left: 'product' (another product), 'crop'
+    (a weight to volume or dry moisture of another product), 'hand' (the same product chosen on it for its own data),
+    'given' (given with another choice; "other_group": {t: that group}), 'data' (its data's own where `tag` had
+    chosen it)}), "as_is": files not imported as SMS ('None'), left as they are, "pending": files whose data's crop
+    could not be read yet (their readings away, or there but not readable: "why" in their basis), "away": files
+    the change would reach whose readings are not at hand ("away_at": {t: where they were}; "away_in_work": those
+    whose readings were inside the work folder; Apply on each once they are back), "failed": files on the readings
+    their failed SMS import left (no import as SMS to change: Apply on each tries it again),
+    "skipped": files of an older version that kept no record of their import, "unresolved": files whose settings
+    could not be resolved ("unresolved_why": {t: the reason}); "product_to": the files the product goes to,
+    "product_from": what their record keeps of where it came from (None: no product chosen)}. Planters are not
+    listed. ValueError when `tag` keeps no record of its import."""
+    D = ss.datasets[tag]
+    B = import_basis(D)
+    if B is None:
+        raise ValueError(f"{tag} keeps no record of its import: open the data again (step 1) to change it")
+    if B.get("pending"):
+        raise ValueError(f"{tag}: {basis_pending_note(B)}")
+    S_f = si.settings(S_f)
+    R = si.resolve(S_f, S_f.get("product") or B.get("crop"), B.get("monitor"), B.get("fmt"))
+    R0 = default_resolved(B)
+    if changed is None:
+        V = step2_start(D)
+        changed = typed_fields(S_f, V["RP"], V["RS"])
+    entries, borne = field_changes(changed, S_f, R)
+    prod = _crop(R.get("product"))
+    # what the file was before the change (the files a product chosen on it reaches): its product in use, its own
+    # choice of it
+    p_was, own_was = _crop(_in_use_product(D, B)), _crop(own_settings(D, R0).get("product"))
+    g_was = product_group(D, B) if own_was else f"data:{_crop(R0.get('product'))}"
+    p_new = next((v for k, v in entries if k == ("product",)), False)    # False: no product typed
+    out = {"targets": {}, "changes": {}, "how": {}, "same": [], "older": [], "older_decode": [], "other_product": [],
+           "other_of": {}, "other_why": "product" if p_new is not False else "crop", "other_why_of": {},
+           "other_group": {}, "as_is": [], "failed": [], "skipped": [], "pending": [], "unresolved": [],
+           "unresolved_why": {}, "away": [], "away_at": {}, "away_in_work": [], "product_to": [],
+           "product_from": {"by": "all", "group": g_was} if p_new else None, "was": p_was, "now": prod}
+    for t, Dt in ss.datasets.items():
+        if t == tag:
+            continue
+        settle_basis(t)                                  # a basis not read yet, its readings back: read now
+        Bt, DFt = import_basis(Dt), default_of(Dt)
+        if not Dt.get("yield", True):
+            continue                                     # a planter or sprayer file: not a harvest file
+        if Bt is None:
+            out["skipped"].append(t)                     # (a file of an older version that kept no record)
+            continue
+        if Bt.get("pending"):
+            out["pending"].append(t)                     # (its data's crop not read yet: nothing to merge on)
+            continue
+        mode_t = import_mode(Dt)
+        if mode_t == "as_is":
+            # 'None' is its own choice: not SMS's import to change; on the readings a failed import left: none either
+            out["failed" if failed_in_use(Dt) else "as_is"].append(t)
+            continue
+        if DFt.get("error") and mode_t != "custom":     # (own settings on a failed default: a file as any other)
+            out["failed"].append(t)
+            continue
+        older_t = mode_t == "default" and bool(DFt.get("older")) and not DFt.get("older_decode")
+        left = "older" if older_t else ("older_decode" if mode_t == "default" and DFt.get("older_decode") else "same")
+        try:
+            R0t = default_resolved(Bt)
+            pt = _crop(_in_use_product(Dt, Bt))
+            own = own_settings(Dt, R0t)
+            merged = dict(own)
+            own_p = _crop(own.get("product"))
+            g_t = product_group(Dt, Bt) if own_p else None
+            gets = (p_new is not False and pt == p_was and own_p == own_was and (own_p is None or g_t == g_was))
+            # a product typed that does not go to this file, and why (amendment A1.3): another product; its product
+            # chosen on it for its own data; given with another choice (Apply to all from another file, 0.3.0's
+            # step 1); its data's own where this file had chosen it
+            other = False
+            if p_new is not False and not gets:
+                pf_t = (Dt.get("sms_import") or {}).get("product_from")
+                given = isinstance(pf_t, dict) and bool(pf_t.get("group"))
+                other = ("product" if pt != p_was else ("given" if given else "hand") if own_p else "data")
+                if other == "given":
+                    out["other_group"][t] = g_t
+            if gets:
+                # the product with its own weight to volume, dry moisture and the limits it filled in (this file's
+                # values of them for another product go; a limit of its own that the product does not change on this
+                # file's basis stays)
+                new_p = (p_new or {}).get("product")
+                keep = {k: own[k] for k in borne if k in own and k not in ("test_weight_lb_bu", "dry_moisture_pct")
+                        and _same_value(_product_value(Bt, own.get("product"), k), _product_value(Bt, new_p, k))}
+                for k in ("product", "test_weight_lb_bu", "dry_moisture_pct", *borne):
+                    merged.pop(k, None)
+                merged.update(p_new or {})
+                merged.update(keep)
+            p_after = (_crop(merged.get("product")) or _crop(R0t.get("product"))) if gets else pt
+            for keys, vals in entries:
+                if keys == ("product",):
+                    continue
+                if keys[0] in CROP_SETTING_KEYS and p_after != prod:
+                    other = other or "crop"
+                    continue                             # another product's weight to volume or dry moisture
+                if vals is None:
+                    for k in keys:
+                        merged.pop(k, None)
+                else:
+                    merged.update(vals)
+            if _same_settings(merged, own):
+                _left(out, left, t, other, pt)
+                continue
+            S_t = si.settings(merged)
+            Rt = si.resolve(S_t, S_t.get("product") or Bt.get("crop"), Bt.get("monitor"), Bt.get("fmt"))
+        except ValueError as e:
+            out["unresolved"].append(t)
+            out["unresolved_why"][t] = str(e)
+            continue
+        RSt = (Dt.get("sms_import") or {}).get("resolved")
+        if isinstance(RSt, dict) and same_import(Rt, RSt):
+            _left(out, left, t, other, pt)               # the import it already has
+            continue
+        src_t = ew.resolve_moved(Bt.get("all_readings"), ss.workdir) if Bt.get("all_readings") else None
+        if not src_t or not os.path.exists(src_t):
+            # the readings it would be imported from are not at hand (a drive not plugged in): named as left, with
+            # the way to finish it, never as a file this changes
+            out["away"].append(t)
+            out["away_at"][t] = _where(src_t or Bt.get("all_readings"))
+            if _in_folder(src_t or Bt.get("all_readings"), ss.workdir):
+                out["away_in_work"].append(t)            # (inside the work folder: they cannot come back by themselves)
+            continue
+        out["targets"][t] = merged
+        if gets:
+            out["product_to"].append(t)
+        out["changes"][t] = import_changes(RSt if isinstance(RSt, dict) else R0t, Rt)
+        out["how"][t] = ("today" if older_t else
+                         ("older_readings" if DFt.get("older_decode") else "default") if same_import(Rt, R0t) else
+                         "custom")
+    return out
+
+
+def _them(names: list) -> tuple:
+    """('it is', 'it') for one file, ('they are', 'them') for more."""
+    return ("it is", "it") if len(names) == 1 else ("they are", "them")
+
+
+def older_kept_line(names: list, after: bool = False) -> str:
+    """The files Apply to all leaves on an older rule's import kept as their default (D7), in their own words."""
+    one = len(names) == 1
+    imp = "import" if one else "imports"
+    return ((f"Kept on the older rule's {imp} (Apply on {'it' if one else 'each'} to update it): " if after else
+             f"Apply to all keeps the older rule's {imp} of ") + ", ".join(names)
+            + ("." if after else f" (Apply on {'it' if one else 'each'} to update it)."))
+
+
+HOW_TAIL = {"default": "back on its SMS default", "older_readings": "back to the older version's readings, not SMS's "
+            "default", "today": "its older rule's import replaced by today's rule plus this change"}
+
+
+def plan_changes_text(P: dict, t: str) -> str:
+    """'Max. yield volume none → 150.00; back on its SMS default': what Apply to all changes in a file it reaches."""
+    return "; ".join(list(P["changes"].get(t) or []) + ([HOW_TAIL[P["how"][t]]] if P["how"].get(t) in HOW_TAIL
+                                                         else []))
+
+
+def plan_left_lines(P: dict, after: bool = False) -> list:
+    """The files Apply to all leaves as they are, each kind in its own words, before the click (after: once done)."""
+    out = []
+    if P.get("same"):
+        s = P["same"]
+        out.append(f"Left as {_them(s)[0]} (this change brings {_them(s)[1]} nothing): {', '.join(s)}." if after else
+                   f"Apply to all leaves {', '.join(s)} as {_them(s)[0]}: this change brings {_them(s)[1]} nothing.")
+    whys, groups = P.get("other_why_of") or {}, P.get("other_group") or {}
+    kinds = []
+    for kind in ("product", "crop", "hand", "given", "data"):
+        s = [t for t in P.get("other_product") or [] if whys.get(t, P.get("other_why")) == kind]
+        if kind == "given":
+            # given with another choice: by 0.3.0's step 1 and by Apply to all are each told in their own words
+            kinds += [(kind, x) for x in ([t for t in s if groups.get(t) == PRODUCT_FROM_030["group"]],
+                                          [t for t in s if groups.get(t) != PRODUCT_FROM_030["group"]]) if x]
+        elif s:
+            kinds.append((kind, s))
+    for kind, s in kinds:
+        # each reason in its own words (amendment A1.3): another product; a weight to volume or dry moisture of
+        # another product; the same product chosen on the file for its own data, given with another choice, or its
+        # data's own where this file had chosen it
+        one = len(s) == 1
+        names = ", ".join(f"{t} (Product {P['other_of'].get(t) or 'unknown'})" for t in s)
+        p_ = P["other_of"].get(s[0]) or "unknown"
+        same_choice = "a product chosen here goes only to files whose product came from the same choice as this file's"
+        if kind == "product":
+            why = (f"{'it keeps its' if one else 'each keeps its'} own product; a product chosen here goes only to "
+                   f"files that had this file's product ({P.get('was') or 'unknown'}) and the same own choice of it")
+        elif kind == "crop":
+            why = ("a weight to volume or dry moisture goes only to files of this file's product "
+                   f"({P.get('now') or 'unknown'})")
+        elif kind == "hand":
+            data_ = ", ".join(sorted({str(_crop(default_resolved(import_basis(ss.datasets[t]) or {}).get("product"))
+                                          or "not known") for t in s}))
+            why = ((f"its {p_} was chosen on it for its own data ({data_})" if one else
+                    f"the product of each was chosen on it for its own data ({data_})")
+                   + f", not with this file's choice: {same_choice}")
+        elif kind == "given":
+            by_030 = groups.get(s[0]) == PRODUCT_FROM_030["group"]
+            why = ((f"its {p_} was" if one else "the product of each was")
+                   + (" given by 0.3.0's step 1 to the files opened together" if by_030 else
+                      " given by Apply to all with another file's choice")
+                   + f", not with this file's: {same_choice}")
+        else:
+            why = ((f"its {p_} is its data's own" if one else "the product of each is its data's own")
+                   + f", where this file's was chosen: {same_choice}")
+        out.append(f"Left as {_them(s)[0]}: {names}; {why}." if after else
+                   f"Apply to all leaves {names} as {_them(s)[0]}: {why}.")
+    if P.get("older"):
+        out.append(older_kept_line(P["older"], after=after))
+    for t in P.get("older_decode") or []:
+        way = older_decode_way(ss.datasets.get(t) or {})
+        out.append(f"{t} stays on the older version's readings (Older rule): this change brings it nothing; to get "
+                   f"SMS's default, {way}." if after else
+                   f"Apply to all leaves {t} on the older version's readings (Older rule): to get SMS's default, "
+                   f"{way}.")
+    if P.get("as_is"):
+        s = P["as_is"]
+        out.append(f"Left as {_them(s)[0]} (no import as SMS, 'None' in step 2): {', '.join(s)}." if after else
+                   f"Apply to all leaves {', '.join(s)} as {_them(s)[0]}: no import as SMS ('None' in step 2).")
+    if P.get("failed"):
+        s = P["failed"]
+        one = len(s) == 1
+        why = (f"{'its' if one else 'their'} SMS import failed: Apply on {'it' if one else 'each'} tries it again")
+        out.append(f"Left as {_them(s)[0]} ({why}): {', '.join(s)}." if after else
+                   f"Apply to all leaves {', '.join(s)} as {_them(s)[0]}: {why}.")
+    if P.get("skipped"):
+        s = P["skipped"]
+        one = len(s) == 1
+        why = (f"{'it keeps' if one else 'they keep'} no record of {'its' if one else 'their'} import: open "
+               f"{'its' if one else 'their'} data again (step 1)")
+        out.append(f"Not imported again ({why}): {', '.join(s)}." if after else
+                   f"Apply to all leaves {', '.join(s)} as {_them(s)[0]}: {why}.")
+
+    def why_unread(t):
+        return (import_basis(ss.datasets.get(t) or {}) or {}).get("why")
+    if [t for t in P.get("pending") or [] if not why_unread(t)]:
+        s = [t for t in P["pending"] if not why_unread(t)]
+        one = len(s) == 1
+        why = (f"the crop of {'its' if one else 'their'} data could not be read yet ({'its' if one else 'their'} "
+               f"readings are not at hand): reconnect the drive and open the work again, then Apply on "
+               f"{'it' if one else 'each'}")
+        out.append(f"Not imported again ({why}): {', '.join(s)}." if after else
+                   f"Apply to all leaves {', '.join(s)} as {_them(s)[0]}: {why}.")
+    for t in [t for t in P.get("pending") or [] if why_unread(t)]:
+        # there but not readable (held open by another program): its own reason, and the way on
+        why = (f"the crop of its data could not be read yet ({why_unread(t)}): {unread_advice(why_unread(t))}, then "
+               "Apply on it")
+        out.append(f"Not imported again ({why}): {t}." if after else f"Apply to all leaves {t} as it is: {why}.")
+    inw = set(P.get("away_in_work") or ())
+    for s, gone in (([t for t in P.get("away") or [] if t not in inw], False),
+                    ([t for t in P.get("away") or [] if t in inw], True)):
+        if not s:
+            continue
+        one = len(s) == 1
+        at_ = "; ".join(f"{t}: {(P.get('away_at') or {}).get(t)}" for t in s)
+        why = ((f"{'its' if one else 'their'} readings are no longer in the work folder ({at_}): open "
+                f"{'its' if one else 'their'} data again (step 1) to import {'it' if one else 'them'} with this "
+                "change") if gone else
+               (f"{'its' if one else 'their'} readings are not at hand ({at_}): reconnect the drive, then choose "
+                f"{'it' if one else 'each'} in step 2 and Apply the same change on it"))
+        out.append(f"Not imported again ({why}): {', '.join(s)}." if after else
+                   f"Apply to all leaves {', '.join(s)} as {_them(s)[0]}: {why}.")
+    for t in P.get("unresolved") or []:
+        why = f"its settings could not be resolved ({(P.get('unresolved_why') or {}).get(t)}): Apply on it says why"
+        out.append(f"Not imported again: {t} ({why})." if after else f"Apply to all leaves {t} as it is: {why}.")
+    return out
+
+
+def apply_to_all(tag: str, S_f: dict, progress=None, failed: list | None = None, warns: list | None = None,
+                 changed=None) -> str:
+    """'Apply to all N harvest files': the settings S_f on `tag`, and the fields changed on it (changed: their keys,
+    as apply_to_all_plan) merged into the own settings of every other harvest file they reach, each line naming what
+    changed in that file (its other own settings stay; a product chosen reaches only the files of the product `tag`
+    had, with that product's own values; for another product, the weight to volume and dry moisture stay; its cleaning
+    is set aside). A file the change brings nothing is left exactly as it is (its import, own settings and cleaning)
+    and named; so are files not imported as SMS, on an older rule's import it does not reach, on the readings a failed
+    SMS import left and files of an older version. progress(tag, i, n): before each file. failed: receives a line per
+    other file that could not be imported (that file unchanged, with the way to finish it; without the list those
+    lines join the others). warns: as apply_custom. A product chosen is recorded in each file it goes to as given by
+    Apply to all (product_from). Returns the lines for the user."""
+    P = apply_to_all_plan(tag, S_f, changed)
+    targets = P["targets"]
+    if progress:
+        progress(tag, 1, len(targets) + 1)
+    lines = [apply_custom(tag, S_f, warns=warns, product_from=P.get("product_from"))]
+    for i, (t, S_t) in enumerate(targets.items()):
+        if progress:
+            progress(t, i + 2, len(targets) + 1)
+        try:
+            line = apply_custom(t, S_t, warns=warns,
+                                product_from=P.get("product_from") if t in P["product_to"] else None)
+            ch = plan_changes_text(P, t)
+            lines.append(line + (f" Changed in {t}: {ch}." if ch else ""))
+        except ValueError as e:
+            msg = str(e) if str(e).startswith(t) else f"{t}: {e}"
+            why = _error_reason(e.__cause__) if isinstance(e.__cause__, Exception) else default_failed_reason(t)
+            if why:
+                # its write failed (its own import, or its SMS default it goes back to): what to do and the way to
+                # finish it, in place of 'try again' (Apply to all no longer reaches it once the others changed)
+                tail = f"; {retry_advice(why)}"
+                msg = (msg[:-len(tail)] if msg.endswith(tail) else msg) + f"; {finish_advice(why)}"
+            (failed if failed is not None else lines).append(msg)
+    lines += plan_left_lines(P, after=True)
+    return " ".join(lines)
+
+
+def _same_active(D: dict, DF: dict) -> bool:
+    """The active import of a file is its default block's (same file, count and record)."""
+    def norm(p):
+        return os.path.normcase(os.path.abspath(str(p))) if p else ""
+
+    def rec(x):
+        return json.dumps(x, sort_keys=True, default=str)
+    return (norm(D.get("shp")) == norm(DF.get("shp")) and int(D.get("n") or 0) == int(DF.get("n") or 0)
+            and rec(D.get("sms_import")) == rec(DF.get("sms_import")))
+
+
+def _label_crop(label) -> str | None:
+    """The crop part of an extracted file's label ('<field> · <season> · <crop>'), None for 'crop?'."""
+    parts = str(label or "").split(" · ")
+    c = parts[-1].strip() if len(parts) >= 3 else ""
+    return c if c and c != "crop?" else None
+
+
+def basis_of_record(D: dict, legacy: bool = False) -> dict | None:
+    """The basis of a file saved without one (a work of an earlier version): the file of all readings, the crop, the
+    monitor's crop definition and the format (amendment A1.3). Raw data: the decode report's (raw_data_crop), never a
+    product typed before extracting nor the crop the record names. A point export: always read from the export itself
+    as a fresh open reads it (export_basis_now: its Deere metadata, then its Crop / Product column, a monitor product
+    the record keeps), never the crop its record names; marked 'pending' while the export cannot be read. None for a
+    planter or sprayer file, a folder rebuilt from its files (legacy), a file with the first import (the minimum
+    only)."""
+    IM = D.get("sms_import") if isinstance(D.get("sms_import"), dict) and D.get("sms_import") else None
+    if legacy or not D.get("yield", True) or (D.get("import_min") and IM is None):
+        return None
+    if D.get("kind") == "raw":
+        src = D.get("source") if isinstance(D.get("source"), dict) else {}
+        allr = (IM or {}).get("all_readings") or src.get("decoded_shp") or (D.get("shp") if IM is None else None)
+        if not allr:
+            return None
+        crop, mon = raw_data_crop(D)
+        fmt = (IM or {}).get("fmt") or import_fmt(src or None)
+        return {"all_readings": allr, "crop": crop, "monitor": mon, "fmt": fmt}
+    if D.get("kind") != "export":
+        return None
+    # read from the export itself, never from the crop the record names (pending while it cannot be read)
+    return export_basis_now(D, IM)
+
+
+def raw_data_crop(D: dict) -> tuple:
+    """(crop, monitor product) of the data of a raw file saved without a basis, from its decode report, as the data
+    gives them (amendment A1.3). The report is the data's unless the decoder wrote the product it was given (0.3.0's
+    step 1) as the task's crop (0.3.0's ISOXML reader: the report's crop is the product, its options name it, the
+    label still names the task's crop): then the crop is the label's (None for 'crop?') and the report's monitor
+    product, the product's, is not taken. A crop the record names is never taken: 0.3.0 recorded the product chosen
+    there (its step 1, or its file panel on data that names no crop)."""
+    IM = D.get("sms_import") if isinstance(D.get("sms_import"), dict) and D.get("sms_import") else {}
+    rep = D.get("report") if isinstance(D.get("report"), dict) else {}
+    src = D.get("source") if isinstance(D.get("source"), dict) else {}
+    o = rep.get("options") if isinstance(rep.get("options"), dict) else {}
+    lab = _label_crop(D.get("label"))
+    named = rep.get("crop_name") or src.get("crop_name")
+    oc = _crop(o.get("crop"))
+    if oc and oc != _crop(lab) and _crop(named) == oc:
+        return lab, None                                 # the decoder's crop is the product it was given
+    mon = IM.get("monitor") if IM.get("monitor") is not None else rep.get("monitor_product")
+    return named or lab, mon
+
+
+def product_origin_030(D: dict) -> str | None:
+    """Who gave the product of a file's import as 0.3.0 saved it (a record without a default block), as far as the
+    record can tell (amendment A1.3): 'step1' (0.3.0's step 1 gave it: a raw file whose decode report names that
+    product as the decoder's option; a point export whose record names no crop, as 0.3.0's open records it with
+    step 1's product), 'maybe' (the record cannot tell: a point export whose record names the product as its crop,
+    which 0.3.0's file panel writes both for step 1's product imported again and for a product chosen on data that
+    names no crop; a record of an export with Deere metadata, identical either way), 'hand' (chosen in 0.3.0's file
+    panel: the record keeps the data's crop, or the raw file was decoded with another product or none), or None (no
+    product chosen)."""
+    IM = D.get("sms_import") if isinstance(D.get("sms_import"), dict) else None
+    p = _crop(((IM or {}).get("resolved") or {}).get("product"))
+    if not p:
+        return None
+    if D.get("kind") == "raw":
+        o = (D.get("report") or {}).get("options") if isinstance(D.get("report"), dict) else None
+        return "step1" if isinstance(o, dict) and _crop(o.get("crop")) == p else "hand"
+    if IM.get("crop") is None:
+        return "step1"
+    mon = IM.get("monitor") if isinstance(IM.get("monitor"), dict) else None
+    if _crop(IM["crop"]) == p or (mon and _crop(IM["crop"]) == _crop(mon.get("crop"))):
+        return "maybe"
+    return "hand"
+
+
+def step1_products_030(datasets: dict) -> list:
+    """The products a saved work of 0.3.0 shows its step 1 gave (product_origin_030 'step1' of any of its files saved
+    without a default block, or with one whose basis is still to be read, and what such a block kept of them): a
+    product whose origin a record cannot tell counts as step 1's only when one of these is it (amendment A1.3)."""
+    out = set()
+    for D in (datasets or {}).values():
+        if not isinstance(D, dict):
+            continue
+        DF = D.get("import_default") if isinstance(D.get("import_default"), dict) else {}
+        pending = bool((DF.get("basis") or {}).get("pending"))
+        if pending:
+            out.update(DF.get("step1") or ())
+        if (not DF or pending) and product_origin_030(D) == "step1":
+            out.add(_crop(D["sms_import"]["resolved"]["product"]))
+    return sorted(x for x in out if x)
+
+
+def basis_pending(D: dict) -> bool:
+    """The basis of a file of an earlier version could not be read yet (its export not at hand when the work was
+    opened): nothing is known of its SMS default until its readings are back (settle_basis)."""
+    return bool((default_of(D).get("basis") or {}).get("pending"))
+
+
+BASIS_PENDING_NOTE = ("the crop of its data could not be read yet (its readings are not at hand): SMS's default "
+                      "import of this file is told once they are back (reconnect the drive and open the work again); "
+                      "the import in use stays as it is")
+
+
+def basis_pending_note(B: dict | None) -> str:
+    """Why the basis of a file could not be read yet, in the words of its cause: its readings away (BASIS_PENDING_NOTE),
+    or there but not readable ('why': held open by another program, a read error), read again at the next action."""
+    why = (B or {}).get("why") if isinstance(B, dict) else None
+    if not why:
+        return BASIS_PENDING_NOTE
+    return (f"the crop of its data could not be read yet ({why}): {unread_advice(why)}; it is read again at the next "
+            "action on this page, and the import in use stays as it is until then")
+
+
+UNREAD_ADVICE = "check that the export is complete (its .shp, .shx and .dbf), or open its data again (step 1)"
+
+
+def unread_advice(why: str | None) -> str:
+    """What to do about an export that is there but could not be read for this reason, as retry_advice words a failed
+    write: close the program that holds it (a file held open, access denied), else UNREAD_ADVICE (a part missing or
+    damaged, a read that failed)."""
+    return "close the program that holds it" if held_reason(why) else UNREAD_ADVICE
+
+
+def basis_pending_note_of(D: dict) -> str:
+    return basis_pending_note(default_of(D).get("basis"))
+
+
+def classify_import(D: dict, legacy: bool = False, step1=None) -> dict:
+    """The import mode of a file of a saved work, and (a work of an earlier version) a default block: record only,
+    no file written (it runs when a work is opened). A planter or sprayer file, a rebuilt folder, a file with the
+    first import: mode default, no basis. An export or raw file saved with the import off: mode as_is, its default
+    built later (ensure_default). An import with no value of the user's, the flags off, no delay or flow shift and the
+    data's own product (a raw file decoded as a fresh extraction decodes it): mode default, the default = the saved
+    import (labelled 'older' when today's rule gives other values: kept as saved, D7). Any other: mode custom, its
+    default built later; a product of 0.3.0's step 1 (product_origin_030; step1: the products the work shows its
+    step 1 gave) gets the group '0.3.0', one chosen by hand none. A basis that cannot be read now (the export not at
+    hand) is not taken as known: the block keeps it as pending, with no mode or group decided from it, and the file
+    is classified once its readings are back. A work of this version keeps its mode, unless an earlier version
+    imported the file again (its record no longer the default's)."""
+    IM = D.get("sms_import") if isinstance(D.get("sms_import"), dict) and D.get("sms_import") else None
+    DF = D.get("import_default")
+    if isinstance(DF, dict) and DF and (DF.get("basis") or {}).get("pending"):
+        step1 = sorted(set(DF.get("step1") or ()) | set(step1 or ()))
+        D.pop("import_default", None)                    # read again: classified now when it can be read
+        D.pop("import_mode", None)
+        DF = None
+    if isinstance(DF, dict) and DF:
+        m = import_mode(D)
+        if m == "default" and DF.get("shp") and not _same_active(D, DF):
+            m = "custom" if IM else "as_is"
+        D["import_mode"] = m
+        return D
+    B = None
+    try:
+        B = basis_of_record(D, legacy)
+    except Exception:                                    # nothing to import it from: no switch in step 2
+        B = None
+    if B is None:
+        D["import_default"] = {"shp": D.get("shp"), "n": D.get("n"), **stamp(D.get("shp")),
+                               "sms_import": copy.deepcopy(IM)}
+        D["import_mode"] = "default"
+        return D
+    if B.get("pending"):
+        # not read yet: the import in use as saved, nothing decided from a crop not known
+        D["import_default"] = {"basis": B, "step1": sorted(step1 or [])}
+        if IM is None:
+            D["import_mode"] = "as_is"
+        return D
+    if IM is None:
+        D["import_default"] = {"basis": B}
+        D["import_mode"] = "as_is"
+        return D
+    RS = IM.get("resolved") or {}
+    try:
+        R0 = default_resolved(B)
+    except ValueError:
+        R0 = {}
+    plain = (not any(RS.get(k) for k in FLAG_KEYS)
+             and all(abs(float(RS.get(k) or 0.0)) < 1e-9 for k in DELAY_KEYS))
+    SRC = IM.get("sources")
+    if isinstance(SRC, dict) and "sources" in IM:
+        default = plain and si.SRC_YOU not in SRC.values() and (RS.get("product") or None) == (R0.get("product") or None)
+        ref = R0
+    else:                                                # a record without sources: compared as a fresh open
+        default = plain
+        FR = fresh_export_import(D) if D.get("kind") == "export" else None
+        ref = FR["R"] if FR else R0
+    if default and D.get("kind") == "raw" and decoded_with_choice(D):
+        # readings decoded with a product or values of 0.3.0's step 1: not a fresh extraction's file, so no pointer
+        # default; the default is decoded again from the raw data and the import in use stays (ensure_default)
+        default = False
+    if not default:
+        p = _crop(RS.get("product"))
+        if p and p != _crop(R0.get("product")):
+            origin = product_origin_030(D)
+            if origin == "step1" or (origin == "maybe" and p in set(step1 or ())):
+                # 0.3.0's step 1 gave it (one product for the files opened together): Apply to all reaches them as
+                # one; a product chosen by hand stays that file's own (group data:<its data's product>)
+                IM["product_from"] = dict(PRODUCT_FROM_030)
+        D["import_default"] = {"basis": B}
+        D["import_mode"] = "custom"
+        return D
+    D["import_default"] = {"shp": D.get("shp"), "n": D.get("n"), **stamp(D.get("shp")),
+                           "sms_import": copy.deepcopy(IM), "basis": B,
+                           "older": import_changes(RS, ref, IMPORT_KEYS_SHOWN) or None}
+    if D.get("kind") == "raw":
+        D["import_default"]["source"] = copy.deepcopy(D.get("source"))
+    D["import_mode"] = "default"
+    return D
+
+
+def settle_basis(tag: str) -> bool:
+    """A file whose basis could not be read when its work was opened (basis_pending), once its readings are back:
+    classified as at the open (classify_import), then the work saved. True when that was done now."""
+    D = ss.datasets.get(tag)
+    if not isinstance(D, dict) or not basis_pending(D):
+        return False
+    B = import_basis(D) or {}
+    src = ew.resolve_moved(B.get("all_readings"), ss.workdir) if B.get("all_readings") else None
+    if not src or not os.path.exists(src):
+        # its readings away now: the reason it could not be read no longer holds (the words of readings not at hand)
+        B.pop("why", None)
+        return False
+    classify_import(D)
+    if basis_pending(D):
+        return False
+    save_current(quiet=True)
+    return True
+
+
+def _point_count(shp: str) -> int | None:
+    try:
+        import pyogrio
+        return int(pyogrio.read_info(shp)["features"])
+    except Exception:
+        return None
+
+
+def _build_key(tag: str) -> tuple:
+    """What a failed build of a file's default import depends on: the work, its readings and the default's file,
+    each with its time on disk."""
+    D = ss.datasets.get(tag) or {}
+    B, DF = import_basis(D) or {}, default_of(D)
+    src = ew.resolve_moved(B.get("all_readings"), ss.workdir) if B.get("all_readings") else None
+    return (str(ss.get("workdir")), str(src), mtime(src), str(DF.get("shp")), mtime(DF.get("shp")))
+
+
+# a full Windows path in an error message (C:\... or C:/..., \\server\... or //server/...): its folders (spaces and
+# dots allowed; none of them a space before another path), then a file name up to its extension when a space, a
+# quote, ',', ';', ')' or ': ' (or the end) follows it; a path with no such file name: up to a quote, ': ', another
+# path or the end
+_PATH_START = r"(?:(?<![A-Za-z])[A-Za-z]:[\\/]|\\\\|(?<![:\w])//)"
+_PATH_CHAR = r"(?:(?!\s" + _PATH_START + r")[^'\"\n\\/:])"
+_PATH_IN_TEXT = re.compile(_PATH_START + r"(?:(?:" + _PATH_CHAR + r"*[\\/])*" + _PATH_CHAR
+                           + r"*?\.[A-Za-z0-9]{1,5}(?=[\s'\",;)]|:\s|:$|$)"
+                           + r"|[^'\"\n]*?(?=['\"]|: |:$|\n|$|\s" + _PATH_START + r"))")
+
+
+def _error_reason(e: BaseException) -> str:
+    """'PermissionError: Access is denied': an error in a few words (no Windows error number, no full path: a path in
+    the message, as GDAL's 'Failed to create file C:/.../x.shp: ...', is named by its file name only)."""
+    if isinstance(e, OSError) and e.strerror:
+        return f"{type(e).__name__}: {e.strerror}"
+    msg = re.sub(r"\[(?:WinError|Errno) \d+\]\s*", "", str(e))
+    msg = _PATH_IN_TEXT.sub(lambda m: ntpath.basename(m.group(0).rstrip("\\/ ")) or "a folder", msg)
+    return f"{type(e).__name__}: {msg}".strip()
+
+
+def finish_advice(why: str | None) -> str:
+    """The way to finish a file Apply to all could not import (its write failed for this reason): what retry_advice
+    says to do, then Apply on that file (Apply to all no longer reaches it once the others changed)."""
+    a = retry_advice(why)
+    lead = a[:-len(" and try again")] + ", then " if a.endswith(" and try again") else ""
+    return f"{lead}choose it in step 2 and Apply the same change on it"
+
+
+def held_reason(why: str | None) -> bool:
+    """The reason (_error_reason) is a file held open by another program or an access denied (the words retry_advice
+    tests for a failed write)."""
+    w = str(why or "").lower()
+    return any(x in w for x in ("permissionerror", "permission denied", "access is denied",
+                                "being used by another process", "sharing violation"))
+
+
+def retry_advice(why: str | None) -> str:
+    """What to do about a write that failed for this reason (_error_reason): close the program that holds its files
+    (a file held open, access denied), free disk space (a full disk), else try again (step 1 keeps the reason)."""
+    w = str(why or "").lower()
+    if any(x in w for x in ("permissionerror", "permission denied", "access is denied", "being used by another process",
+                            "sharing violation")):
+        return "close the program that holds its files and try again"
+    if any(x in w for x in ("no space left", "not enough space", "disk full", "disk is full")):
+        return "free disk space and try again"
+    return "try again (step 1 keeps the reason)"
+
+
+def default_failed_reason(tag: str) -> str | None:
+    """Why SMS's default import of a file could not be made in this session (the error in a few words), while its
+    files are as they were then; None otherwise."""
+    f = (ss.get("default_failed") or {}).get(tag)
+    if isinstance(f, (tuple, list)) and len(f) == 2 and tuple(f[0]) == _build_key(tag):
+        return str(f[1])
+    return None
+
+
+def default_needs_build(tag: str, retry: bool = False) -> bool:
+    """The default import of a harvest file with a basis is missing, or its file no longer matches it (its count, or
+    its content when its time on disk changed: an earlier version imported the file again under the default's name),
+    and its readings are there to build it from; or it was built from readings an older version decoded with a
+    product while the raw data was not at hand, and the raw data is back. A file whose time alone changed (a work
+    copied or unzipped without its files' times) is the same import: its new time is kept, nothing is built again. A
+    block without a content signature (an earlier build of 0.3.1) whose import is an older rule's, in use: kept as
+    saved (D7). A build that failed is not tried again in this session while its files are as they were (retry: an
+    action of the user's tries it again; opening the work again does too). A basis not read yet is read first, once
+    its readings are back (settle_basis); until then nothing is built."""
+    settle_basis(tag)
+    D = ss.datasets.get(tag) or {}
+    B = import_basis(D)
+    if not D.get("yield", True) or B is None or B.get("pending"):
+        return False
+    DF = default_of(D)
+    if DF.get("error"):
+        return False
+    if not retry and default_failed_reason(tag) is not None:
+        return False
+    src = ew.resolve_moved(B["all_readings"], ss.workdir)
+    if not src or not os.path.exists(src):
+        return False
+    shp = DF.get("shp")
+    if not shp:
+        return True                                      # never built (a work of an earlier version)
+    if DF.get("older_decode") and DF.get("raw_gone"):
+        root = _raw_root(D)
+        if root and os.path.isdir(root):
+            return True                                  # the raw data is back: decoded again for SMS's default
+    if not os.path.exists(shp):
+        # gone from disk: built again while another import is on screen; the file on screen itself gone has no
+        # default to fall back to (step 2 says so and offers to remove the file)
+        return os.path.normcase(os.path.abspath(str(D.get("shp") or ""))) != os.path.normcase(os.path.abspath(shp))
+    if DF.get("mtime") is not None and abs(mtime(shp) - float(DF["mtime"])) > 2.0:
+        if DF.get("sig"):
+            if content_sig(shp) != DF["sig"]:
+                return True
+        elif not (DF.get("older") and import_mode(D) == "default" and _same_active(D, DF)):
+            return True
+        DF.update(stamp(shp))                            # the same file, another time on disk
+    n = _point_count(shp)
+    return DF.get("n") is not None and n is not None and n != int(DF["n"])
+
+
+def _rebase_own_import(tag: str, D: dict, B: dict, src: str, rep_dec: dict | None, folder: str) -> bool:
+    """Own settings (mode custom) made from the readings an older version decoded with a product, once the raw data
+    was decoded again for SMS's default (decode_default): the import in use made again from the new readings with the
+    values step 2 shows (what Apply with nothing typed imports), under a temporary name. When that is the import in
+    use reading for reading (the same settings, the same content), the record follows the new readings: the file in
+    use and its cleaning stay, and step 2 no longer says it was made from an older decode (it is decided by content,
+    not by the readings' path). The temporary file goes either way. True when the record follows them."""
+    IM = D.get("sms_import") or {}
+    RS = IM.get("resolved")
+    if not isinstance(RS, dict) or not D.get("shp") or not os.path.exists(D["shp"]):
+        return False
+    S = {k: RS.get(k) for k in si.DEFAULTS}
+    if not S.get("use_manual_moisture"):
+        S["manual_moisture_pct"] = None                  # empty: the dry moisture, as the field gives it
+    nxt = _next_path(folder, tag, in_use=(D.get("shp"), default_of(D).get("shp")))
+    try:
+        S = si.settings(S)
+        R = si.resolve(S, S.get("product") or B.get("crop"), B.get("monitor"), B.get("fmt"))
+        if not same_import(R, RS):
+            return False
+        labels = crop_labels(D, B, R, rep=rep_dec)
+        _remove_files(_parts(os.path.splitext(nxt)[0]))
+        rep = si.apply(src, nxt, R, labels=labels)
+        sig = content_sig(rep["path"])
+        if sig is None or sig != content_sig(D["shp"]):
+            return False
+    except Exception:                                    # not made: the import in use stays as it is
+        return False
+    finally:
+        _remove_files(_parts(os.path.splitext(nxt)[0]))
+    DF = default_of(D)
+    rec = _import_record(R, rep, src, B.get("monitor"), B.get("fmt"), B.get("crop"))
+    rec["mode"] = "custom"
+    if isinstance(IM.get("product_from"), dict):
+        rec["product_from"] = dict(IM["product_from"])  # the same product: where it came from stays
+    D["sms_import"] = rec
+    _follow_default_decode(D, DF)                        # the decode the import is now made from
+    if D.get("kind") == "raw" and isinstance(DF.get("source"), dict):
+        D["source"] = _summary_crop(source_with_import(DF["source"], R, rep.get("applied"), src_shp=src,
+                                                       report=D.get("report")),
+                                    labels if rep.get("relabelled") else None)
+    return True
+
+
+def ensure_default(tag: str, retry: bool = False) -> str | None:
+    """Builds the default import of a file when it is missing or no longer matches its file (default_needs_build):
+    SMS's default settings on its readings, <decoded or imported>/<tag>_imported_default.shp; a raw file's source
+    with that import's options. A raw file an earlier version decoded with a product (or its own weight and moisture)
+    is first decoded again from its raw data as a fresh extraction decodes it (decode_default): its default is then
+    what a fresh open of the same data gives, never the readings of that product; when the raw data is not at hand,
+    the default is built from those readings and labelled as the older version's ('Older rule'), not as SMS's
+    default. A file in mode default then reads it too: when that changes the data in use (the raw data back, or the
+    default's file changed on disk), the cleaning made on the earlier data is set aside (as an Apply does), said in
+    step 1's note and in the work message. Saves the work. Returns a note for step 1 when the default cannot be built
+    (its readings gone, the import failed: said once, the build is not tried again on every run of the page) or when
+    it was decoded again or set a cleaning aside, else None."""
+    settle_basis(tag)
+    D = ss.datasets.get(tag)
+    B = import_basis(D or {})
+    if not D or B is None or not D.get("yield", True):
+        return None
+    if B.get("pending"):
+        return basis_pending_note(B)                      # nothing is built from a crop not read yet
+    DF = default_of(D)
+    src = ew.resolve_moved(B["all_readings"], ss.workdir)
+    if not src or not os.path.exists(src):
+        return DEFAULT_GONE_NOTE if not (DF.get("shp") and os.path.exists(DF["shp"])) else None
+    if not default_needs_build(tag, retry=retry):
+        return None
+    failed = ss.setdefault("default_failed", {})
+    # the data in use when it is the default (mode default): what its cleaning was made from (the file is replaced):
+    # the default's content as recorded, or its file as it is now
+    was_older = bool(DF.get("older_decode"))
+    had = import_mode(D) == "default" and has_cleaning(tag)
+    old_sigs = ({DF.get("sig"), content_sig(D.get("shp"))} - {None}) if had else set()
+    # the files the default and the import in use were, with their readings (removed below once nothing names them)
+    prev = (D.get("shp"), (D.get("sms_import") or {}).get("all_readings"), DF.get("shp"),
+            (DF.get("basis") or {}).get("all_readings"))
+    dec, older_decode, why_old, raw_gone = None, None, None, False
+    choice = decoded_with_choice(D)
+    if choice:
+        try:
+            dec = decode_default(tag, D)
+        except Exception as e:                           # the raw data gone or refused: the readings as they are
+            root = _raw_root(D)
+            raw_gone = not (root and os.path.isdir(root))
+            # a reason in a few words (no folder path); once the raw data is back it is decoded again
+            older_decode = choice
+            why_old = ("its raw data is not at hand" if raw_gone
+                       else f"its raw data could not be decoded again ({type(e).__name__})")
+    rep_dec = None
+    if dec is not None:
+        rep_dec = dec["report"]
+        crop_d = rep_dec.get("crop_name") or _label_crop(D.get("label")) or None
+        B = {"all_readings": dec["shp"], "crop": None if crop_d is None else str(crop_d),
+             "monitor": copy.deepcopy(rep_dec.get("monitor_product")), "fmt": rep_dec.get("format") or B.get("fmt")}
+        src = dec["shp"]
+    R0 = default_resolved(B)
+    folder = os.path.join(ss.workdir, "decoded" if D.get("kind") == "raw" else "imported")
+    os.makedirs(folder, exist_ok=True)
+    labels = crop_labels(D, B, R0, rep=rep_dec)          # a file an earlier version decoded with another product
+    # written under a temporary name and swapped in once complete: the default may be the import in use
+    nxt = _next_path(folder, tag, in_use=(D.get("shp"), DF.get("shp")))
+    _remove_files(_parts(os.path.splitext(nxt)[0]))
+    try:
+        rep = si.apply(src, nxt, R0, labels=labels)
+    except Exception as e:
+        _remove_files(_parts(os.path.splitext(nxt)[0]))
+        # said once; not tried again until its files change (the reason stays for step 1's import line)
+        failed[tag] = (_build_key(tag), _error_reason(e))
+        return (f"SMS's default import of this file could not be made ({_error_reason(e)}): step 1 shows the "
+                "import in use")
+    note_swap = None
+    if os.path.normcase(os.path.abspath(rep["path"])) != os.path.normcase(os.path.abspath(src)):
+        path, w = _swap_in(nxt, os.path.join(folder, f"{tag}{DEFAULT_SUFFIX}.shp"))
+        rep = {**rep, "path": path}
+        note_swap = "; ".join(w) or None
+    rec = _import_record(R0, rep, src, B.get("monitor"), B.get("fmt"), B.get("crop"))
+    if D.get("kind") == "export" and B.get("crop") is None and B.get("monitor") is None:
+        # read again from its readings, as a fresh open notes it (0.3.0 never read the column with step 1's product)
+        try:
+            note = data_crops(src)[1]
+        except Exception:                                # (no note)
+            note = None
+    else:
+        note = (DF.get("sms_import") or D.get("sms_import") or {}).get("crops_note")
+    if note:
+        rec["notes"].append(note)
+        rec["crops_note"] = note
+    new = {"shp": rep["path"], "n": int(rep["n_out"]), **stamp(rep["path"]), "sms_import": rec,
+           "basis": dict(B), "error": None, "older": None}
+    if older_decode:
+        new.update({"older": [why_old], "older_decode": older_decode, "raw_gone": raw_gone})
+    if D.get("kind") == "raw":
+        if dec is not None:
+            base, rep_src = dec["source"], rep_dec
+            new.update({"report": rep_dec, "zip": dec.get("zip")})
+        else:
+            base = DF.get("source") if isinstance(DF.get("source"), dict) else D.get("source")
+            rep_src = DF.get("report") if isinstance(DF.get("report"), dict) else D.get("report")
+            if isinstance(DF.get("report"), dict):
+                new.update({"report": DF["report"], "zip": DF.get("zip")})
+        new["source"] = _summary_crop(source_with_import(base, R0, rep.get("applied"), src_shp=src, report=rep_src),
+                                      labels if rep.get("relabelled") else None)
+    D["import_default"] = new
+    notes = [note_swap] if note_swap else []
+    if not note_swap:
+        # swapped in: an import a swap blocked earlier left under a temporary name, referenced by nothing, goes
+        prev += tuple(os.path.join(folder, s_ + ".shp") for s_ in _next_stems(folder, tag))
+    back = was_older and not older_decode                # the raw data is back: decoded again for SMS's default
+    IMu = D.get("sms_import") or {}
+    other_readings = (dec is not None and import_mode(D) == "custom" and bool(IMu.get("all_readings"))
+                      and _norm_p(ew.resolve_moved(IMu["all_readings"], ss.workdir)) != _norm_p(src))
+    if other_readings and _rebase_own_import(tag, D, B, src, rep_dec, folder):
+        # own settings made from the older readings give the same import from the new ones: it stays, made from them
+        # (the older readings stay on disk until an action of the user's replaces that import)
+        old_r = _norm_p(ew.resolve_moved(IMu["all_readings"], ss.workdir))
+        prev = tuple(x for x in prev if not (x and _norm_p(ew.resolve_moved(x, ss.workdir)) == old_r))
+        if back:
+            notes.append("its raw data is back: SMS's default import (step 1) was decoded again from it; the import "
+                         "in use (step 2) is the same, reading for reading, from those readings, so it and its "
+                         "cleaning stay")
+        back = False
+    if import_mode(D) == "default":
+        D["shp"], D["n"], D["sms_import"] = new["shp"], new["n"], copy.deepcopy(rec)
+        if "source" in new:
+            D["source"] = copy.deepcopy(new["source"])
+        _follow_default_decode(D, new)
+        if had and new.get("sig") not in old_sigs:
+            # the cleaning was made on other data than the default made now: set aside, as an Apply does
+            why = ("its raw data is back: SMS's default import was decoded again from it, and the cleaning made on "
+                   "the older version's readings was set aside: clean it again in step 3" if back else
+                   "SMS's default import of this file was made again (its file had changed on disk), and the "
+                   "cleaning made on the earlier file was set aside: clean it again in step 3")
+            warn = drop_cleaning(tag)
+            work_msg_line(tag, why)
+            notes.append(why + "".join(f"; {w}" for w in warn))
+        elif back:
+            notes.append("its raw data is back: SMS's default import was decoded again from it")
+    elif back:
+        notes.append("its raw data is back: SMS's default import (step 1) was decoded again from it; the import in "
+                     "use (step 2) stays")
+    notes += drop_unreferenced(tag, prev)                # (the older version's readings and import, now unused)
+    failed.pop(tag, None)
+    save_current(quiet=True)
+    return "; ".join(notes) or None
+
+
+def reapply_after_extract(made: dict, warn=None) -> list:
+    """A file extracted again from the same input: its custom import (step 2) applied again on the new default, or a
+    line that a file once as the monitor logged it is now SMS's default. Returns the status lines; warn(line): each
+    warning of the import again (a file held open), else they join its line."""
+    lines = []
+    for t in list(made):
+        what = (ss.datasets.get(t) or {}).pop("_reapply", None)
+        if not what:
+            continue
+        if what[0] == "custom":
+            try:
+                w = []
+                apply_custom(t, what[1], warns=w, product_from=what[2] if len(what) > 2 else None)
+                lines.append(f"{t}: your import settings were applied again" + ("" if warn else _set_aside(False, w)))
+                for w_ in w if warn else []:
+                    warn(f"{t}: {w_}")
+            except ValueError as e:
+                D_t = ss.datasets.get(t) or {}                 # the earlier own import, referenced no more, goes
+                w = delete_custom_import(t, keep=(D_t.get("shp"), default_of(D_t).get("shp")))
+                lines.append(f"{t}: your import settings could not be applied again ({e})"
+                             + ("" if warn else _set_aside(False, w)))
+                for w_ in w if warn else []:
+                    warn(f"{t}: {w_}")
+        else:
+            lines.append(f"{t}: extracted again with SMS's default (it was as the monitor logged it)")
+    return lines
 
 
 def width_audit(df: pd.DataFrame) -> list:
@@ -1756,146 +3981,28 @@ HEADER_SHARE = 0.05              # a width logged by at least 5 % of a combine's
 
 
 def width_audit_box(df: pd.DataFrame):
-    """Step 2: the header width as logged, per combine, to check against the real header."""
+    """Step 1: the header width as logged, per combine, to check against the real header."""
     WA = width_audit(df)
     if not WA:
         return
-    with st.expander("Header width as logged (initial audit): " + ", ".join(
-            f"{r['combine'] if len(WA) > 1 else ''} {r['logged width (ft)']:g} ft".strip() for r in WA),
-            icon=":material/straighten:"):
+    ws_ = sorted({float(r["logged width (ft)"]) for r in WA})
+    with st.expander("Header width: " + (f"{ws_[0]:g} ft" if len(ws_) == 1 else f"{ws_[0]:g}-{ws_[-1]:g} ft")
+                     + (f" ({len(WA)} combines)" if len(WA) > 1 else ""), type="compact"):
         st.dataframe(pd.DataFrame(WA), hide_index=True,
                      column_config={c: st.column_config.NumberColumn(format="%.1f")
                                     for c in ("logged width (ft)", "readings at it (%)", "wider (%)",
                                               "within 1 ft below (%)", "narrower (%)", "narrowest (ft)", "widest (ft)")})
         widths = sorted({r["logged width (ft)"] for r in WA})
         st.caption("The width the monitor logged on each reading: SMS and OCED use it (the manual swath of the import "
-                   "settings is used only when 'Use manual swath' is ticked). The logged width taken as the header's is "
+                   "settings is used only when 'Manual swath' is ticked). The logged width taken as the header's is "
                    f"the widest one at least {100 * HEADER_SHARE:g} % of the combine's readings logged (else the most "
                    "common): a monitor that trims the width by the overlap logs many readings up to 1 ft narrower "
                    "(within 1 ft below); more than 1 ft narrower are partial passes or sections off. "
                    + (f"The combines logged different widths ({', '.join(f'{x:g}' for x in widths)} ft): check each "
                       "header. " if len(widths) > 1 else "")
-                   + "If it is not your header's width, tick 'Use manual swath' in the import settings of this file, "
-                     "set the real width and import it again (the bu/ac are scaled by logged / manual; the grain mass "
-                     "is kept).")
-
-
-def file_import_panel(tag: str, D: dict):
-    """Step 2: the SMS import settings this file was imported with (real values, every one editable) and 'Import this
-    file again with these settings'. Only for a harvest file imported as SMS."""
-    IM = D.get("sms_import") or {}
-    RS = IM.get("resolved")
-    if not D.get("yield", True) or not IM or not IM.get("all_readings"):
-        return
-    if not RS:                                       # an import recorded before the values were kept
-        RS = si.resolve(import_settings(), D.get("label"), IM.get("monitor"), IM.get("fmt"))
-    SRC = IM.get("sources") or RS.get("sources") or {}
-    # an export imported by an older version: the panel offers the values opening it again gives (RP, SRCP), so that
-    # 'Import this file again' with nothing typed is this version's import of it
-    FR = fresh_export_import(D)
-    old_imp = old_export_import(D, FR) if FR is not None else ""
-    mon_p, fmt_p, RP, SRCP = IM.get("monitor"), IM.get("fmt"), RS, SRC
-    if old_imp:
-        mon_p, fmt_p = FR["monitor"], FR["fmt"]
-        RP = {**RS, **{k: FR["R"].get(k) for k in IMPORT_KEYS_SHOWN}}
-        SRCP = FR["R"].get("sources") or {}
-    TKm = file_key(tag)
-    # the widgets are keyed by the import they show: another import of the file (Open again, a saved work, Import
-    # again) gets new widgets with its own values instead of keeping the previous ones
-    TKi = key_of(f"{TKm}|{ss.workdir}|{IM.get('settings')}|{IM.get('n_in')}|{mtime(D['shp'])}")
-    if ss.get(f"fi_msg_{TKm}"):
-        st.success(ss.pop(f"fi_msg_{TKm}"), icon=":material/check_circle:")
-
-    def came(k):
-        s = SRCP.get(k)
-        lab = str(SOURCE_LABEL.get(s, s) or "")
-        return f"From: {lab[5:] if lab.startswith('from ') else lab}." if s else None     # 'From: the file.'
-    unknown = RS.get("test_weight_lb_bu") is None or RS.get("dry_moisture_pct") is None
-    with st.expander(f"Import settings of this file (as SMS) · {IM.get('settings', '')}", icon=":material/tune:"):
-        st.caption("The values this file was imported with. Change any of them and import it again: the map, the "
-                   "statistics and the cleaning then start from the new import (its cleaning is dropped; clean it "
-                   "again in step 3). The defaults for the next files are in step 1.")
-        if SRC:
-            st.caption("Where the values came from: " + sources_line({**IM, "sources": SRC, "resolved": RS}) + ".")
-        if old_imp:
-            st.caption(f":orange[This file was imported by an older version of OCED ({import_values_line(RS)}). The "
-                       "values below are the ones this version gives it, as opening the export again would: import it "
-                       "again to use them.]")
-        elif unknown:
-            st.caption(":orange[Product not recognised: the yields are as the file gives them. Choose the product to "
-                       "convert them with its weight to volume and dry moisture.]")
-        if old_decode(D):
-            st.caption(":orange[This file was extracted by an older version of OCED: importing it again re-imports the "
-                       "readings that version decoded. Open the raw data again (step 1) for the current decode.]")
-        prods = sorted(common.CROPS)
-        p0 = RP.get("product") if RP.get("product") in prods else None
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            f_prod = st.selectbox("Physical product", [None] + prods, index=([None] + prods).index(p0),
-                                  key=f"fi_prod_{TKi}", format_func=lambda c: "unknown" if c is None else c,
-                                  on_change=_fi_product_changed, args=(TKi, mon_p, fmt_p))
-            f_tw = st.number_input("Weight to volume (lb/bu)", 1.0, 200.0,
-                                   None if RP.get("test_weight_lb_bu") is None else float(RP["test_weight_lb_bu"]),
-                                   0.5, format="%.2f", key=f"fi_tw_{TKi}", placeholder="as the file gives it",
-                                   help=came("test_weight_lb_bu"))
-            f_dm = st.number_input("Dry moisture (%)", 0.0, 60.0,
-                                   None if RP.get("dry_moisture_pct") is None else float(RP["dry_moisture_pct"]), 0.1,
-                                   format="%.2f", key=f"fi_dm_{TKi}", placeholder="as the file gives it",
-                                   help=came("dry_moisture_pct"))
-            f_exp = st.checkbox("Expand dry moisture", value=bool(RS.get("expand_dry_moisture")), key=f"fi_exp_{TKi}")
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            f_ums = st.checkbox("Use manual swath", value=bool(RS.get("use_manual_swath")), key=f"fi_ums_{TKi}")
-            WA_ = width_audit(read_points(D["shp"], mtime(D["shp"])))
-            w_log = max((r["logged width (ft)"] for r in WA_), default=None)
-            w0 = (float(RS.get("manual_swath_ft") or 15.0) if (RS.get("use_manual_swath") or not w_log)
-                  else float(w_log))
-            f_msw = st.number_input("Manual swath width (ft)", 0.1, 300.0, w0, 0.5,
-                                    format="%.2f", key=f"fi_msw_{TKi}", disabled=not f_ums)
-            f_umm = st.checkbox("Use manual moisture", value=bool(RS.get("use_manual_moisture")), key=f"fi_umm_{TKi}")
-            mm0 = next((float(RP[k]) for k in ("manual_moisture_pct", "dry_moisture_pct") if RP.get(k) is not None), None)
-            f_mm = st.number_input("Manual moisture (%)", 0.0, 80.0, mm0, 0.1, format="%.2f", key=f"fi_mm_{TKi}",
-                                   disabled=not f_umm, placeholder="= the dry moisture")
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            f_min = st.number_input("Min. yield volume (bu/ac)", 0.0, 1e4,
-                                    None if RP.get("min_yield") in (None, si.AUTO) else float(RP["min_yield"]), 1.0,
-                                    format="%.3f", key=f"fi_min_{TKi}", placeholder="no minimum", help=came("min_yield"))
-            f_max = st.number_input("Max. yield volume (bu/ac)", 0.0, 1e5,
-                                    None if RP.get("max_yield") is None else float(RP["max_yield"]), 10.0,
-                                    format="%.2f", key=f"fi_max_{TKi}", placeholder="no maximum",
-                                    help=(came("max_yield") or "") + (
-                                        " When SMS holds another maximum for the product, type it here."
-                                        if SRCP.get("max_yield") == si.SRC_JD
-                                        else "") or None)
-            f_sd = st.number_input("Start delay (s)", 0.0, 600.0, float(RS.get("start_delay_s") or 0.0), 0.5,
-                                   format="%.2f", key=f"fi_sd_{TKi}")
-            f_ed = st.number_input("Stop delay (s)", 0.0, 600.0, float(RS.get("stop_delay_s") or 0.0), 0.5,
-                                   format="%.2f", key=f"fi_ed_{TKi}")
-            f_fs = st.number_input("Flow shift (s)", -600.0, 600.0, float(RS.get("flow_shift_s") or 0.0), 0.5,
-                                   format="%.2f", key=f"fi_fs_{TKi}")
-        # a value that does not act (the manual swath / moisture while its box is unticked) keeps the recorded one
-        S_f = {"on": True, "product": f_prod, "test_weight_lb_bu": f_tw, "dry_moisture_pct": f_dm,
-               "expand_dry_moisture": bool(f_exp), "use_manual_swath": bool(f_ums),
-               "manual_swath_ft": f_msw if f_ums else RS.get("manual_swath_ft", 15.0),
-               "use_manual_moisture": bool(f_umm),
-               "manual_moisture_pct": f_mm if f_umm else RS.get("manual_moisture_pct"), "min_yield": f_min,
-               "max_yield": f_max, "start_delay_s": f_sd, "stop_delay_s": f_ed, "flow_shift_s": f_fs}
-        changed = [k for k, v in S_f.items() if k in RS and not _same_value(RS.get(k), v)
-                   and not (k == "manual_swath_ft" and not (f_ums or RS.get("use_manual_swath")))
-                   and not (k == "manual_moisture_pct" and not (f_umm or RS.get("use_manual_moisture")))]
-        if changed:
-            st.caption(":orange[These values differ from the ones the file was imported with: import it again to use "
-                       "them.]")
-        if st.button("Import this file again with these settings", key=f"fi_go_{TKi}", icon=":material/refresh:",
-                     type="primary" if changed else "secondary"):
-            with st.spinner("Importing the file again ..."):
-                try:
-                    ss[f"fi_msg_{TKm}"] = reimport_file(tag, S_f)
-                except ValueError as e:
-                    st.error(str(e), icon=":material/error:")
-                    return
-                except Exception as e:                   # shown, never swallowed
-                    st.exception(e)
-                    return
-            st.rerun()
+                   + "The bu/ac of a manual swath are scaled by logged / manual; the grain mass is kept. If it is not "
+                     "your header's width, switch off SMS's default in step 2, tick Manual swath, set the real width "
+                     "and Apply.")
 
 
 def _same_value(a, b) -> bool:
@@ -1910,14 +4017,14 @@ def _same_value(a, b) -> bool:
         return str(a) == str(b)
 
 
-def import_as_sms(shp: str, tag: str, folder: str, crop=None, monitor=None, fmt=None, R=None):
-    """The data as SMS imports it (its Processing Settings: the panel of step 1, the empty values filled in as SMS
-    does for this source, engine/sms_import.resolve with the crop, the monitor's crop definition and the format):
-    engine/sms_import.apply writes <folder>/<tag>_imported.shp (the kept records byte for byte, the recomputed cells
-    patched). Returns (path, n imported or None, the record of the import or None); the file itself when the import is
-    off or changes nothing. A point file naming more than one crop is imported with no product (nothing converted) and
-    its record says so."""
-    S = import_settings()
+def import_as_sms(shp: str, tag: str, folder: str, crop=None, monitor=None, fmt=None, R=None, S=None):
+    """The data as SMS imports it (its Processing Settings S, SMS's defaults when None: every file opens with them;
+    the empty values filled in as SMS does for this source, engine/sms_import.resolve with the crop, the monitor's
+    crop definition and the format): engine/sms_import.apply writes <folder>/<tag>_imported.shp (the kept records
+    byte for byte, the recomputed cells patched). Returns (path, n imported or None, the record of the import or
+    None); the file itself when the import is off or changes nothing. A point file naming more than one crop is
+    imported with no product (nothing converted) and its record says so."""
+    S = si.settings(S or {})
     if not S["on"]:
         return shp, None, None
     note = None
@@ -1936,20 +4043,23 @@ def import_as_sms(shp: str, tag: str, folder: str, crop=None, monitor=None, fmt=
 
 def extract(cand, chosen_units, opts, kw, log, warn=None):
     """The chosen units as one shapefile per field, season and crop (engine.run.decode on each group), each imported
-    as SMS would import it. The decoder gets the shrink of the import and, for a John Deere file or ISOXML task data,
-    only the weight to volume and dry moisture typed in step 1 (it keeps the crop of the file, as SMS); for any other
-    source
-    the product's. The import then resolves its settings with the decode report's crop definition (monitor_product)
-    or, for a Case IH / New Holland card, its SMS product (crop_name). A group the decoder refuses (ValueError) is
-    passed to warn and the others go on. A tag another raw input of this work already has gets a suffix instead of
-    replacing that file; the same input extracted again replaces its file (and its cleaning moves to superseded/)."""
+    as SMS imports it with its Processing Settings untouched (the default import of the file, kept beside the active
+    one: import_default). The decoder gets the one-sided shrink of SMS's import; a John Deere file or ISOXML task
+    data keeps the crop of the file and its values (as SMS); any other source gets the product's. The import then
+    resolves its settings with the decode report's crop definition (monitor_product) or, for a Case IH / New Holland
+    card, its SMS product (crop_name). A group whose crop has no weight on the card is decoded again with SMS's
+    values for data without a product (a warning says so: the product can be chosen in step 2); a group the decoder
+    still refuses (ValueError) is passed to warn and the others go on; a group whose import fails is the decoded
+    readings as they are (mode as_is, its default marked 'error'). A tag another raw input of this work already has
+    gets a suffix instead of replacing that file; the same input extracted again replaces its file (and its cleaning
+    moves to superseded/); a custom import of the replaced file is applied again after the extraction
+    (reapply_after_extract, made[tag]['_reapply'])."""
     groups = {}
     for u in chosen_units:
         groups.setdefault((u.field or "", u.year, str(u.crop or "").strip().lower()), []).append(u)
     made, failed = {}, []
-    S_i = import_settings()
+    S_i = si.settings({})
     fmt = cand.get("decoder")
-    fam = si.format_family(fmt)
     root = os.path.normcase(os.path.abspath(cand["probe"].root))
     for (field, year, crop), us in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0, kv[0][2])):
         base = er.candidate_tag(cand, us)
@@ -1957,6 +4067,9 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
         if tag.casefold() in {m.casefold() for m in made}:         # the same field and season in two crops
             tag = fit_tag(f"{fit_tag(base, max(6, tag_budget() - 12))}_{crop or 'crop'}")
         prev = next((t for t in ss.datasets if t.casefold() == tag.casefold()), None)
+        if prev is None and tag.casefold() in {str(t).casefold() for t in (ss.get("away") or {})}:
+            tag = free_tag(tag, cand["probe"].root, also=made)   # a file set aside (its points away) keeps its tag
+        reapply = None
         if prev is not None:
             D_p = ss.datasets[prev]
             r_prev = (ew.input_root(D_p, ss.workdir) if hasattr(ew, "input_root")
@@ -1965,46 +4078,62 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
                 tag = free_tag(tag, cand["probe"].root, also=made)   # another input's file: both are kept
             else:
                 tag = prev                                         # the same input again: it replaces its file
+                # its own import settings (step 2) are applied again on the new default; as logged: said
+                if import_mode(D_p) == "custom" and import_basis(D_p) and D_p.get("sms_import"):
+                    IMp = D_p["sms_import"]
+                    try:
+                        R0p = default_resolved(import_basis(D_p))
+                        reapply = ("custom", si.settings(changed_settings(
+                            {**(IMp.get("resolved") or {}), "sources": IMp.get("sources")}, R0p)),
+                            IMp.get("product_from"))      # where its own product came from stays (A1.3)
+                    except ValueError:
+                        reapply = None
+                elif import_mode(D_p) == "as_is" and not failed_in_use(D_p):
+                    reapply = ("as_logged", None)
+        # the user's import of a file whose settings are applied again: replaced by that import (its swap says once
+        # when a program holds it open), not deleted here first
+        old_own = ss.datasets[prev].get("shp") if (reapply and reapply[0] == "custom") else None
         log(f"extracting {field or '(no field)'} {year or ''} ({len(us)} unit(s)) ...")
-        opts_g = opts
-        if S_i["on"]:
-            sh = "symmetric" if S_i["expand_dry_moisture"] else "one_sided"
-            if fam in si.FILE_CROP_FAMILIES:
-                opts_g = dataclasses.replace(
-                    opts, crop=S_i["product"] or opts.crop, shrink=sh,
-                    test_weight_lb_bu=(S_i["test_weight_lb_bu"] if S_i["test_weight_lb_bu"] is not None
-                                       else opts.test_weight_lb_bu),
-                    std_moisture_pct=(S_i["dry_moisture_pct"] if S_i["dry_moisture_pct"] is not None
-                                      else opts.std_moisture_pct))
-            else:
-                R_pre = si.resolve(S_i, crop, None, fmt)
-                opts_g = dataclasses.replace(
-                    opts, crop=S_i["product"] or opts.crop, shrink=sh,
-                    test_weight_lb_bu=R_pre["test_weight_lb_bu"] if R_pre["product"] else opts.test_weight_lb_bu,
-                    std_moisture_pct=R_pre["dry_moisture_pct"] if R_pre["product"] else opts.std_moisture_pct)
         kw_g = dict(kw)
         if isinstance(kw.get("totals_only"), (list, tuple)):
             # the tasks with totals only of THIS field and season (each file's Summary holds its own field's)
             want = {str(x) for x in kw["totals_only"]}
             kw_g["totals_only"] = [r["id"] for r in totals_only_of(cand, us) if str(r["id"]) in want] or None
-        try:
-            d = er.decode(cand, [u.id for u in us], opts_g, ss.workdir, log=log, tag=tag, **kw_g)
-        except ValueError as e:
+        where = f"{field or '(no field)'} {year or ''}"
+        d, no_product, err0 = decode_for_default(cand, [u.id for u in us], opts, crop, kw_g, ss.workdir, tag, log,
+                                                 where)
+        if d is None:
             if warn is None:
-                raise
-            failed.append(f"{field or '(no field)'} {year or ''}: {e}")
+                raise err0
+            failed.append(f"{where}: {err0}")
             warn(failed[-1])
             continue
         d.pop("df", None)
         drop_cleaning(d["tag"])                          # extracted again: its old cleaning no longer applies
         rep = d["report"]
+        if no_product:
+            rep.setdefault("warnings", []).append(no_product)
+            if isinstance(d.get("source"), dict):
+                d["source"]["warnings"] = list(d["source"].get("warnings") or []) + [no_product]
+            log(no_product)
+            if warn is not None:
+                warn(no_product)
         t = rep.get("totals") or {}
         mon = rep.get("monitor_product")
         fmt_d = rep.get("format") or fmt
-        crop_i = S_i["product"] or rep.get("crop_name") or crop or None
-        R_i = si.resolve(S_i, crop_i, mon, fmt_d) if S_i["on"] else None
-        shp_i, n_i, rec = import_as_sms(d["shp"], d["tag"], os.path.join(ss.workdir, "decoded"), crop=crop_i,
-                                        monitor=mon, fmt=fmt_d, R=R_i)
+        crop_i = rep.get("crop_name") or crop or None
+        err_i = None
+        try:
+            R_i = si.resolve(S_i, crop_i, mon, fmt_d)
+            shp_i, n_i, rec = import_as_sms(d["shp"], d["tag"], os.path.join(ss.workdir, "decoded"), crop=crop_i,
+                                            monitor=mon, fmt=fmt_d, R=R_i)
+        except Exception as e:                            # the decoded readings as they are; step 2 tries again
+            shp_i, n_i, rec, err_i = d["shp"], None, None, f"{type(e).__name__}: {e}"
+            w = (f"{d['tag']}: SMS's import failed ({err_i}): the decoded readings are used as they are; step 2 can "
+                 "try the import again")
+            log(w)
+            if warn is not None:
+                warn(w)
         if rec:
             log(f"import as SMS: {rec['n_all'] - rec['n_in']:,} of {rec['n_all']:,} readings left out"
                 + (" (" + ", ".join(f"{k} {v:,}" for k, v in rec["left_out"].items()) + ")" if rec["left_out"] else "")
@@ -2013,15 +4142,76 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
         if isinstance(al, dict) and al:
             log("grain and moisture of the readings: " + ", ".join(f"{k} {v:,}" if isinstance(v, (int, float))
                                                                     else f"{k} {v}" for k, v in al.items()))
-        made[d["tag"]] = {"tag": d["tag"], "shp": shp_i, "zip": d["zip"], "n": n_i if n_i is not None else d["n"],
+        if prev is not None and tag == prev:
+            dd = os.path.join(ss.workdir, DEFAULT_DECODE_DIR, "decoded")          # an earlier default's decode
+            for w_ in (_remove_files(p for s_ in ("_decoded", "_decode_report")
+                                     for p in _parts(os.path.join(dd, d["tag"] + s_)))
+                       + delete_custom_import(d["tag"], keep=(shp_i, d["shp"], old_own))):   # the user's import
+                log(f"{d['tag']}: {w_}")
+                if warn is not None:
+                    warn(f"{d['tag']}: {w_}")
+        n_d = n_i if n_i is not None else d["n"]
+        made[d["tag"]] = {"tag": d["tag"], "shp": shp_i, "zip": d["zip"], "n": n_d,
                           "kind": "raw", "op": "harvest", "yield": True,
                           "label": f"{field or '(no field)'} · {year or 'no season'} · {crop or 'crop?'}",
                           "source": d["source"], "report": rep, "area_ac": t.get("area_ac"),
                           "units": [u.label for u in us], "sms_import": rec,
-                          "inputs_left_out": list(rep.get("inputs_left_out") or [])}
+                          "inputs_left_out": list(rep.get("inputs_left_out") or []),
+                          "import_default": {"shp": shp_i, "n": n_d, **stamp(shp_i),
+                                             "sms_import": copy.deepcopy(rec), "source": copy.deepcopy(d["source"]),
+                                             "basis": {"all_readings": d["shp"],
+                                                       "crop": rec.get("crop") if rec else crop_i,
+                                                       "monitor": copy.deepcopy(mon), "fmt": fmt_d},
+                                             "error": err_i},
+                          "import_mode": "as_is" if err_i else "default"}
+        if reapply:
+            made[d["tag"]]["_reapply"] = reapply
     if not made and failed:
         raise ValueError("; ".join(failed))
     return made
+
+
+def decode_for_default(cand, unit_ids, opts, crop, kw: dict, out: str, tag: str, log, where: str) -> tuple:
+    """The units decoded for SMS's default import (extract; decode_default): the decoder gets the one-sided shrink of
+    SMS's import; a John Deere file and ISOXML task data keep the file's crop and values, any other source the
+    product's lb/bu and moisture (crop: the units' crop as the input names it). A crop the card gives no weight (a
+    partial card copy, a crop number it does not list) is decoded again with SMS's values for data without a product;
+    the product can be chosen in step 2. Writes <out>/decoded/<tag>_decoded.*. (the decode or None, the line saying
+    it was decoded with the no-product values or None, the decoder's error or None)."""
+    S_i = si.settings({})
+    fmt = cand.get("decoder")
+    sh = "symmetric" if S_i["expand_dry_moisture"] else "one_sided"
+    if si.format_family(fmt) in si.FILE_CROP_FAMILIES:
+        opts_g = dataclasses.replace(opts, shrink=sh)
+    else:
+        R_pre = si.resolve(S_i, crop, None, fmt)
+        opts_g = dataclasses.replace(
+            opts, shrink=sh,
+            test_weight_lb_bu=R_pre["test_weight_lb_bu"] if R_pre["product"] else opts.test_weight_lb_bu,
+            std_moisture_pct=R_pre["dry_moisture_pct"] if R_pre["product"] else opts.std_moisture_pct)
+    d, err0, no_product = None, None, None
+    try:
+        d = er.decode(cand, list(unit_ids), opts_g, out, log=log, tag=tag, **kw)
+    except ValueError as e:
+        err0 = e
+    if d is None and "test_weight_lb_bu" in str(err0):
+        tw_n, sm_n = no_product_values()
+        try:
+            d = er.decode(cand, list(unit_ids), dataclasses.replace(
+                opts_g, test_weight_lb_bu=tw_n, std_moisture_pct=sm_n), out, log=log, tag=tag, **kw)
+            no_product = f"{where}: " + NO_PRODUCT_DECODE.format(tw_n, sm_n)
+        except ValueError:
+            d = None
+    return d, no_product, err0
+
+
+def no_product_values() -> tuple:
+    """(lb/bu, dry moisture %) SMS gives data without a product (engine/formats/isoxml.py ISO_SMS_NO_PRODUCT)."""
+    try:
+        from engine.formats import isoxml
+        return tuple(float(x) for x in isoxml.ISO_SMS_NO_PRODUCT)
+    except Exception:                                    # the reader not loadable: SMS's values
+        return 56.0, 13.0
 
 
 def inputs_left_out_of(D: dict) -> list:
@@ -2296,10 +4486,9 @@ def difm_question(tag: str, C: dict) -> dict | None:
         "Shapefile for DIFM: which yield does it carry?", opts, index=opts.index(difm_yield_of(C, adj)),
         format_func=lambda k: ed.yield_label(k, adj), horizontal=True,
         key=f"difm_y_{file_key(tag)}_{key_of(str(mtime(C['shp'])))}",
-        help="The cleaning adjusted the yield: " + adj["what"] + ". Adjusted: the file DIFM reads carries that yield "
-             "(in Yld_Vol_Dr, and Yld_Mass_D, Yld_Mass_W and Yld_Vol_We by the same factor per reading). 3-sigma only: "
-             "the monitor's yield as cleaned. Each choice has its own file name; one already written stays in the "
-             "folder.")
+        help="The cleaning adjusted the yield: " + adj["what"] + ". Adjusted: the file DIFM reads carries that yield. "
+             "3-sigma only: the monitor's yield as cleaned. Each choice has its own file name (About the file for "
+             "DIFM).")
     return adj
 
 
@@ -2877,7 +5066,7 @@ def record_without_level(R: dict, dropped: list) -> dict:
 
 # ------------------------------------------------------------------------------------------------ saved works
 SMS_WIDGET_KEYS = ("k_sd", "group_by", "max_passes", "min_yield", "t_clip", "t_swath", "t_speed", "t_moist", "t_yield",
-                   "filter_order", "swath_scope", "swath_bias", "swath_passes")
+                   "filter_order", "swath_scope", "swath_bias", "swath_passes", "min_yield_v")
 # the SMS 3-sigma settings of the harvest panel (sset): what one cleaning of a yield file runs with
 SMS_SET_KEYS = ("k_sd", "group_by", "max_yield_passes", "min_yield", "clip", "swath", "speed", "moisture", "yield",
                 "filter_order", "swath_scope", "swath_bias", "swath_passes")
@@ -2906,19 +5095,32 @@ def save_requested():
 
 
 def work_record(name: str | None = None) -> dict:
-    """The current work as a saved-work record (engine/works.py); the creation time of an earlier save is kept."""
+    """The current work as a saved-work record (engine/works.py); the creation time of an earlier save is kept. A file
+    set aside when the work was opened (its points away: ss.away) is written back as it was saved, with its cleaning,
+    grower's data, boundary and settings, in its place among the files."""
     prev = ew.load_work(ss.workdir) if os.path.exists(ew.work_path(ss.workdir)) else None
+    away = {t: A for t, A in (ss.get("away") or {}).items() if t not in ss.datasets}
+    ds = {t: (ss.datasets[t] if t in ss.datasets else away[t]["dataset"]) for t in (ss.get("away_order") or [])
+          if t in ss.datasets or t in away}
+    ds.update({t: D for t, D in ss.datasets.items() if t not in ds})
+    ds.update({t: A["dataset"] for t, A in away.items() if t not in ds})
+
+    def merged(cur, k):
+        return {**(cur or {}), **{t: A[k] for t, A in away.items() if k in A}}
     return ew.make_record(ss.workdir, name or ss.get("work_name") or default_work_name(),
-                          input_label=ss.get("input_label"), active=ss.active, datasets=ss.datasets,
-                          boundary=ss.boundary, grower=ss.grower, smsset=ss.get("smsset"), a3set=ss.a3set,
-                          cleaned=ss.cleaned, app_version=VERSION, created=(prev or {}).get("created"),
-                          combines=ss.get("cfset") or {}, inputs_left_out=ss.get("left_out") or [])
+                          input_label=ss.get("input_label"), active=ss.active, datasets=ds,
+                          boundary=merged(ss.boundary, "boundary"), grower=merged(ss.grower, "grower"),
+                          smsset=ss.get("smsset"), a3set=merged(ss.a3set, "a3set"),
+                          cleaned=merged(ss.cleaned, "cleaned"), app_version=VERSION,
+                          created=(prev or {}).get("created"), combines=merged(ss.get("cfset") or {}, "combines"),
+                          inputs_left_out=ss.get("left_out") or [])
 
 
-def save_current(quiet: bool = False):
+def save_current(quiet: bool = False, even_empty: bool = False):
     """Saves the current work into its work folder (oced_work.json). quiet: the automatic save after an extraction
-    or a cleaning (a failure is only a toast)."""
-    if not ss.workdir or not ss.datasets:
+    or a cleaning (a failure is only a toast). A work whose files are all set aside (ss.away) is saved too; even_empty:
+    also one left with no file (its last file set aside removed from it)."""
+    if not ss.get("workdir") or not (ss.datasets or ss.get("away") or even_empty):
         return
     try:
         ew.save_work(ss.workdir, work_record())
@@ -2927,7 +5129,7 @@ def save_current(quiet: bool = False):
         if not quiet:
             st.toast(f"Saved: {ss.get('work_name') or default_work_name()}", icon=":material/save:")
     except OSError as e:
-        st.toast(f"The work could not be saved: {e}", icon=":material/error:")
+        st.toast(f"The work could not be saved ({_error_reason(e)})", icon=":material/error:")
 
 
 def restore_work(wd: str):
@@ -2947,11 +5149,41 @@ def restore_work(wd: str):
     ss.left_out = ew.inputs_left_out(rec)              # said again in step 1, and in the 'Opened ...' message
     probs, resolved_by_clean = [], []                  # the lines a new cleaning of that file answers
     ss.datasets = {}
+    back_default = set()                               # files whose own import is gone: back to SMS's default
     for t, D in (rec.get("datasets") or {}).items():
+        DF = default_of(D)
         if D.get("shp") and os.path.exists(D["shp"]):
             ss.datasets[t] = D
+        elif DF.get("shp") and os.path.exists(DF["shp"]) and import_mode(D) != "default" \
+                and derived_import(t, D.get("shp")):
+            # the file of its own import is gone, its default import is there: back to it (record only, no file
+            # written: this runs in the Open callback). Not for a file in use read in place (the export as it is,
+            # an import that changed nothing): its folder is away, set aside below
+            D["shp"], D["n"] = DF["shp"], DF.get("n")
+            D["sms_import"] = copy.deepcopy(DF.get("sms_import"))
+            if D.get("kind") == "raw" and "source" in DF:
+                D["source"] = copy.deepcopy(DF["source"])
+            _follow_default_decode(D, DF)
+            D["import_mode"] = "as_is" if DF.get("error") else "default"
+            ss.datasets[t] = D
+            back_default.add(t)
+            probs.append(f"{t}: its import with your settings is no longer on disk: it is back to "
+                         + ("the import of the older version's readings (Older rule)" if DF.get("older_decode")
+                            else "SMS's default import") + " (step 2 can apply your settings again)")
         else:
-            probs.append(f"{t}: its points are no longer at {D.get('shp')}")
+            # its points away (a drive not plugged in): set aside with its cleaning, grower's data and boundary, and
+            # written back unchanged by every save of the work (work_record), never dropped from it
+            ss.away[t] = {"dataset": D}
+            probs.append(away_line(t, D, t in (rec.get("cleaned") or {})))
+    ss.away_order = list(rec.get("datasets") or {})
+    # the products the work shows 0.3.0's step 1 gave (a product a record cannot tell the origin of: amendment A1.3)
+    step1 = step1_products_030(rec.get("datasets") or {})
+    for t, D in ss.datasets.items():                   # the import mode and default of every file (record only)
+        classify_import(D, legacy=bool(rec.get("legacy")), step1=step1)
+    for t, A_ in ss.away.items():                      # what the work keeps of a file set aside, as saved
+        for k in ("grower", "a3set", "combines", "boundary", "cleaned"):
+            if t in (rec.get(k) or {}):
+                A_[k] = rec[k][t]
     ss.grower = {t: G for t, G in (rec.get("grower") or {}).items() if t in ss.datasets}
     ss.a3set = {t: A for t, A in (rec.get("a3set") or {}).items() if t in ss.datasets}
     ss.smsset = rec.get("smsset")
@@ -2979,8 +5211,11 @@ def restore_work(wd: str):
             continue
         ss.cleaned[t] = {**C, "R": R, "config": C.get("config"),
                          "boundary": boundary_of(t) if (R.get("aoi") or R.get("boundary")) else None}
-        why = C.get("clean_again") or (ew.clean_again_reason(R) if (C.get("kind") != "a3" and
-                                                                     hasattr(ew, "clean_again_reason")) else None)
+        why = C.get("clean_again") or (ew.clean_again_reason(R, C.get("flagged_shp"))
+                                       if (C.get("kind") != "a3" and hasattr(ew, "clean_again_reason")) else None)
+        if not why and t in back_default:
+            why = "it was cleaned from your import settings, whose file is gone (the file is back to SMS's default): " \
+                  "clean it again"
         n_shp, n_dbf = shapefile_counts(C["shp"])
         if not why and R.get("n_kept") is not None and (n_shp != n_dbf or n_shp != int(R["n_kept"])):
             why = (f"its clean shapefile holds {n_shp:,} points and {n_dbf:,} attribute rows, its cleaning record "
@@ -2995,8 +5230,7 @@ def restore_work(wd: str):
     if len(olds) == 1:
         probs.append(f"{olds[0]}: {OLD_DECODE_LINE}")
     elif olds:
-        probs.append(f"{len(olds)} files ({', '.join(olds)}): "
-                     + OLD_DECODE_LINE.replace("its readings and their import are", "their readings and imports are"))
+        probs.append(f"{len(olds)} files ({', '.join(olds)}): {OLD_DECODE_LINES}")
     for t, D in ss.datasets.items():
         why_imp = old_export_import(D)
         if why_imp:
@@ -3021,6 +5255,7 @@ def restore_work(wd: str):
 OLD_DECODE_LINE = ("extracted by an older version of OCED: its readings and their import are not the current ones "
                    "(a new cleaning keeps them); open the raw data again (step 1) for the current decode and import "
                    "as SMS")
+OLD_DECODE_LINES = OLD_DECODE_LINE.replace("its readings and their import are", "their readings and imports are")
 
 
 def old_decode(D: dict) -> str:
@@ -3043,7 +5278,51 @@ def forget_work_msg(tag: str):
     lines = str(msg[1]).split("\n")
     keep = [x for x in lines[1:] if not (x.startswith(f"- {tag}: ") and x in done)]
     if len(keep) != len(lines) - 1:
-        ss.work_msg = ("warning" if keep else "ok", "\n".join(lines[:1] + keep))
+        ss.work_msg = (None if (not keep and lines[0] == WORK_MSG_HEAD) else
+                       ("warning" if keep else "ok", "\n".join(lines[:1] + keep)))
+
+
+WORK_MSG_HEAD = "In this work:"      # the head of a work message started by a line about a file (work_msg_line)
+
+
+def drop_work_msg_file(tag: str):
+    """A file removed from its work: every line of the work message about it ('- <tag>: ...') goes, whatever it says
+    (a file set aside that 'stays in this work' no longer does); the one line of several files extracted by an older
+    version names the others only (one left: that file's own line). Once no line is left the message is a plain
+    'opened' (or none, under a head of its own)."""
+    msg = ss.get("work_msg")
+    if msg and msg[0] in ("warning", "ok"):
+        lines = str(msg[1]).split("\n")
+        keep, many = [], re.compile(r"- \d+ files \((.*)\): " + re.escape(OLD_DECODE_LINES) + "$")
+        for x in lines[1:]:
+            m = many.match(x)
+            if m and tag in m.group(1).split(", "):
+                # the one line of several files extracted by an older version: the file leaves its list
+                rest = [t for t in m.group(1).split(", ") if t != tag]
+                if len(rest) == 1:
+                    keep.append(f"- {rest[0]}: {OLD_DECODE_LINE}")
+                elif rest:
+                    keep.append(f"- {len(rest)} files ({', '.join(rest)}): {OLD_DECODE_LINES}")
+            elif not x.startswith(f"- {tag}: "):
+                keep.append(x)
+        if keep != lines[1:]:
+            ss.work_msg = (None if (not keep and lines[0] == WORK_MSG_HEAD) else
+                           ("warning" if keep else "ok", "\n".join(lines[:1] + keep)))
+    ss.work_msg_resolved = [x for x in (ss.get("work_msg_resolved") or []) if not x.startswith(f"- {tag}: ")]
+
+
+def work_msg_line(tag: str, line: str):
+    """A line '<tag>: <line>' added to the work message of the sidebar (under the 'Opened ...' head, or a head of its
+    own when there is none), once; a new cleaning of the file answers it (forget_work_msg)."""
+    x = f"- {tag}: {line}"
+    msg = ss.get("work_msg")
+    if msg and msg[0] in ("ok", "warning"):
+        lines = str(msg[1]).split("\n")
+        if x not in lines:
+            ss.work_msg = ("warning", "\n".join(lines + [x]))
+    else:
+        ss.work_msg = ("warning", f"{WORK_MSG_HEAD}\n{x}")
+    ss.work_msg_resolved = list(ss.get("work_msg_resolved") or []) + [x]
 
 
 def shapefile_counts(shp: str) -> tuple[int, int]:
@@ -3149,7 +5428,7 @@ def workspace_block(works: list):
 
 
 def select_file(tag: str):
-    """A file of the action tree: shown in steps 2 to 4."""
+    """A file of the action tree: shown in steps 1 to 4."""
     ss.active = tag
     ss["active_pick"] = tag
 
@@ -3222,6 +5501,11 @@ def draw_work_msg():
     if not msg:
         WORK_MSG_PH.empty()
         return
+    if msg[0] in ("ok", "warning"):
+        # the counts as they are now (an Apply sets a cleaning aside, a file is removed ...), not as opened
+        msg = (msg[0], re.sub(r"^(Opened .*): \d+ file\(s\), \d+ cleaned",
+                              lambda m: f"{m.group(1)}: {len(ss.datasets)} file(s), {len(ss.cleaned)} cleaned",
+                              str(msg[1]), count=1))
     (WORK_MSG_PH.success if msg[0] == "ok" else WORK_MSG_PH.warning if msg[0] == "warning" else WORK_MSG_PH.error)(
         msg[1], icon=":material/folder_open:")
 
@@ -3240,19 +5524,22 @@ def action_tree():
     """The action tree of the sidebar: what was done in each step, file by file; a file name shows that file."""
     st.subheader("Action tree", anchor=False)
     DSx = ss.datasets
-    with st.expander("1 · Machine data", icon=":material/upload_file:", expanded=not DSx):
+    with st.expander("1 · Raw data", icon=":material/upload_file:", expanded=True):
         st.caption(f"{_tick(bool(DSx))} " + (html.escape(str(ss.get("input_label"))) if ss.get("input_label")
                                               else ("opened from a saved work" if DSx else "nothing opened")))
-        if DSx:
-            st.caption(f"{len(DSx)} file(s): " + ", ".join(DSx))
-    with st.expander("2 · Map and attributes", icon=":material/map:", expanded=bool(DSx)):
-        if not DSx:
-            st.caption("nothing yet")
         for t, D in DSx.items():
             st.button(t, key=f"tree_f_{key_of(t)}", type="tertiary", on_click=select_file, args=(t,),
                       icon=":material/arrow_right:" if t == ss.active else ":material/description:",
-                      help="Show this file in steps 2 to 4")
-            st.caption(f"{int(D.get('n') or 0):,} readings · {html.escape(str(D.get('label') or ''))}")
+                      help="Show this file in steps 1 to 4")
+            n1 = default_of(D).get("n") if default_of(D).get("shp") else D.get("n")
+            st.caption(f"{int(n1 or 0):,} readings · {html.escape(str(D.get('label') or ''))}")
+    with st.expander("2 · Import settings", icon=":material/tune:", expanded=bool(DSx)):
+        if not DSx:
+            st.caption("nothing yet")
+        for t, D in DSx.items():
+            w = import_word(t, D)
+            st.caption(f"**{html.escape(t)}**: {html.escape(w)}"
+                       + (f" · {int(D.get('n') or 0):,} readings" if import_mode(D) != "default" else ""))
     with st.expander("3 · Cleaning", icon=":material/cleaning_services:", expanded=bool(DSx)):
         if not DSx:
             st.caption("nothing yet")
@@ -3281,7 +5568,7 @@ def action_tree():
             else:
                 lines.append(f"{_tick(False)} not cleaned yet")
             st.caption("  \n".join(lines))
-    with st.expander("4 · Clean shapefiles and reports", icon=":material/download:", expanded=bool(ss.cleaned)):
+    with st.expander("4 · Clean files and reports", icon=":material/download:", expanded=bool(ss.cleaned)):
         if not ss.cleaned:
             st.caption("nothing cleaned yet")
         for t, C in ss.cleaned.items():
@@ -3331,11 +5618,6 @@ def per_area(unit: str) -> bool:
     """A per-area unit (bu/ac, lb/ac, gal/ac, kg/ha ...): its SMS Average is the area-weighted one."""
     u = str(unit or "").lower().replace(" ", "")
     return u.endswith("/ac") or u.endswith("/ha")
-
-
-def _d(x, ref, what):
-    """The delta text of a card: '+1.23 bu/ac by <what> (<ref>)'; None when either value is missing."""
-    return None if (x is None or ref is None) else f"{x - ref:+.2f} bu/ac {what}"
 
 
 def combines_of(df: pd.DataFrame) -> tuple[list, str]:
@@ -3415,7 +5697,7 @@ def factor_outcome_box(R: dict):
     if FO["applied"]:
         txt = ("The combine factor of the last cleaning was applied: "
                + ", ".join(f"{m} x {f:.4f}" for m, f in FO["applied"].items())
-               + f" (the reference {FO['reference']} x 1). The map after the correction factors is in the Clean map tab.")
+               + f" (the reference {FO['reference']} x 1). The corrected yield is one pill away on the clean map.")
         tone = ("#E8F7F0", "#00784D")
     else:
         tone = ("#FFF5E5", "#9A5B00")
@@ -3448,13 +5730,17 @@ def factor_outcome_box(R: dict):
 def seams_panel(C: dict | None):
     """Beside the combine factor: the differences between neighbouring passes of different combines and of the same
     combine, from the last cleaning of the file (R['machines']['seams'], a diagnostic that never changes the data)."""
-    st.markdown("**Passes side by side** · the last cleaning of this file")
+    st.markdown("**Passes side by side** · the last cleaning of this file",
+                help="Neighbouring passes of different combines and of the same combine, on the kept readings of the "
+                     "last cleaning: a diagnostic that never changes the data. Per pair: the median difference of the "
+                     "stretches side by side, and how much the first combine reads above (+) or below (-) the second.")
     SM = ((((C or {}).get("R") or {}).get("machines") or {}).get("seams")) or None
     if C and C.get("R"):
         factor_outcome_box(C["R"])
     if not SM:
-        st.caption("Clean the file once: the differences between neighbouring passes of different combines and of the "
-                   "same combine appear here. Then decide on the factor and clean again.")
+        st.caption("After a cleaning.", help="Clean the file once: the differences between neighbouring passes of "
+                                             "different combines and of the same combine appear here. Then decide on "
+                                             "the factor and clean again.")
         return
     sc, db, da = SM["same_combine"], SM["different_combines"]["before"], SM["different_combines"]["after"]
     moved = bool(SM["different_combines"].get("factor_moved_them"))
@@ -3509,9 +5795,6 @@ def seams_panel(C: dict | None):
                      column_config={c: st.column_config.NumberColumn(format="%+.2f" if "above" in c else "%.2f")
                                     for c in ("difference (%)", "first above second (%)", "difference after (%)",
                                               "first above second after (%)")})
-        st.caption("Per pair of combines: the median difference of the stretches side by side, and how much the first "
-                   "combine reads above (+) or below (-) the second where they meet. On the kept readings; a diagnostic "
-                   "of the map that never changes the data.")
 
 
 def card_row(cards: list, key: str):
@@ -3524,7 +5807,8 @@ def card_row(cards: list, key: str):
         for col, c in zip(st.columns(len(cards), gap="small"), cards):
             with col:
                 st.metric(c["label"], c["value"], delta=c.get("delta"), delta_color="off", delta_arrow="off",
-                          help=c.get("help"), border=True, height="stretch")
+                          help=c.get("help"), border=True, height="stretch",
+                          delta_description=c.get("delta_description"))
 
 
 STEP_SHORT = {"S0": "import check", "S1": "clip", "S2": "swath", "S5": "yield"}
@@ -3563,8 +5847,9 @@ def step_color(fid: str, row: dict | None = None, R: dict | None = None) -> str:
 def step_effects(tag: str, C: dict) -> list | None:
     """How each step of an SMS 3-sigma cleaning moved the mean (plain) and the Average (SMS, total / area) of the dry
     yield, from the flagged file (every reading with Keep, Rem_By = the step that removed it, Swath_Scl = the per-area
-    scale of S2, Dist_Opt x Wdth_Opt = its area after S2). Rows: raw data (the file as imported), then every step that
-    removed or changed something: {step, label, removed, mean, avg, d_mean, d_avg}; the last row is the clean file.
+    scale of S2, Dist_Opt x Wdth_Opt = its area after S2). Rows: the import it started from (start_word), then every
+    step that removed or changed something: {step, label, removed, mean, avg, d_mean, d_avg}; the last row is the
+    clean file.
     None for a planter / sprayer file or without the flagged file."""
     R = C["R"]
     fl = C.get("flagged_shp")
@@ -3597,10 +5882,11 @@ def step_effects(tag: str, C: dict) -> list | None:
     D = ss.datasets[tag]
     rawdf = read_points(D["shp"], mtime(D["shp"]))
     rcol = yc.detect_columns([c for c in rawdf.columns if c not in ("lon", "lat")]).get("yield")
-    rows = [{"step": "raw", "label": "raw data", "removed": None, "mean": _mean_of(rawdf, rcol),
-             "avg": avg_of(rawdf, rcol)}]
+    other = cleaning_on_other_import(tag)                # its import is no longer on disk: no numbers of it
+    rows = [{"step": "raw", "label": cleaning_start_word(tag), "removed": None,
+             "mean": None if other else _mean_of(rawdf, rcol), "avg": None if other else avg_of(rawdf, rcol)}]
     alive = np.ones(len(f), bool)
-    n_out = len(rawdf) - len(f)
+    n_out = (int(R.get("n_read") or len(f)) if other else len(rawdf)) - len(f)
     if n_out > 0:                                     # the clip before S0: those readings are not in the flagged file
         m_, a_ = stats(y, a0, alive)
         rows.append({"step": "S1", "label": "S1 clip", "removed": int(n_out), "mean": m_, "avg": a_})
@@ -3624,185 +5910,449 @@ def step_effects(tag: str, C: dict) -> list | None:
     return rows
 
 
-def result_cards(tag: str, C: dict, path_only: bool = False):
-    """Above the clean map: the key numbers of the cleaning (one row of cards, as in step 2) and what made the final
-    yield: the raw readings, what the cleaning changed, then what the grower's data changed (applied with 'adjust',
-    only compared with 'validate'). Each yield as the plain mean of the readings (SMS Edit Legend) and as the Average of
-    the SMS summary (total / area, area-weighted)."""
+def start_step(D: dict) -> int:
+    """The step whose data the cleaning of a file starts from: 1 (SMS's default import, or a file with no import,
+    or one whose SMS import failed and is used as it is), 2 (your settings, or the file as it is / as logged)."""
+    if not D.get("yield", True):
+        return 1
+    mode = import_mode(D)
+    return 2 if mode == "custom" or (mode == "as_is" and not failed_in_use(D)) else 1
+
+
+def kind_word(kind: str) -> str:
+    """An import kind (import_kind) in words inside a line: 'SMS default', 'your settings', 'as it is', 'as logged',
+    'older rule', 'import failed'. The one table of these words is brand.BADGE_WORDS (the badges say the same)."""
+    w = brand.BADGE_WORDS.get(kind) or brand.BADGE_WORDS["as_is"]
+    return w if kind == "default" else w[0].lower() + w[1:]
+
+
+def start_word(tag: str, D: dict) -> str:
+    """The import a cleaning starts from, in the words of step 3's yield path and Steps tab: 'SMS default (step 1)',
+    'your settings (step 2)' ... (never 'raw data': step 1 is the raw data, step 2 a change of it)."""
+    return f"{kind_word(import_kind(tag, D))} (step {start_step(D)})"
+
+
+def cleaning_on_other_import(tag: str) -> bool:
+    """The kept cleaning of a file was made from the user's settings while the file is no longer on them (a work
+    reopened after its own import's file was deleted: the file is back on SMS's default, the cleaning is to be cleaned
+    again)."""
+    D = ss.datasets.get(tag) or {}
+    IMc = ((ss.cleaned.get(tag) or {}).get("R") or {}).get("sms_import")
+    return (isinstance(IMc, dict) and IMc.get("mode") == "custom" and bool(D.get("yield", True))
+            and import_kind(tag, D) != "custom")
+
+
+def cleaning_start_word(tag: str) -> str:
+    """The import a kept cleaning started from, by its step (start_word; 'your settings (step 2)' for a cleaning
+    made from own settings the file is no longer on)."""
+    if cleaning_on_other_import(tag):
+        return f"{kind_word('custom')} (step 2)"
+    return start_word(tag, ss.datasets[tag])
+
+
+def _keep_min_yield():
+    """Step 3's S0 minimum (files not imported as SMS): its value kept for the runs that do not draw it."""
+    ss["min_yield_v"] = ss.get("min_yield")
+
+
+def import_kind(tag: str, D: dict) -> str:
+    """The badge of the import a file's cleaning starts from (brand.BADGE_WORDS): 'default', 'custom', 'as_is',
+    'as_logged', 'older' or 'failed' (a planter or sprayer file: 'as_is')."""
+    mode, DF = import_mode(D), default_of(D)
+    IM = import_record_of(tag) or {}
+    if not D.get("yield", True):
+        return "as_is"
+    if basis_pending(D):
+        return "older"                                   # an earlier version's import, its basis not read yet
+    if failed_in_use(D):
+        return "failed"
+    if mode == "custom":
+        return "custom"
+    if mode == "as_is":
+        return "as_logged" if D.get("kind") == "raw" else "as_is"
+    if not isinstance(IM.get("resolved"), dict) or DF.get("older"):
+        return "older"
+    return "default"
+
+
+_CHANGE_LABELS = ("Product", "Weight to volume", "Dry moisture", "Expand dry moisture", "Manual swath",
+                  "Manual moisture", "Min. yield volume", "Max. yield volume", "Start delay", "Stop delay",
+                  "Flow shift")
+
+
+def own_changes(R0: dict, IM: dict | None) -> list:
+    """What the user's own values of an import record (step 2) change against SMS's default R0, as import_changes
+    gives it: the values the record says are the user's, the product chosen, the flags, delays and flow shift; a
+    value an older OCED rule gave (an import of 0.3.0 kept its minimum of 5 bu/ac) is not named."""
+    RS = (IM or {}).get("resolved") or {}
+    own = changed_settings({**RS, "sources": (IM or {}).get("sources")}, R0)
+    out = import_changes(R0, {**{k: R0.get(k) for k in si.DEFAULTS}, **own})
+    if R0.get("product") and not RS.get("product") and isinstance(RS, dict) and RS:
+        # no product kept where SMS's default has one (an import of 0.3.0 'unknown' on data of a known crop)
+        out.insert(0, f"Product {R0['product']} → unknown")
+    if not out and older_import_rules(IM):
+        # own values today's rule gives too (a minimum of 0): the values of the older rule that differ, so that the
+        # line names what the import in use is, never 'your values' with nothing named
+        out = [f"{x} (older rule)" for x in import_changes(R0, RS, IMPORT_KEYS_SHOWN)]
+    return out
+
+
+def custom_changes(tag: str, D: dict, IM: dict | None = None) -> list:
+    """What a file's own import settings (step 2; IM: another record of them, a cleaning's) change against its SMS
+    default (own_changes)."""
+    try:
+        R0 = default_resolved(import_basis(D))
+    except ValueError:
+        R0 = si.resolve(si.settings({}))
+    return own_changes(R0, IM if IM is not None else import_record_of(tag))
+
+
+def _your_settings_word(ch: list) -> str:
+    return "your settings" + (f": {change_short(ch[0])}" + (f" and {len(ch) - 1} more" if len(ch) > 1 else "")
+                              if ch else "")
+
+
+def change_short(ch: str) -> str:
+    """'Max. yield volume none → 150.00' -> 'max. yield volume 150.00': a change named by its new value."""
+    left, arrow, right = str(ch).partition(" → ")
+    if not arrow:
+        return str(ch)
+    lab = next((x for x in _CHANGE_LABELS if left.startswith(x)), left)
+    return f"{lab[0].lower()}{lab[1:]} {right}"
+
+
+def import_word(tag: str, D: dict | None = None) -> str:
+    """The import of a file in words (step 4's table, the action tree): 'SMS default', 'your settings: max. yield
+    volume 150.00', 'as it is', 'as logged', 'older rule', 'import failed', 'nothing to import' (a planter or
+    sprayer file)."""
+    D = D if D is not None else (ss.datasets.get(tag) or {})
+    if not D.get("yield", True):
+        return "nothing to import"
+    kind = import_kind(tag, D)
+    if kind == "custom":
+        ch = custom_changes(tag, D)
+        if not ch and older_decode_word(D):
+            return OLDER_DECODE_WORD                     # (no value of the user's: its readings differ, as step 2 says)
+        return _your_settings_word(ch)
+    return kind_word(kind)
+
+
+def cleaning_import_word(tag: str) -> str:
+    """Step 4's import of a cleaning: the file's import (import_word), or the user's settings the cleaning was made
+    with when the file is no longer on them (a work reopened after its own import's file was deleted keeps that
+    cleaning, to be cleaned again)."""
+    D = ss.datasets.get(tag) or {}
+    if cleaning_on_other_import(tag):
+        return _your_settings_word(custom_changes(tag, D, ss.cleaned[tag]["R"]["sms_import"]))
+    return import_word(tag, D)
+
+
+def starts_from_line(tag: str, D: dict, min3: float | None = None, pending: bool = False):
+    """Step 3's first line: the import the cleaning starts from, with its badge, its readings and S0's minimum (the
+    import's, or min3, step 3's own, for a file with no import); an orange line when step 2 has values not
+    applied."""
+    DF = default_of(D)
+    n = int(D.get("n") or 0)
+    if not n and D.get("shp") and os.path.exists(D["shp"]):
+        n = len(read_points(D["shp"], mtime(D["shp"])))
+    harvest = bool(D.get("yield", True))
+    IM = import_record_of(tag) or {}
+    kind = import_kind(tag, D)
+    step = start_step(D)
+    text = f"step {step}: {n:,} readings"
+    hlp = []
+    if kind == "custom":
+        ch = custom_changes(tag, D)
+        dec_w = older_decode_word(D) if not ch else None
+        hlp.append("Your settings (step 2): " + ("; ".join(ch) if ch else
+                                                 f"{OLDER_DECODE_WORD} (decoded by an older OCED with {dec_w}; nothing "
+                                                 "of yours differs from SMS's default)" if dec_w else "your values")
+                   + ".")
+    elif kind == "older" and basis_pending(D):
+        # (step 2 offers no change until its readings are back)
+        hlp.append("Imported by an earlier version of OCED, kept as it is: " + basis_pending_note_of(D)
+                   + ". Its import settings can be changed once " + ("it can be read." if
+                                                                     (default_of(D).get("basis") or {}).get("why")
+                                                                     else "its readings are back."))
+    elif kind == "older":
+        hlp.append("Imported by an older OCED rule" + (f": {'; '.join(DF['older'])}" if DF.get("older") else "")
+                   + ". Step 2 imports it with today's rule.")
+    elif kind == "failed":
+        hlp.append(f"SMS's import of this file failed ({DF['error']}): the readings as the file gives them.")
+    if harvest:
+        mn, has_imp = import_min_yield(tag)
+        if has_imp:
+            # the import's own value, written as steps 1 and 2 write it (0 is '0.000 bu/ac', no value 'none')
+            mn_imp = (IM.get("resolved") or {}).get("min_yield")
+            text += " · S0 minimum " + (f"{float(mn_imp):,.3f} bu/ac" if mn_imp not in (None, si.AUTO) else "none")
+            src_min = (IM.get("sources") or {}).get("min_yield")
+            hlp.append("S0 takes the minimum of this file's import (the import left out the readings below it)."
+                       if mn is not None else
+                       "S0 minimum: none above 0, as SMS's generic import of a point file has none: S0 leaves "
+                       "out only a reading with no plausible position or no dry yield, or a negative one; readings at "
+                       "0 stay, as in SMS." if src_min == si.SRC_POINT else
+                       "S0 minimum: none, as the import settings of this file have none above 0"
+                       + (f" ({SOURCE_LABEL.get(src_min, src_min)})" if src_min else "")
+                       + ": S0 leaves out only a reading with no plausible position or no dry yield, or a negative "
+                         "one.")
+        else:
+            m3 = float(min3 or 0)
+            text += " · S0 minimum " + ("none" if m3 <= 0 else f"{m3:,.3f} bu/ac")
+            hlp.append("Not imported as SMS: S0 takes the minimum of step 3 (S0 minimum, in the settings).")
+    elif kind == "as_is":
+        hlp.append("A planter or sprayer file is used as written.")
+    st.markdown(f"Starts from {brand.import_badge(kind)} {html.escape(text)}", unsafe_allow_html=True,
+                help=" ".join(hlp) or None)
+    if pending:
+        st.caption(":orange[Step 2 has values not applied: the cleaning uses the import above.]")
+
+
+SEQ_HELP = ("The sequence of Ag Leader SMS Advanced: S0 the import check, S1 the clip to the field boundary, S2 "
+            "Optimize Swath Widths, then the mean ± k SD of the moisture, the speed and the dry yield (another yield "
+            "pass while the SD falls by more than 25 %). The full text: What OCED reads, in the sidebar.")
+A3_SEQ_HELP = ("S0: no position, or the main attribute missing or at or below the minimum (no product applied). S1: "
+               "the clip to the field boundary. Then one 3-sigma step per attribute, the speed first: the mean ± k SD "
+               "of the points still alive; the main attribute again while its SD falls by more than 25 %.")
+SMS3S_TEXT = ("S0 import check (no position, no yield, dry yield below the SMS import minimum) · S1 Clip To Field "
+              "Boundary (the readings outside the boundary of the file; a point on the edge is inside) · S2 Optimize "
+              "Swath Widths (overlapping strips removed or narrowed, per-area values scaled) · S3 and S4, the moisture "
+              "and the speed in the order of the filters (More settings), and S5 dry yield: keep the mean ± k SD of "
+              "the points still alive (a reading without a moisture or a speed is not removed by that filter), "
+              "another yield pass while the SD falls by more than 25 %. With several combines, the combine factor "
+              "runs after these steps when you switch it on.")
+GROUP_SHORT = {"auto": "auto", "task": "per task", "machine": "per combine", "field": "one for the field"}
+
+
+def settings_summary(tag: str, IS_Y: bool, P0: dict, n_combines: int = 0) -> str:
+    """The line of step 3's folded settings: 'k 3.0 · auto · 3 passes · S1-S5 on · boundary ✓ · grower 110,000 lb,
+    validate · combine factor off', from the values on screen (the widgets' state, else the saved settings)."""
+    TKs = file_key(tag)
+    B = ss.boundary.get(tag)
+    bnd = "boundary ✓" if (B and not B.get("needs_choice")) else "boundary: choose the field" if B else "no boundary"
+    if not IS_Y:
+        A = ss.a3set.get(tag) or {}
+        k = ss.get(f"a3_k_{TKs}", A.get("k_sd", a3.DEFAULTS["k_sd"]))
+        attrs = ss.get(f"a3_attrs_{TKs}", A.get("attributes") or [])
+        mp = ss.get(f"a3_mp_{TKs}", A.get("max_passes", a3.DEFAULTS["max_passes"]))
+        return " · ".join([f"k {float(k):.1f}", f"{len(attrs)} attribute{'s' if len(attrs) != 1 else ''}",
+                           f"{int(mp)} passes", bnd])
+    D0 = sms.DEFAULTS
+    k = ss.get("k_sd", P0.get("k_sd", D0["k_sd"]))
+    gb = ss.get("group_by", P0.get("group_by", "auto"))
+    mp = ss.get("max_passes", P0.get("max_yield_passes", D0["max_yield_passes"]))
+    fo = ss.get("filter_order") if ss.get("filter_order") in sms.FILTER_ORDERS else P0.get("filter_order")
+    SI_ = sms.step_info(fo if fo in sms.FILTER_ORDERS else D0["filter_order"])
+    on = {"S1": ss.get("t_clip", P0.get("clip", D0["clip"])), "S2": ss.get("t_swath", P0.get("swath", D0["swath"]))}
+    for fid in ("S3", "S4"):
+        a = SI_[fid]["attribute"]
+        on[fid] = ss.get("t_moist" if a == "moisture" else "t_speed", P0.get(a, D0[a]))
+    on["S5"] = ss.get("t_yield", P0.get("yield", D0["yield"]))
+    off = [f for f, v in on.items() if not v]
+    parts = [f"k {float(k):.1f}", GROUP_SHORT.get(gb, str(gb)), f"{int(mp)} passes",
+             "S1-S5 on" if not off else ", ".join(off) + " off", bnd]
+    G = ss.grower.get(tag) or {}
+    w = ss.get(f"gw_w_{TKs}", G.get("weight"))
+    if w:
+        u = ss.get(f"gw_u_{TKs}", G.get("unit") or "lb")
+        use = ss.get(f"gw_use_{TKs}", G.get("use") or "validate")
+        parts.append(f"grower {er.ticket_label({'value': float(w), 'unit': u})}, {use}")
+    else:
+        parts.append("no grower's weight")
+    if n_combines >= 2:
+        parts.append("combine factor " + ("on" if ss.get(f"cf_on_{TKs}", combine_settings(tag)["on"]) else "off"))
+    return " · ".join(parts)
+
+
+def result_numbers(tag: str, C: dict) -> dict | None:
+    """The numbers of a cleaning that step 3 shows (the strip and the yield path): the clean file against the import
+    it started from, the combine factor and the grower's data. None when the clean file has no value to show."""
     R = C["R"]
     L = R.get("level") or {}
-    CL = L.get("closure") or {}
     A3 = C.get("kind") == "a3"
     D = ss.datasets[tag]
     cdf = read_points(C["shp"], mtime(C["shp"]))
     raw = read_points(D["shp"], mtime(D["shp"]))
     a_ = area_of(cdf)
-    area = float(a_[np.isfinite(a_)].sum()) or None if a_ is not None else None
-    kept = {"label": "Readings kept", "value": f"{R['n_kept']:,}",
-            "help": f"Of the {R['n_in']:,} readings" + (" inside the boundary" if C.get("boundary") else "") + "."}
-    FM = R.get("final_map") or {}
-    area_c = ({"label": "Area of the kept readings", "value": f"{area:,.2f} ac",
-               "help": "Distance x width of the kept readings" + ("" if A3 else ", after S2 narrowed the overlapping "
-                                                                       "strips") + "."
-                       + (f" The cleaning record gives {float(FM['area_ac']):,.2f} ac (what the SMS Summary of the clean "
-                          "file shows)." if FM.get("area_ac") else "")} if area else None)
+    other = (not A3) and cleaning_on_other_import(tag)    # made from an import no longer on disk: not compared
+    X = {"A3": A3, "L": L, "CL": L.get("closure") or {}, "step": 2 if other else start_step(D),
+         "start": cleaning_start_word(tag), "other": other, "FM": R.get("final_map") or {},
+         "area": (float(a_[np.isfinite(a_)].sum()) or None) if a_ is not None else None}
     if A3:
         col = R.get("main")
         unit = (R.get("units") or {}).get(col) if isinstance(R.get("units"), dict) else None
         unit = unit or (ATTR_INFO.get(col) or ("", "", ""))[1] or ""
-        raw_m, cl_m = _mean_of(raw, col), _mean_of(cdf, col)
-        if path_only or cl_m is None:
-            return
-        raw_a, cl_a = (avg_of(raw, col), avg_of(cdf, col)) if per_area(unit) else (None, None)
-        card_row([kept, area_c,
-                  {"label": f"Mean {col}, cleaned", "value": f"{cl_m:,.2f} {unit}".strip(),
-                   "delta": (f"{cl_m - raw_m:+.2f} {unit} vs the raw {raw_m:,.2f}".replace("  ", " ")
-                             if raw_m is not None else None),
-                   "help": "The plain mean of the kept readings (as SMS Edit Legend)."},
-                  {"label": f"Average {col}, cleaned (SMS)", "value": f"{cl_a:,.2f} {unit}".strip(),
-                   "delta": (f"{cl_a - raw_a:+.2f} {unit} vs the raw {raw_a:,.2f}".replace("  ", " ")
-                             if raw_a is not None else None),
-                   "help": "As the SMS summary: the area-weighted average, the total divided by the area."}
-                  if cl_a is not None else None], key="res_cards")
-        return
+        X.update(col=col, unit=unit, raw_m=_mean_of(raw, col), cl_m=_mean_of(cdf, col))
+        X["raw_a"], X["cl_a"] = (avg_of(raw, col), avg_of(cdf, col)) if per_area(unit) else (None, None)
+        return X if X["cl_m"] is not None else None
     cc = yc.detect_columns([c for c in cdf.columns if c not in ("lon", "lat")])
     ycol = (R.get("columns") or {}).get("yield") or cc.get("yield")
     rcol = yc.detect_columns([c for c in raw.columns if c not in ("lon", "lat")]).get("yield")
-    raw_m, cl_m = _mean_of(raw, rcol), _mean_of(cdf, ycol)
-    raw_a, cl_a = avg_of(raw, rcol), avg_of(cdf, ycol)
-    if cl_m is None:
-        return
+    X.update(ycol=ycol, raw_m=None if other else _mean_of(raw, rcol), cl_m=_mean_of(cdf, ycol),
+             raw_a=None if other else avg_of(raw, rcol), cl_a=avg_of(cdf, ycol))
+    if X["cl_m"] is None:
+        return None
     # the combine factor (several combines, when switched on and proven): Yld_Harm = the cleaned yield x the factor
     MF = {str(k): float(v) for k, v in ((R.get("machines") or {}).get("factor_applied") or {}).items()}
     harm_on = "Yld_Harm" in cdf.columns and any(abs(v - 1) > 1e-9 for v in MF.values())
-    h_m, h_a = ((_mean_of(cdf, "Yld_Harm"), avg_of(cdf, "Yld_Harm")) if harm_on else (cl_m, cl_a))
-    fac_txt = ", ".join(f"{m} x {v:.4f}" for m, v in MF.items() if abs(v - 1) > 1e-9)
+    X["harm_on"] = harm_on
+    X["h_m"], X["h_a"] = ((_mean_of(cdf, "Yld_Harm"), avg_of(cdf, "Yld_Harm")) if harm_on else (X["cl_m"], X["cl_a"]))
+    X["fac_txt"] = ", ".join(f"{m} x {v:.4f}" for m, v in MF.items() if abs(v - 1) > 1e-9)
     fcol = R.get("yield_column_for_difm")
     fcol = fcol if (fcol and fcol in cdf.columns) else ycol
     Lf = L.get("factor_final") if L.get("factor_final") is not None else L.get("factor")   # the L in the file
     adjusted = bool(C.get("adjusted")) and bool(L) and fcol not in (ycol, "Yld_Harm") and _mean_of(cdf, fcol) is not None
     TT = (R.get("machines") or {}).get("ticket_test") or {}
-    would = [str(m) for m in (TT.get("would_apply") or [])] if not adjusted else []
+    X["would"] = [str(m) for m in (TT.get("would_apply") or [])] if not adjusted else []
     if adjusted:
-        fin_m, fin_a = _mean_of(cdf, fcol), avg_of(cdf, fcol)
+        X["fin_m"], X["fin_a"] = _mean_of(cdf, fcol), avg_of(cdf, fcol)
     else:
-        fin_m, fin_a = h_m, h_a
+        X["fin_m"], X["fin_a"] = X["h_m"], X["h_a"]
         fcol = "Yld_Harm" if harm_on else ycol
-    gro_ac = mon_ac = area_y = None
+    X.update(fcol=fcol, Lf=Lf, adjusted=adjusted, gro_ac=None, mon_ac=None, area_y=None)
     if L:
         # one stated area for both per-acre figures: the grower's acres (a yield per acre), else the area harvested,
         # every strip once (after Optimize Swath Widths: the area the SMS averages are over), else the swept area
         area_s = float(L.get("monitor_area_ac") or L.get("export_area_ac") or 0)
         area_y = float(L.get("ticket_area_ac") or 0) if L.get("ticket_unit") == "bu/ac" else area_s
         if area_y > 0:
-            gro_ac = float(L["scale_ticket_bu"]) / area_y
-            mon_ac = float(L.get("monitor_total_final_bu", L["export_total_bu"])) / area_y
-    d_fin = float(CL.get("diff_final_pct", CL.get("diff_pct", 0)) or 0)       # the monitor (after the factor) vs grower
-    area_src = (L.get("ticket_area_source") if L.get("ticket_unit") == "bu/ac" and L.get("ticket_area_ac")
-                else L.get("monitor_area_source")) or "the area the readings swept"
-    by_g = f"by the grower's data (x L {Lf:.4f})" if adjusted else None
-    if not path_only:
-        cards = [kept, area_c]
-        cards.append({"label": "Mean dry yield, cleaned", "value": f"{cl_m:,.2f} bu/ac",
-                      "delta": _d(cl_m, raw_m, f"by the cleaning (raw {raw_m:,.2f})" if raw_m is not None else ""),
-                      "help": f"The plain mean of {ycol} over the kept readings (as SMS Edit Legend): the monitor's "
-                              "yield after the clip and the 3-sigma steps. Raw = every reading of the file (step 2)."})
-        if cl_a is not None:
-            cards.append({"label": "Average dry yield, cleaned (SMS)", "value": f"{cl_a:,.2f} bu/ac",
-                          "delta": _d(cl_a, raw_a, f"by the cleaning (raw {raw_a:,.2f})" if raw_a is not None else ""),
-                          "help": f"As the SMS summary: the Average of {ycol}, area-weighted (each reading's yield x "
-                                  "its area, added up, divided by the area) = the total divided by the area."
-                                  + (f" The cleaning record gives {float(FM['average_area_weighted']):,.2f} bu/ac."
-                                     if FM.get("average_area_weighted") is not None and FM.get("column") == ycol
-                                     else "")})
-        if harm_on:
-            cards.append({"label": "After the combine factor (Yld_Harm)", "value": f"{h_m:,.2f} bu/ac",
-                          "delta": _d(h_m, cl_m, "by the combine factor"),
-                          "help": f"The cleaned yield x the factor of each combine ({fac_txt}; the reference x 1). "
-                                  "The Combines tab has the decision of every combine."})
-        if gro_ac is not None:
-            ms = (R.get("moisture") or {}).get("standard_pct")
-            at_std = L.get("ticket_bu_at_standard") is not None and ms is not None
-            given = (f"{er.ticket_label({'value': L.get('ticket_value'), 'unit': L.get('ticket_unit')})} as given"
-                     + (f" at {float(L['ticket_moisture_pct']):g} % moisture" if L.get("ticket_moisture_pct") is not None
-                        else ""))
-            cards.append({"label": "Grower's yield" + (f", at {float(ms):g} %" if at_std else ""),
-                          "value": f"{gro_ac:,.2f} bu/ac",
-                          "delta": f"monitor {mon_ac:,.2f} bu/ac ({d_fin:+.2f} %) over {area_y:,.2f} ac",
-                          "help": f"{given}" + (f", brought to the standard moisture {float(ms):g} %" if at_std else "")
-                                  + f": the grower's total over {area_y:,.2f} ac ({area_src}), against the monitor's "
-                                  "total" + (" after the combine factor" if L.get("combine_factor_changed_total") else "")
-                                  + " over the same acres on the same basis (the Grower's data tab has the details)."})
-        if adjusted:
-            cards.append({"label": f"Final yield, mean ({fcol})", "value": f"{fin_m:,.2f} bu/ac",
-                          "delta": _d(fin_m, h_m, by_g),
-                          "help": f"The column to map: the cleaned yield" + (" x the combine factor" if harm_on else "")
-                                  + f" x L = grower / monitor. The monitor's {ycol} stays in the file as logged."})
-            if fin_a is not None:
-                cards.append({"label": "Final yield, average (SMS)", "value": f"{fin_a:,.2f} bu/ac",
-                              "delta": _d(fin_a, h_a, by_g),
-                              "help": f"The SMS Average of {fcol} (area-weighted, the total divided by the area)."
-                                      + (f" The cleaning record gives {float(FM['average_area_weighted']):,.2f} bu/ac."
-                                         if FM.get("average_area_weighted") is not None and FM.get("column") == fcol
-                                         else "")})
-        elif L:
-            cards.append({"label": "Final yield (clean file)", "value": f"{fin_m:,.2f} bu/ac",
-                          "delta": ("grower's data: validate only"
-                                    + (f"; it would confirm the combine factor of {', '.join(would)}" if would else "")),
-                          "help": "Validate only: the grower's data is compared, not applied, and confirms no combine "
-                                  f"factor; the clean file keeps the {'combine-factor' if harm_on else 'monitor'}'s "
-                                  "yields." + (f" Adjusting would multiply them by L = {Lf:.4f}." if Lf is not None else "")
-                                  + (f" With 'Validate and adjust the yields' the weight would also confirm the combine "
-                                     f"factor of {', '.join(would)} (above the max factor): the Combines tab says why."
-                                     if would else "")})
+            X["area_y"] = area_y
+            X["gro_ac"] = float(L["scale_ticket_bu"]) / area_y
+            X["mon_ac"] = float(L.get("monitor_total_final_bu", L["export_total_bu"])) / area_y
+    X["d_fin"] = float(X["CL"].get("diff_final_pct", X["CL"].get("diff_pct", 0)) or 0)   # the monitor vs the grower
+    X["area_src"] = (L.get("ticket_area_source") if L.get("ticket_unit") == "bu/ac" and L.get("ticket_area_ac")
+                     else L.get("monitor_area_source")) or "the area the readings swept"
+    return X
+
+
+def result_strip(tag: str, C: dict):
+    """Step 3's strip after a cleaning (key res_cards): the readings kept, the area of the kept readings, the mean
+    and the average dry yield of the clean file against the import it started from; the final yield when a
+    correction was applied (the grower's weight with 'adjust', the combine factor) and the monitor against the
+    grower's weight when it was only compared."""
+    X = result_numbers(tag, C)
+    if X is None:
+        return
+    R = C["R"]
+    s = X["step"]
+    sw = ((R.get("sms3sigma") or {}).get("swath") or {}) if not X["A3"] else {}
+    bias = {str(k): float(v) for k, v in (sw.get("lateral_bias_ft") or {}).items() if v is not None}
+    hk = (f"Of the {int(R.get('n_read') or R['n_in']):,} readings the cleaning started from (step {s})"
+          + (f"; {int(R['n_in']):,} inside the boundary (S1 clipped {clipped_of(C):,})" if C.get("boundary") else "")
+          + (f"; S2 narrowed {int(sw.get('n_narrowed') or 0):,}" + (f" over {sw['scope']}" if sw.get("scope") else "")
+             if not X["A3"] else "")
+          + (" (lateral offset of the logged points: " + ", ".join(f"{k} {v:+.2f} ft" for k, v in bias.items()) + ")"
+             if bias else "") + ". Each step's count is in the Steps tab.")
+    # the readings the cleaning started from, less those outside the boundary (S1 runs first): said, so that the
+    # count of step 1 / 2 and this one tell the same story
+    n_cl = clipped_of(C) if C.get("boundary") else 0
+    cards = [{"label": "Readings kept", "value": f"{R['n_kept']:,}",
+              "delta": f"of {int(R['n_in']):,}" + (" inside the boundary" if n_cl else "")
+                       + f" · {float(R['removed_pct']):.2f} % removed", "help": hk}]
+    FM = X["FM"]
+    if X["area"]:
+        cards.append({"label": "Area of the kept readings", "value": f"{X['area']:,.2f} ac",
+                      "help": "Distance x width of the kept readings"
+                              + ("" if X["A3"] else ", after S2 narrowed the overlapping strips") + "."
+                              + (f" The cleaning record gives {float(FM['area_ac']):,.2f} ac (what the SMS Summary of "
+                                 "the clean file shows)." if FM.get("area_ac") else "")})
+
+    def vs(a, b, unit):
+        return None if (a is None or b is None) else f"{a - b:+.2f} {unit} vs step {s}".replace("  ", " ")
+    if X["A3"]:
+        col, unit = X["col"], X["unit"]
+        cards.append({"label": f"Mean {col}, cleaned", "value": f"{X['cl_m']:,.2f} {unit}".strip(),
+                      "delta": vs(X["cl_m"], X["raw_m"], unit),
+                      "help": "The plain mean of the kept readings (as SMS Edit Legend), against every reading of "
+                              "the file."})
+        if X["cl_a"] is not None:
+            cards.append({"label": f"Average {col}, cleaned (SMS)", "value": f"{X['cl_a']:,.2f} {unit}".strip(),
+                          "delta": vs(X["cl_a"], X["raw_a"], unit),
+                          "help": "As the SMS summary: the area-weighted average, the total divided by the area."})
+        cards.append({"label": "Passes of " + str(R.get("main")), "value": f"{R.get('passes', 1)}",
+                      "help": "The 3-sigma passes of the main attribute (another while its SD falls by more than "
+                              "25 %)."})
         card_row(cards, key="res_cards")
+        return
+    ycol, L, CL = X["ycol"], X["L"], X["CL"]
+    cards.append({"label": "Mean dry yield, cleaned", "value": f"{X['cl_m']:,.2f} bu/ac",
+                  "delta": vs(X["cl_m"], X["raw_m"], "bu/ac"),
+                  "help": f"The plain mean of {ycol} over the kept readings (as SMS Edit Legend): the monitor's yield "
+                          f"after the clip and the 3-sigma steps, against the import the cleaning started from (step "
+                          f"{s}, every reading)."})
+    if X["cl_a"] is not None:
+        cards.append({"label": "Average dry yield, cleaned (SMS)", "value": f"{X['cl_a']:,.2f} bu/ac",
+                      "delta": vs(X["cl_a"], X["raw_a"], "bu/ac"),
+                      "help": f"As the SMS summary: the Average of {ycol}, area-weighted (the total divided by the "
+                              "area)." + (f" The cleaning record gives {float(FM['average_area_weighted']):,.2f} bu/ac."
+                                          if FM.get("average_area_weighted") is not None and FM.get("column") == ycol
+                                          else "")})
+    if X["adjusted"] or X["harm_on"]:
+        fcol = X["fcol"]
+        cards.append({"label": f"Final yield ({fcol})", "value": f"{X['fin_m']:,.2f} bu/ac",
+                      "delta": " · ".join(x for x in (
+                          f"average (SMS) {X['fin_a']:,.2f}" if X["fin_a"] is not None else "",
+                          f"monitor vs grower {X['d_fin']:+.2f} %" if (X["adjusted"] and CL) else "") if x) or None,
+                      "help": "The column to map (the file for DIFM carries it): the cleaned yield"
+                              + (f" x the combine factor ({X['fac_txt']})" if X["harm_on"] else "")
+                              + (f" x L {float(X['Lf']):.4f} (grower / monitor)" if X["adjusted"] and X["Lf"] is not None
+                                 else "") + f". The monitor's {ycol} stays as logged. The mean of the kept readings; "
+                                            "the Yield path tab shows each change."})
+    if CL and not X["adjusted"]:
+        Lf = X["Lf"]
+        cards.append({"label": "Monitor vs grower", "value": f"{X['d_fin']:+.2f} %",
+                      "delta": (f"grower {X['gro_ac']:,.2f} · monitor {X['mon_ac']:,.2f} bu/ac over "
+                                f"{X['area_y']:,.2f} ac" if X["gro_ac"] is not None else None),
+                      "help": "The monitor's total against the grower's weight on the same basis"
+                              + (", after the combine factor" if L.get("combine_factor_changed_total") else "")
+                              + ": + = the monitor read more (L = grower / monitor = "
+                              + (f"{float(Lf):.4f}" if Lf is not None else "per combine") + "). Validate only: "
+                              "compared, not applied"
+                              + (f"; it would confirm the combine factor of {', '.join(X['would'])}" if X["would"]
+                                 else "") + ". The Grower's data tab has the details."})
+    card_row(cards, key="res_cards")
 
-    eff = step_effects(tag, C) or []
 
-    def path(r, c, h, f, key="d_mean"):
-        parts = [f"{e['label']} {e[key]:+.2f}" for e in eff[1:] if e.get(key) is not None]
-        brk = f" <span style=\"color:#4B5563\">({', '.join(parts)})</span>" if parts else ""
-        s_ = [f"raw data <b>{r:,.2f}</b>" if r is not None else "raw data",
-              f"cleaning {c - r:+.2f}{brk} &rarr; <b>{c:,.2f}</b>" if r is not None else f"cleaned <b>{c:,.2f}</b>"]
+def yield_path_box(tag: str, C: dict):
+    """'What made the final yield' (the Yield path tab): the import the cleaning started from (named by its step),
+    what the cleaning changed (each step's share: the table under it), the combine factor and the grower's data
+    (applied with 'adjust', only compared with 'validate'), as the plain mean (SMS Edit Legend) and as the Average of
+    the SMS summary (total / area)."""
+    X = result_numbers(tag, C)
+    if X is None or X["A3"]:
+        return
+    R = C["R"]
+    L, harm_on, adjusted, Lf = X["L"], X["harm_on"], X["adjusted"], X["Lf"]
+
+    def path(r, c, h, f):
+        # only what moved the yield: the cleaning, a combine factor, the grower's data (the cards' "?" say what the
+        # mean and the average are; the Combines and Grower's data tabs the rest)
+        s_ = [f"{r:,.2f} &rarr; cleaning {c - r:+.2f} &rarr; <b>{c:,.2f}</b>" if r is not None
+              else f"cleaned <b>{c:,.2f}</b>"]
         if harm_on and h is not None:
-            s_.append(f"combine factor ({h - c:+.2f}) &rarr; <b>{h:,.2f}</b>")
+            s_.append(f"combine factor {h - c:+.2f} &rarr; <b>{h:,.2f}</b>")
         elif factor_outcome(R) is not None:
-            s_.append("combine factor switched on but not applied (see the panel of the combine factor)")
-        else:
-            s_.append("no combine factor")
+            s_.append("combine factor not applied (Combines tab)")
         if adjusted and f is not None and h is not None:
-            s_.append(f"grower's data &times; L {Lf:.4f} ({f - h:+.2f}) &rarr; <b>{f:,.2f} bu/ac</b>")
+            s_.append(f"grower &times; L {Lf:.4f} {f - h:+.2f} &rarr; <b>{f:,.2f}</b>")
         elif L:
-            s_.append("grower's data: validate only, not applied"
-                      + (f" (adjusting would give {h * float(Lf):,.2f}" if (Lf and h is not None) else "")
-                      + (f"; it would also confirm the combine factor of {', '.join(would)}" if would else "")
-                      + (")" if (Lf and h is not None) else ""))
-        else:
-            s_.append("no grower's data")
+            s_.append("grower: compared only" + (f" (adjusted {h * float(Lf):,.2f})" if (Lf and h is not None) else ""))
         return " &rarr; ".join(s_)
-    lines = ["<b>What made the final yield</b>" + (f" (map {html.escape(fcol)})" if fcol != ycol else ""),
-             "Mean (SMS Edit Legend): " + path(raw_m, cl_m, h_m, fin_m)]
-    if cl_a is not None:
-        lines.append("Average (SMS summary, total &divide; area): " + path(raw_a, cl_a, h_a, fin_a, "d_avg"))
-    note = ""
-    if harm_on:
-        note += ("<br><span style=\"font-size:0.86rem;color:#4B5563\">Combine factor: " + html.escape(fac_txt)
-                 + " (the Combines tab has the decision of every combine).</span>")
-    if adjusted and gro_ac is not None:
-        gap = L.get("yld_level_vs_ticket_pct")
-        note += ("<br><span style=\"font-size:0.86rem;color:#4B5563\">L = grower / monitor is set on the totals of every "
-                 "reading processed (the scale weighed all the grain, the removed readings included): the grower's "
-                 f"{gro_ac:,.2f} bu/ac is that total over {area_y:,.2f} ac ({html.escape(str(area_src))}); the final "
-                 "mean and average are over the kept readings only, so they differ from it by the grain and the area "
-                 "of the removed readings"
-                 + (f" (the adjusted column of every processed reading sums to {gap:+.2f} % of the weight compared)"
-                    if gap is not None and abs(float(gap)) > 0.05 else "") + ".</span>")
-    if eff:
-        note += ("<br><span style=\"font-size:0.86rem;color:#4B5563\">The cleaning's change is the sum of its steps: "
-                 "each one is how much the mean or the Average moved when that step removed its readings (S2 also "
-                 "narrows the overlapping strips, which raises their bu/ac and lowers the area). The Steps tab "
-                 "has the table.</span>")
+    fcol, ycol = X["fcol"], X["ycol"]
+    lines = ["<b>What made the final yield</b> &middot; from " + html.escape(X["start"])
+             + (f" &middot; map {html.escape(fcol)}" if fcol != ycol else ""),
+             "Mean: " + path(X["raw_m"], X["cl_m"], X["h_m"], X["fin_m"])]
+    if X["cl_a"] is not None:
+        lines.append("Average (SMS): " + path(X["raw_a"], X["cl_a"], X["h_a"], X["fin_a"]))
+    note = ("<br><span class=\"oced-note\">Combine factor: " + html.escape(X["fac_txt"]) + "</span>") if harm_on else ""
     st.html('<div class="oced-path">' + "<br>".join(lines) + note + "</div>")
+    if adjusted and X["gro_ac"] is not None:
+        gap = L.get("yld_level_vs_ticket_pct")
+        st.caption(f"Grower: {X['gro_ac']:,.2f} bu/ac over every reading processed",
+                   help="L = grower / monitor is set on the totals of every reading processed (the scale weighed all "
+                        f"the grain): the grower's bu/ac is that total over {X['area_y']:,.2f} ac ({X['area_src']}). "
+                        "The final mean and average are over the kept readings only, so they differ from it"
+                        + (f"; the adjusted column of every processed reading sums to {gap:+.2f} % of the weight "
+                           "compared" if gap is not None and abs(float(gap)) > 0.05 else "") + ".")
 
 
 def all_clean_zip() -> str | None:
@@ -4073,9 +6623,11 @@ def native_record(t: str, C: dict, res: dict, opts: dict) -> dict:
     ES = res.get("expected_summary") if isinstance(res.get("expected_summary"), dict) else {}
     if int(ES.get("n_below_min") or 0) > 0:              # written, but below the reader's minimum yield
         keep["below_min"] = {"n": int(ES["n_below_min"]), "min_yield": ES.get("min_yield")}
-    elif "n_below_min" not in ES and (opts.get("factors") or not opts.get("widths", True)):
+    elif "n_below_min" not in ES and (opts.get("factors") or not opts.get("widths", True)
+                                      or written_min_yield(t)[1]):
         # a writer that does not count them (its totals then hold them): the readings written whose dry yield x the
-        # factor of their combine (with the logged widths: their logged yield) falls below the import's minimum
+        # factor of their combine (with the logged widths: their logged yield) falls below the minimum of the reader
+        # (the import's; for a point export written as ISOXML task data, SMS's minimum for task data)
         BM = below_min_written(t, C, opts.get("factors") or {}, widths=bool(opts.get("widths", True)))
         if BM:
             keep["below_min"] = {**BM, "in_totals": True}
@@ -4098,16 +6650,37 @@ def native_record(t: str, C: dict, res: dict, opts: dict) -> dict:
             "app_version": VERSION}
 
 
+def written_min_yield(t: str) -> tuple:
+    """(minimum, raised): the minimum yield SMS applies when it reads the clean harvest of `t` written in a monitor's
+    format. Raw monitor data is written in its own format and read with the minimum of the file's import (raised
+    False). A point export, imported as SMS's generic import (no minimum above 0), is written as ISOXML task data,
+    which SMS reads as raw data: the minimum SMS gives ISOXML task data (raised True when it lies above the import's),
+    unless the user typed the import's minimum."""
+    IM = (ss.datasets.get(t) or {}).get("sms_import") or {}
+    RS = IM.get("resolved") or {}
+    lo = RS.get("min_yield")
+    if IM.get("family") != "point" or (IM.get("sources") or {}).get("min_yield") == si.SRC_YOU:
+        return lo, False
+    try:
+        iso = si.resolve(si.settings({"product": RS.get("product")} if RS.get("product") else {}), None, None,
+                         "isoxml")["min_yield"]
+    except ValueError:
+        iso = si.SMS_JD_MIN_YIELD
+    own = 0.0 if lo in (None, si.AUTO) else float(lo)
+    return (iso, True) if iso is not None and float(iso) > own else (lo, False)
+
+
 def below_min_written(t: str, C: dict, factors: dict | None, widths: bool = True) -> dict | None:
     """{n, min_yield} of the readings of `t` written whose dry yield x the factor of their combine falls below the
     minimum yield of the file's import as SMS: written, but a reader with that minimum (SMS) leaves them out. The dry
     yield is the clean file's yield column as the cleaning finds it (yc.detect_columns: Yld_Vol_Dr, an Operations
     Center VRYIELDVOL ...); widths False: the writers keep the logged width of a narrowed reading, which then reads
-    its logged yield, the clean one / Swath_Scl. None when there are none, no minimum or no dry yield column."""
-    RS = ((ss.datasets.get(t) or {}).get("sms_import") or {}).get("resolved") or {}
-    lo = RS.get("min_yield")
+    its logged yield, the clean one / Swath_Scl. The minimum is the reader's (written_min_yield): for a point export,
+    whose clean file keeps the readings below SMS's minimum for raw data, they count also without factors. None when
+    there are none, no minimum or no dry yield column."""
+    lo, raised = written_min_yield(t)
     factors = factors or {}
-    if (not factors and widths) or lo is None or lo == si.AUTO:
+    if (not factors and widths and not raised) or lo is None or lo == si.AUTO:
         return None
     try:
         import pyogrio
@@ -4432,7 +7005,7 @@ def _native_result_view(t: str, fid: str, NR: dict, key: str):
     for w in NR.get("warnings") or []:
         st.warning(w, icon=":material/warning:")
     if NR.get("notes"):
-        with st.expander(f"What the writer did ({len(NR['notes'])} notes)", icon=":material/notes:"):
+        with st.expander(f"What the writer did ({len(NR['notes'])} notes)", icon=":material/notes:", type="compact"):
             for n in NR["notes"]:
                 st.caption(str(n))
 
@@ -4456,9 +7029,12 @@ def native_block(t: str, C: dict):
     title = ("Same raw format as imported: " + native[0]["label"] if native else
              "Monitor format: ISOXML TASKDATA (this file is a point export, not raw monitor data)")
     NRs = native_results(t, C)
+    how = [NATIVE_HOW[o["id"]] for o in opts if o.get("available") and NATIVE_HOW.get(o["id"])]
     with st.container(border=True, key=f"nw_box_{key}"):
-        st.markdown(f"**Save the clean file as** · {html.escape(title)}")
-        st.warning(NATIVE_CAVEAT, icon=":material/science:")
+        st.markdown(f"**Save the clean file as** · {html.escape(title)}",
+                    help=(how[0] if how else "The clean readings in the raw format they were imported from, to read "
+                                             "into SMS as monitor data.") + " More: How to read it into SMS, below.")
+        st.caption(":orange[Not yet tested in SMS]", help=NATIVE_CAVEAT)
         fac, fac_txt = native_factors(C)
         with st.container(horizontal=True, vertical_alignment="bottom"):
             widths = st.checkbox("Write the clean swath widths (after Optimize Swath Widths)", value=True,
@@ -4520,11 +7096,13 @@ def native_block(t: str, C: dict):
                 clicks[o["id"]] = st.button(lab, key=f"nw_go_{o['id']}_{key}", disabled=not o.get("available"),
                                             type="primary" if (o.get("native") and o.get("available")) else "secondary",
                                             icon=":material/save:")
+        native_ok = any(o.get("native") and o.get("available") for o in opts)
         for o in opts:
             if not o.get("available") and o.get("reason"):
-                st.caption(f"{o['label']}: not available - {o['reason']}.")
-            elif o.get("available") and o.get("reason"):
-                st.caption(f"{o['label']}: {o['reason']}.")
+                if o["id"] == nw.ISOXML and native_ok:       # the monitor's own format is offered: why not ISOXML
+                    st.caption(f"{o['label']}: not available", help=f"{o['reason'][:1].upper()}{o['reason'][1:]}.")
+                else:                                        # why the monitor's format cannot be written: in sight
+                    st.caption(f"{o['label']}: not available - {o['reason']}.")
         go = next((fid for fid, c in clicks.items() if c), None)
         shift = False
         if ref and ref.get("fid") and not go:
@@ -4571,12 +7149,889 @@ def native_block(t: str, C: dict):
             if ss.get(f"nw_ref_{key}"):
                 st.rerun()
             NRs = native_results(t, C)
-        st.caption(" ".join([NATIVE_HOW.get(fid, "") for fid in [o["id"] for o in opts if o.get("available")]
-                             if NATIVE_HOW.get(fid)]) + " " + NATIVE_SETTINGS)
+        with st.expander("How to read it into SMS", type="compact"):
+            for o in opts:                                   # what each format that can be written holds
+                if o.get("available") and o.get("reason"):
+                    st.caption(f"{o['label']}: {o['reason']}.")
+            st.caption(" ".join(how + [NATIVE_SETTINGS]))
         for fid in [o["id"] for o in opts] + [f for f in NRs if f not in {o["id"] for o in opts}]:
             if fid in NRs:
                 st.divider()
                 _native_result_view(t, fid, NRs[fid], key)
+
+
+# ------------------------------------------------------------------------------------------------ steps 1 and 2: views
+# Step 1 shows a file's default import (default_view: what SMS's import gives it, its Processing Settings untouched),
+# step 2 its import settings and, once own values are applied, the import in use (active_view) beside step 1's.
+_DEFAULTS_FAMILY = {"jd_gs3_rcd": "gs3", "jd_jdl": "jdl", "isoxml": "isoxml", "cnh_cn1": "cnh",
+                    si.POINT_EXPORT: "point", si.OPS_CENTER: "point"}
+_DEFAULTS_TAIL = "no expand, manual swath or moisture, no delays."
+
+
+def sms_defaults_text(family: str | None = None) -> str:
+    """What SMS's import gives a source with its Processing Settings untouched (each file's default import, step 1).
+    family: one source ('gs3', 'jdl', 'isoxml', 'cnh', 'point', or a format id such as jd_gs3_rcd or point_export):
+    one sentence; None: every source, with SMS's product tables (the sidebar)."""
+    f = _DEFAULTS_FAMILY.get(str(family), family)
+    one = {"gs3": "GreenStar 3 card: the card crop's weight and dry moisture, 5.000-10,000.00 bu/ac, " + _DEFAULTS_TAIL,
+           "jdl": "Gen4 logs: SMS's weight and dry moisture for the file's crop, 5.000-10,000.00 bu/ac, "
+                  + _DEFAULTS_TAIL,
+           "isoxml": "ISOXML task data: SMS's weight and dry moisture for the task's crop, 5.000-10,000.00 bu/ac, "
+                     + _DEFAULTS_TAIL,
+           "cnh": "Case IH / New Holland card: SMS's product table by the crop name (weight, dry moisture, limits), "
+                  + _DEFAULTS_TAIL,
+           "point": "Point export: SMS's generic import, every reading kept (min 0, no max), the product table's "
+                    "weight and dry moisture, " + _DEFAULTS_TAIL}
+    if f is not None:
+        return one.get(f, "")
+    prod_txt = "; ".join(f"{p} {v[0]:g} lb/bu, {v[1]:g} %, {v[2]:g}-{v[3]:,.0f}" for p, v in si.SMS_PRODUCTS.items()
+                         if p != "Barley - Spring")
+    jd_txt = "; ".join(f"{k} {v[1]:g} lb/bu, {v[2]:g} %" for k, v in common.JD_SMS_CROPS.items())
+    iso_txt = "; ".join(f"{k} {v[0]:g} lb/bu, {v[1]:g} %" for k, v in iso_crops().items())
+    return "\n\n".join([
+        "**GreenStar 3 cards:** the weight to volume and dry moisture of the card's own crop definition; min 5.000 "
+        "and max 10,000.00 bu/ac.",
+        f"**Gen4 .jdl logs:** what SMS gives the file's crop ({jd_txt}; another crop: SMS's product table), not the "
+        "values the file states; min 5.000 and max 10,000.00 bu/ac (set the max in step 2 if SMS holds another for "
+        "the product).",
+        f"**ISOXML task data:** what SMS gives the task's crop ({iso_txt}; another crop OCED knows: SMS's product "
+        "table), not the density and reference moisture of the log; a crop code OCED does not know: the log's own "
+        "density and reference moisture ('from the file', with a warning to check the product); no crop and no "
+        "density: 56 lb/bu, 13 %, SMS's values for a dataset without a product. Min 5.000 and max 10,000.00 bu/ac.",
+        f"**Case IH / New Holland cards:** SMS's product table by the crop name ({prod_txt} bu/ac; another crop: the "
+        "crop table, 5-300); a unit whose crop has no weight on the card: 56 lb/bu, 13 %, with a warning (choose the "
+        "product in step 2).",
+        "**Point exports** (a shapefile, a KML / KMZ, an Operations Center or SMS export): as SMS's generic import of "
+        "a point file holds them, every reading kept (min 0, no max), with the weight to volume and dry moisture of "
+        "SMS's product table by the crop name; a crop OCED cannot name keeps the file's own yields. Readings logged "
+        "with a swath width of 0 stay in the import and are removed by S2 of the cleaning.",
+        "**Everywhere:** expand dry moisture off, no manual swath or moisture, delays and flow shift 0. Step 2 "
+        "changes any of them per file and says where every value came from."])
+
+
+SWITCH_HELP = "On: as SMS imports it (step 1). Off: your own values, then Apply. "
+# decoding options of step 1 that are not SMS's ((decoder keyword, value, how the badge line names it))
+NON_SMS_DECODING = (("calibration", "latest", "crop's latest calibration"), ("time_basis", "period",
+                                                                              "one logging period"),
+                    ("alignment", "shift", "fixed time shift"), ("points", "ops_center", "one point per flow sample"),
+                    ("time_logs", "joined", "joined time logs"))
+
+
+def decoding_not_sms(source: dict | None, report: dict | None = None) -> list:
+    """The decoding options of a raw file that are not SMS's (Decoding options, step 1): ['crop's latest
+    calibration', ...]; [] for SMS's choices or a point export."""
+    kw = None
+    for x in (source, report):
+        if isinstance(x, dict) and isinstance(x.get("decoder_kwargs"), dict):
+            kw = x["decoder_kwargs"]
+            break
+    return [txt for k, v, txt in NON_SMS_DECODING if kw and str(kw.get(k)) == v]
+
+
+def import_values_text(RS: dict) -> str:
+    """'wheat · 60.00 lb/bu · 13.50 % · 5.000-300.00 bu/ac': the product, weight to volume, dry moisture and yield
+    volume limits of a resolved import."""
+    parts = [str(RS.get("product") or "product not known")]
+    if RS.get("test_weight_lb_bu"):
+        parts.append(f"{float(RS['test_weight_lb_bu']):,.2f} lb/bu")
+    if RS.get("dry_moisture_pct") is not None:
+        parts.append(f"{float(RS['dry_moisture_pct']):.2f} %")
+    mn, mx = RS.get("min_yield"), RS.get("max_yield")
+    mn = None if mn in (None, si.AUTO) else float(mn)
+    mx = None if mx is None else float(mx)
+    parts.append(f"{mn:,.3f}-{mx:,.2f} bu/ac" if mn is not None and mx is not None else
+                 f"min {mn:,.3f} bu/ac, no maximum" if mn is not None else
+                 f"no minimum, max {mx:,.2f} bu/ac" if mx is not None else "no minimum or maximum")
+    return " · ".join(parts)
+
+
+def badge_line(kind: str, text: str, help: str | None = None):
+    """One line with the badge of an import before it (brand.import_badge) and its "?"."""
+    st.markdown(f"{brand.import_badge(kind)} {html.escape(str(text))}", unsafe_allow_html=True, help=help or None)
+
+
+def active_view(D: dict) -> dict:
+    """The import in use of a file (step 2, steps 3 and 4 read it), in the form of default_view."""
+    out = {k: D.get(k) for k in ("shp", "n", "sms_import", "report", "op", "yield", "area_ac", "zip", "source", "kind",
+                                 "label", "import_min")}
+    out.update({"error": None, "older": None, "is_default": False})
+    return out
+
+
+def step1_badge(V: dict, D: dict, tag: str | None = None) -> tuple:
+    """(kind, text, help) of step 1's import line for the view V of the file D (tag: its name, for the reason a build
+    of its default import failed in this session)."""
+    IM = V.get("sms_import") or {}
+    if not V.get("yield", True):
+        return ("as_is", "not a yield file", "SMS imports harvest data with Processing Settings; a planter or "
+                "sprayer file is used as written.")
+    if V.get("error"):
+        return "failed", "the readings as the file gives them", f"{V['error']}. Step 2 can try the import again."
+    if basis_pending(D):
+        # a file of an earlier version whose data's crop could not be read yet: its import as saved, nothing told
+        txt = (import_values_text(IM["resolved"]) if isinstance(IM.get("resolved"), dict) else
+               "the export as written")
+        return ("older", txt, "Imported by an earlier version of OCED, kept as it is: "
+                + basis_pending_note_of(D) + ".")
+    # the import in use stands in for SMS's default: why (the build failed in this session, or its readings are gone)
+    why_f = default_failed_reason(tag) if tag else None
+    gone = ("The import in use (step 2): SMS's default import of this file could not be made "
+            f"({why_f}); an action in step 2 or opening the work again tries it again." if why_f else
+            "The import in use (step 2): SMS's default import of this file cannot be made again, its readings are no "
+            "longer on disk.")
+    if not isinstance(IM.get("resolved"), dict):
+        if V.get("is_default") or import_basis(D) is None:
+            return "older", "no record of the import", "Open the data again for SMS's default import."
+        if D.get("kind") == "raw":
+            return "as_logged", "the monitor's own weight and moisture", gone
+        return "as_is", "the export as written", gone
+    txt = import_values_text(IM["resolved"])
+    if not V.get("is_default") and import_mode(D) == "custom":
+        return "custom", txt, gone
+    if V.get("older_decode"):
+        # named by the decode its yields come from (the product the readings carry), not 'product not known'
+        return "older", older_decode_text(V, IM["resolved"]), older_decode_help(D, V)
+    if V.get("older"):
+        return ("older", txt, f"Imported by an older OCED rule: {'; '.join(V['older'])}. Step 2 imports it with "
+                "today's rule.")
+    hlp = ("Imported as Ag Leader SMS imports this kind of file, its Processing Settings untouched. Step 2 can change "
+           "them. The record is under Import details.")
+    dec = decoding_not_sms(V.get("source"), V.get("report"))
+    if dec:
+        txt += " · decoded with: " + ", ".join(dec)
+        hlp += " This decoding option is not SMS's: Decoding options, step 1."
+    return "default", txt, hlp
+
+
+def located_in(df: pd.DataFrame) -> int:
+    """The readings of a point table with a plausible position (finite lon and lat)."""
+    if not len(df):
+        return 0
+    return int((np.isfinite(pd.to_numeric(df["lon"], errors="coerce"))
+                & np.isfinite(pd.to_numeric(df["lat"], errors="coerce"))).sum())
+
+
+def view_numbers(V: dict) -> dict:
+    """The numbers of the strip of a view: {df, det, op, n, located, area, mean, avg, ycol}."""
+    shp = V.get("shp")
+    df = read_points(shp, mtime(shp))
+    det = yc.detect_columns([c for c in df.columns if c not in ("lon", "lat")])
+    out = {"df": df, "det": det, "n": len(df), "op": operation_of(shp, mtime(shp)), "ycol": det.get("yield"),
+           "mean": None, "avg": None}
+    out["located"] = located_in(df)
+    a0 = area_of(df)
+    out["area"] = float(a0[np.isfinite(a0) & (a0 > 0)].sum()) if a0 is not None else 0.0
+    if V.get("yield", True) and det.get("yield"):
+        yv = pd.to_numeric(df[det["yield"]], errors="coerce")
+        if yv.notna().any():
+            out["mean"] = float(yv.mean())
+            out["avg"] = avg_of(df, det["yield"])
+    return out
+
+
+def _import_record_view(V: dict) -> dict:
+    """The import record of a view ({} without one; a work saved with the first import: its minimum only)."""
+    IM = V.get("sms_import") or {}
+    if not IM and V.get("import_min"):
+        o = V["import_min"]
+        IM = {"left_out": ({"below the min. yield volume": int(o.get("left_out") or 0)} if o.get("left_out") else {}),
+              "n_all": o.get("n_all"), "settings": f"min. yield volume {float(o.get('min_yield') or 0):g} bu/ac"}
+    return IM
+
+
+def readings_help(V: dict, n: int) -> str:
+    """The "?" of the Readings card (the rest of the record is under Import details)."""
+    IM = _import_record_view(V)
+    if not IM:
+        return ("SMS's import of this file failed: the readings as the file gives them." if V.get("error") else
+                "Not imported as SMS: the readings as the file gives them.")
+    lo = IM.get("left_out") or {}
+    h = (f"{n:,} of {int(IM.get('n_all') or n):,} readings; "
+         + ("left out: " + ", ".join(f"{k} {int(v):,}" for k, v in lo.items()) if lo else "none left out")
+         + (f"; recomputed: {', '.join(IM['changed'])}" if IM.get("changed") else "") + ".")
+    notes = " ".join(str(x) for x in (IM.get("notes") or []))
+    if notes and len(h) + len(notes) < 300:
+        return h + " " + notes
+    return h + " The rest is under Import details."
+
+
+def data_strip(V: dict, key: str, compare: dict | None = None) -> dict:
+    """The strip of cards of a view (step 1: every card; step 2, compare = step 1's view: readings, area, mean and
+    average, each with its difference to step 1). Returns view_numbers(V)."""
+    N = view_numbers(V)
+    df, det, OPX = N["df"], N["det"], N["op"]
+    IM = _import_record_view(V)
+    harvest = bool(V.get("yield", True))
+    card_sum = bool((V.get("report") or {}).get("sms_summary"))
+    avg_label = "Average dry yield of the readings" if card_sum else "Average dry yield (SMS)"
+    avg_help = ("The area-weighted average of the readings (each reading's yield x its area, added up, divided by "
+                "the area). SMS's Summary of a Case IH card is the display's own totals: the SMS Summary line."
+                if card_sum else "As the SMS summary: the area-weighted average, the total divided by the area.")
+    if compare is not None:
+        C = view_numbers(compare)
+
+        def d(a, b, fmt, unit=""):
+            if a is None or b is None:
+                return None
+            x = a - b
+            return ("0" if abs(x) < 0.005 else f"{x:+,{fmt}}") + (f" {unit}" if unit else "")
+        cards = [{"label": "Readings", "value": f"{N['n']:,}", "delta": d(N["n"], C["n"], "d"),
+                  "delta_description": "vs step 1", "help": readings_help(V, N["n"])},
+                 {"label": "Area harvested", "value": f"{N['area']:,.2f} ac", "delta": d(N["area"], C["area"], ".2f",
+                                                                                         "ac"),
+                  "delta_description": "vs step 1", "help": "The strips the readings swept (distance x width), "
+                                                            "added up."} if N["area"] > 0 else None]
+        if N["mean"] is not None:
+            cards.append({"label": "Mean dry yield", "value": f"{N['mean']:,.2f} bu/ac",
+                          "delta": d(N["mean"], C["mean"], ".2f", "bu/ac"), "delta_description": "vs step 1",
+                          "help": "The plain mean of the readings (as SMS Edit Legend)."})
+        if N["avg"] is not None:
+            cards.append({"label": avg_label, "value": f"{N['avg']:,.2f} bu/ac",
+                          "delta": d(N["avg"], C["avg"], ".2f", "bu/ac"), "delta_description": "vs step 1",
+                          "help": avg_help})
+        card_row(cards, key)
+        return N
+    op_lab = a3.OPERATION_LABEL.get(V.get("op") or "harvest", "Point data")
+    n_left = sum(int(v) for v in (IM.get("left_out") or {}).values())
+    cards = [{"label": "Operation", "value": op_lab.split(" (")[0], "help": op_lab},
+             {"label": "Readings", "value": f"{N['n']:,}", "delta": f"{n_left:,} left out at import" if n_left else None,
+              "help": readings_help(V, N["n"])}]
+    if N["area"] > 0:
+        cards.append({"label": "Area harvested" if harvest else "Area covered", "value": f"{N['area']:,.2f} ac",
+                      "help": "The strips the readings swept (distance x width), added up."
+                              + (f" Every decoded reading, before the import as SMS: {float(V['area_ac']):,.2f} ac."
+                                 if V.get("area_ac") and abs(float(V["area_ac"]) - N["area"]) > 0.005 else "")})
+    if harvest:
+        if N["mean"] is not None:
+            cards.append({"label": "Mean dry yield", "value": f"{N['mean']:,.2f} bu/ac",
+                          "help": "The plain mean of the readings (as SMS Edit Legend)."})
+        if N["avg"] is not None:
+            cards.append({"label": avg_label, "value": f"{N['avg']:,.2f} bu/ac", "help": avg_help})
+    elif OPX["rates"]:
+        r0 = OPX["rates"][0]
+        rv = pd.to_numeric(df[r0], errors="coerce")
+        u0 = OPX["units"].get(r0, "")
+        if rv.notna().any():
+            cards.append({"label": "Mean applied rate", "value": f"{rv.mean():,.2f} {u0}".strip(),
+                          "help": f"{r0}, every reading: the plain mean (as SMS Edit Legend)."})
+            ra = avg_of(df, r0) if per_area(u0) else None
+            if ra is not None:
+                cards.append({"label": "Average applied rate (SMS)", "value": f"{ra:,.2f} {u0}".strip(),
+                              "help": "As the SMS summary: area-weighted, the total divided by the area."})
+    tcol = det.get("time")
+    tt = pd.to_datetime(df[tcol], errors="coerce") if tcol else None
+    if tt is not None and tt.notna().any():
+        cards.append({"label": "Date", "value": f"{tt.min():%d %b %Y}" + (
+            f" – {tt.max():%d %b}" if tt.max().date() != tt.min().date() else ""),
+            "help": "The first and the last reading."})
+    mcol = det.get("machine")
+    if mcol:
+        cards.append({"label": "Machines", "value": f"{df[mcol].astype(str).replace('', np.nan).nunique():,}",
+                      "help": f"The machines the readings name ({mcol})."})
+    card_row(cards, key)
+    return N
+
+
+def sms_summary_line(rep: dict | None, IM: dict | None):
+    """A Case IH card: the display's own totals (its SMS Summary) in one line, the rest in its "?"."""
+    SS_T, _, SS_how = sms_summary_view(rep, IM)
+    if not SS_T.get("area_ac"):
+        return
+    parts = [f"{SS_T['area_ac']:,.2f} ac"]
+    if SS_T.get("bu_ac") is not None:
+        parts += [f"{SS_T['dry_bu']:,.1f} bu dry", f"{SS_T['bu_ac']:,.2f} bu/ac"]
+    elif SS_T.get("wet_lb") is not None:
+        parts.append(f"{SS_T['wet_lb']:,.0f} lb wet")
+    more = [x for x in (f"{SS_T['wet_lb']:,.0f} lb wet" if SS_T.get("wet_lb") is not None and
+                        SS_T.get("bu_ac") is not None else "",
+                        f"moisture {SS_T['moisture_pct']:.2f} %" if SS_T.get("moisture_pct") is not None else "") if x]
+    st.caption("SMS Summary (the display's totals): " + " · ".join(parts),
+               help="The display's own totals on the card, not the sum of the readings"
+                    + (f" ({', '.join(more)})" if more else "") + f"; {SS_how}. Each dataset under What the decoder "
+                    "reported.")
+
+
+def import_details_box(V: dict):
+    """Step 1's 'Import details': the record of the import (readings in and left out, what was recomputed, the
+    settings and where each value came from, the notes) and how a point export is imported."""
+    IM = _import_record_view(V)
+    with st.expander("Import details", type="compact"):
+        if V.get("error"):
+            st.caption(f"SMS's import of this file failed ({V['error']}): its readings are shown as the file gives "
+                       "them. Step 2 can try the import again.")
+        if IM:
+            lo = IM.get("left_out") or {}
+            st.markdown(f"**{int(IM.get('n_in') or V.get('n') or 0):,} of {int(IM.get('n_all') or 0):,} readings "
+                        "imported**" + ("; left out: " + ", ".join(f"{k} {int(v):,}" for k, v in lo.items()) if lo
+                                        else "; none left out"))
+            st.caption((f"Recomputed: {', '.join(IM['changed'])} (the dry yield computed again from the wet mass)."
+                        if IM.get("changed") else
+                        "Imported with no column recomputed: its product is not known, so the file's own yields are "
+                        "used (choosing the product in step 2 converts them)." if own_point_yields(IM) else
+                        "No column recomputed.")
+                       + (f" Settings: {IM['settings']}." if IM.get("settings") else ""))
+            if IM.get("sources"):
+                st.caption("Where the values came from: " + sources_line(IM) + ".")
+            for n_ in IM.get("notes") or []:
+                st.caption(str(n_))
+            if V.get("kind") == "export":
+                st.caption(("Imported as SMS's generic import of a point file holds it: every reading kept, unless a "
+                            "yield volume limit is set in step 2." if IM.get("family") == "point" else
+                            "Imported as SMS imports it.") + " Its attributes are the vendor's columns.")
+        elif not V.get("error"):
+            st.caption("A point export is used as it is: its attributes are the vendor's columns."
+                       + ("" if V.get("yield", True) else " Not a yield file: it is cleaned with the 3-sigma of the "
+                          "attributes you choose (the applied rate, the speed ...).") if V.get("kind") == "export" else
+                       "Not imported as SMS: the data as it is.")
+
+
+def decoder_report_box(V: dict, D: dict):
+    """Step 1's 'What the decoder reported' (raw data): units, points, machines, the SMS Summary of each dataset,
+    what was not exported as readings, the alignment, the section layouts and the decoder's warnings."""
+    rep = V.get("report")
+    if not rep:
+        return
+    _, SS_D, SS_how = sms_summary_view(rep, V.get("sms_import"))
+    with st.expander("What the decoder reported", type="compact"):
+        st.caption("Units: " + "; ".join(D.get("units") or []))
+        if rep.get("points"):
+            st.caption("Points: " + {"sms": "as SMS Advanced reads the .jdl",
+                                     "ops_center": "one per flow sample, as Operations Center"}.get(
+                str(rep["points"]), str(rep["points"])) + ".")
+        if rep.get("machines"):
+            st.dataframe(pd.DataFrame(rep["machines"]), hide_index=True)
+        if SS_D is not None:
+            st.caption("SMS Summary of each dataset: " + str(rep["sms_summary"].get("what") or "")
+                       + f" Dry volume and yield {SS_how}.")
+            st.dataframe(SS_D, hide_index=True,
+                         column_config={c: st.column_config.NumberColumn(
+                             "readings decoded (before the import's min / max)", format="%d")
+                             for c in ("decoded_readings", "readings")})
+            st.caption("The SMS GPS count is the readings left after the import (the Readings card).")
+        if rep.get("pre_step"):
+            st.dataframe(pd.DataFrame([{"not exported as readings": PRE_STEP_LABEL.get(str(k), str(k)),
+                                        "records": v} for k, v in rep["pre_step"].items()]), hide_index=True)
+        if rep.get("sessions_left_out"):
+            st.caption(f"{int(rep['sessions_left_out']):,} GreenStar 3 session(s) found twice in the input were read "
+                       "once (the copies left out).")
+        al = rep.get("alignment")
+        if isinstance(al, dict) and al:
+            st.caption("Grain and moisture of the readings (" + str(al.get("method") or "") + "): "
+                       + ", ".join(f"{k.replace('_', ' ')} {v:,.0f}" if isinstance(v, (int, float)) else
+                                   f"{k.replace('_', ' ')} {v}" for k, v in al.items() if k != "method") + ".")
+        for i, dd in enumerate(rep.get("details") or []):
+            lays = (dd or {}).get("layouts") if isinstance(dd, dict) else None
+            if isinstance(lays, list) and len(lays) > 1:
+                st.caption(f"{dd.get('unit') or dd.get('machine') or f'Unit {i + 1}'}: {len(lays)} section layouts "
+                           "in its logs (each reading takes the layout of its own log file)")
+                st.dataframe(pd.DataFrame(lays), hide_index=True)
+        for w in rep.get("warnings") or []:
+            st.warning(w, icon=":material/warning:")
+
+
+def extracted_units(root: str) -> dict:
+    """{unit id: tag} of the raw files of this work extracted from the input at root (step 1 marks them)."""
+    r = os.path.normcase(os.path.abspath(str(root)))
+    out = {}
+    for t, D in (ss.datasets or {}).items():
+        if D.get("kind") != "raw":
+            continue
+        ir = ew.input_root(D, ss.workdir)
+        if not ir or os.path.normcase(os.path.abspath(ir)) != r:
+            continue
+        for u in (D.get("source") or {}).get("unit_ids") or []:
+            out[str(u)] = t
+    return out
+
+
+def _pick_file():
+    """The File picker of step 1: that file in steps 1 to 4."""
+    ss.active = ss.get("active_pick")
+
+
+def _keep_settings(TKi: str, TKm: str | None = None):
+    """'Keep my settings' (or the dialog closed): the switch of step 2 off, the file unchanged, the dialog closed."""
+    ss[f"fi_def_{TKi}"] = False
+    if TKm:
+        ss.pop(f"fi_ask_{TKm}", None)
+
+
+def _switch_changed(tag: str, TKm: str, TKi: str):
+    """The switch of step 2 turned on over a file with own settings and a cleaning: the switch stays off (the data on
+    screen is still the file's own import) and the dialog asks first."""
+    D = ss.datasets.get(tag) or {}
+    if ss.get(f"fi_def_{TKi}") and import_mode(D) != "default" and has_cleaning(tag):
+        ss[f"fi_def_{TKi}"] = False
+        ss[f"fi_ask_{TKm}"] = True
+
+
+def _back_go(tag: str, TKm: str):
+    """'Back to SMS's default' in the dialog of step 2 (a callback: a pointer swap and deletes)."""
+    ss.pop(f"fi_ask_{TKm}", None)
+    w = []
+    try:
+        ss[f"fi_msg_{TKm}"] = back_to_default(tag, warns=w)
+    except ValueError as e:
+        ss[f"fi_err_{TKm}"] = str(e)
+    if w:
+        ss[f"fi_warn_{TKm}"] = w
+
+
+def _ask_back_to_default(tag: str, TKm: str, TKi: str):
+    """The switch turned back on over a file with a cleaning: ask first (the cleaning is set aside)."""
+    @st.dialog("Back to SMS's default?", on_dismiss=functools.partial(_keep_settings, TKi, TKm))
+    def ask():
+        st.markdown(f"The cleaning of {html.escape(tag)} is set aside (moved to superseded/) and the file goes back to "
+                    "SMS's default.")
+        with st.container(horizontal=True):
+            if st.button("Back to SMS's default", key=f"fi_backgo_{TKm}", type="primary", icon=":material/undo:",
+                         on_click=_back_go, args=(tag, TKm)):
+                st.rerun()
+            if st.button("Keep my settings", key=f"fi_backno_{TKm}", on_click=_keep_settings, args=(TKi, TKm)):
+                st.rerun()
+    ask()
+
+
+def _start(key: str, v) -> dict:
+    """A field of step 2 that may be empty: its starting value goes into the session state on its first draw (the
+    product callback sets the weight, moisture and limits there too), and the widget's own default is always None,
+    so that a field the user empties stays empty (the browser commits the widget's default for an emptied field; a
+    default of None also keeps Streamlit from warning about a value set both ways)."""
+    if key not in ss:
+        ss[key] = v
+    return {"value": None}
+
+
+HOW_LABEL = {"sms": "As SMS", "none": "None: the file as it is", "none_raw": "None: as the monitor logged it"}
+IMPORT_FIELDS = ("prod", "tw", "dm", "exp", "ums", "msw", "umm", "mm", "min", "max", "sd", "ed", "fs")   # fi_<x>_
+
+
+def step3_min() -> float:
+    """Step 3's own S0 minimum (bu/ac; the files not imported as SMS take it): the value on screen, else the one kept
+    for the runs that do not draw it, else the saved settings' or SMS's."""
+    P0 = ss.get("smsset") or {}
+    m0 = P0.get("min_yield", sms.DEFAULTS["min_yield"])
+    m = ss.get("min_yield", ss.get("min_yield_v", 0.0 if m0 is None else m0))
+    return 0.0 if m is None else float(m)
+
+
+def none_text(is_raw: bool) -> str:
+    """The line of step 2's 'None' (the S0 minimum of an export as step 3 holds it now)."""
+    if is_raw:
+        return "The monitor's own weight and moisture and its dry-yield convention: the file is decoded again."
+    m = step3_min()
+    return ("The export as written: nothing left out or recomputed. Step 3's S0 minimum then applies (now "
+            + ("none" if m <= 0 else f"{m:,.3f} bu/ac") + "; set in step 3).")
+
+
+def _located_count(shp: str | None) -> int:
+    """The readings of a file with a plausible position (0 when it is not there)."""
+    if not shp or not os.path.exists(str(shp)):
+        return 0
+    return located_in(read_points(shp, mtime(shp)))
+
+
+def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
+    """Step 2 of a file: the switch 'Use SMS's default settings' (on: the data is step 1's; off: the import
+    settings, editable, with Apply; back on: back to the default, asked first when the file has a cleaning), the
+    'Your settings' line, and the strip and map of the changed data on step 1's colour scale. Planter / sprayer files
+    and files with no record of their import get one line and no switch. Returns True when values are typed and not
+    applied (step 3 says so)."""
+    if not D.get("yield", True):
+        st.caption("Nothing to import: a planter or sprayer file is used as it is.",
+                   help="SMS imports harvest data with its Processing Settings; a planter or sprayer file is used as "
+                        "written, and step 3 cleans it with the 3-sigma of the attributes you choose.")
+        return False
+    B = import_basis(D)
+    if B is None:
+        st.caption("This file keeps no record of its import: open the data again (step 1) to change it.",
+                   help="A folder of an earlier version rebuilt from its files, or a file imported with the first "
+                        "import (the minimum only): opening its data again imports it with SMS's default.")
+        return False
+    if B.get("pending"):
+        note_ = basis_pending_note(B)
+        st.caption(":orange[The crop of this file's data could not be read yet: its import stays as it is]",
+                   help=note_[0].upper() + note_[1:] + ". Its import settings can be changed once "
+                        + ("it can be read." if B.get("why") else "its readings are back."))
+        return False
+    DF, mode = default_of(D), import_mode(D)
+    err = DF.get("error")
+    is_raw = D.get("kind") == "raw"
+    IM = D.get("sms_import") or {}
+    # the values shown: the active import's; with no import as SMS, the default's (SMS's default when it failed); an
+    # import made under an older rule: the fields offer today's values, so that one Apply updates it
+    V2s = step2_start(D)
+    R0, IMv, RS, RP, SRCP = V2s["R0"], V2s["IMv"], V2s["RS"], V2s["RP"], V2s["SRCP"]
+    mon_p, fmt_p, old_imp = V2s["monitor"], V2s["fmt"], V2s["old_imp"]
+    TKm = file_key(tag)
+    # the widgets are keyed by the import they show: every applied import (and another mode) gets new widgets that
+    # start from the file's real state; while the user only edits, the keys stay
+    TKi = key_of(f"{TKm}|{ss.workdir}|{mode}|{IM.get('settings')}|{D.get('n')}|{mtime(D['shp'])}")
+    def_ready = bool(DF.get("shp")) and os.path.exists(str(DF.get("shp")))
+    on = st.toggle("Use SMS's default settings", key=f"fi_def_{TKi}", value=(mode == "default"),
+                   disabled=bool(err) or (mode != "default" and not def_ready),
+                   on_change=_switch_changed, args=(tag, TKm, TKi),
+                   help=SWITCH_HELP + sms_defaults_text(B.get("fmt")))
+    if ss.get(f"fi_err_{TKm}"):
+        st.error(ss.pop(f"fi_err_{TKm}"), icon=":material/error:")
+    if ss.get(f"fi_msg_{TKm}"):
+        st.success(ss.pop(f"fi_msg_{TKm}"), icon=":material/check_circle:")
+    for w_ in ss.pop(f"fi_warn_{TKm}", None) or []:
+        st.warning(w_, icon=":material/warning:")
+    if ss.get(f"fi_ask_{TKm}"):
+        if mode != "default" and has_cleaning(tag):
+            _ask_back_to_default(tag, TKm, TKi)          # the switch stays off behind it: the import in use, as it is
+        else:
+            ss.pop(f"fi_ask_{TKm}", None)
+    if on and mode != "default":
+        if has_cleaning(tag):                            # (the switch set without its callback): asked first too
+            if not ss.get(f"fi_ask_{TKm}"):
+                _ask_back_to_default(tag, TKm, TKi)
+            on = False
+        else:
+            try:
+                with st.spinner("Back to SMS's default import ..."):
+                    w_back = []
+                    ss[f"fi_msg_{TKm}"] = back_to_default(tag, warns=w_back)
+                    if w_back:
+                        ss[f"fi_warn_{TKm}"] = w_back
+            except ValueError as e:
+                st.error(str(e), icon=":material/error:")
+                on = False
+            else:
+                st.rerun()
+    unknown = RS.get("test_weight_lb_bu") is None or RS.get("dry_moisture_pct") is None
+
+    # a default made from the readings an older version decoded with a product (its raw data not at hand or not
+    # decoded again): no Apply makes SMS's default of it; its raw data does
+    dec_old = older_decode_help(D) if DF.get("older_decode") else ""
+
+    def notices():
+        older_txt = ("; ".join(DF["older"]) + "." if (DF.get("older") and mode == "default") else
+                     old_imp[0].upper() + old_imp[1:] + "." if old_imp else "")
+        if dec_old and not on and mode == "default":
+            st.caption(":orange[Decoded by an older OCED]", help=dec_old)
+        elif older_txt and not on:
+            st.caption(":orange[Imported by an older OCED rule]",
+                       help=older_txt + " Apply imports it with today's rule (the fields show today's values).")
+        if unknown and own_point_yields(IMv):
+            st.caption("Product not known: the file's own yields are used", help=OWN_YIELDS_TEXT)
+        elif unknown:
+            st.caption(":orange[Product not recognised]",
+                       help="The yields are as the file gives them. Choose the product under Edit the settings to "
+                            "convert them with its weight to volume and dry moisture.")
+        if old_decode(D):
+            st.caption(":orange[Extracted by an older OCED]",
+                       help="This file was extracted by an older version of OCED: importing it again re-imports the "
+                            "readings that version decoded. Open the raw data again (step 1) for the current decode.")
+    if on:
+        if _located_count(D["shp"]):
+            st.caption("The data is as in step 1.")
+        else:                                            # the page stops here: the way on is to change the import
+            st.caption(":orange[The data is as in step 1, with no reading to clean: switch this off to change the "
+                       "import (the min. yield volume or another value), then Apply.]")
+        if dec_old:
+            st.caption(":orange[Decoded by an older OCED]", help=dec_old)
+        elif DF.get("older"):
+            st.caption(":orange[Imported by an older OCED rule]",
+                       help="; ".join(DF["older"]) + ". Switch off and Apply to import it with today's rule (the "
+                                                     "fields show today's values).")
+        notices()
+        return False
+    # a failed import in use is not a choice of 'None': the import to apply is 'As SMS' (Apply tries it again, nothing
+    # is pending); an import of an older rule: Apply imports it with today's values (the fields show them)
+    retry = failed_in_use(D)
+    # (an older version's decode is not refreshed by an Apply: the same readings give the same import)
+    older_rule = bool(DF.get("older")) and mode == "default" and not DF.get("older_decode")
+    # own settings made from readings other than step 1's (an older version decoded them with a product; its raw data
+    # was decoded again since for SMS's default) that give another import from step 1's readings (one that gives the
+    # same import, reading for reading, already follows them: ensure_default, _rebase_own_import): Apply imports them
+    # again from step 1's readings
+    other_dec = (mode == "custom" and bool(IM.get("all_readings")) and isinstance(DF.get("report"), dict)
+                 and _norm_p(ew.resolve_moved(IM["all_readings"], ss.workdir))
+                 != _norm_p(ew.resolve_moved(B["all_readings"], ss.workdir)))
+    refresh = bool(old_imp) or older_rule or other_dec
+    # step 1 shows an older rule's import (D7): what Apply changes in it (own settings that keep an older rule's
+    # value name only the user's values; the orange caption says the rest)
+    older_ch = import_changes(RS, RP, IMPORT_KEYS_SHOWN) if older_rule else []
+    if mode == "default" and DF.get("older_decode"):
+        st.caption("Still the older version's readings (Older rule): change a value and Apply.")
+    elif mode == "default" and not refresh:
+        st.caption("Still SMS's default: change a value and Apply.")
+    elif mode == "default":
+        pass                                             # the older rule: its caption (notices) and the line under Edit
+    elif mode == "custom":
+        ch = own_changes(R0, IM)                         # the user's values only (not an older rule's)
+        dec_w = older_decode_word(D) if not ch else None
+        if not ch and (other_dec or dec_w):
+            # (no value of the user's: the readings are what differs, its raw data at hand or not)
+            badge_line("custom", OLDER_DECODE_WORD,
+                       help="Nothing of yours differs from SMS's default: these readings were decoded by an older "
+                            f"OCED with {dec_w or 'a product'}. The settings and where each value came from: Import "
+                            "details, under the map.")
+        else:
+            badge_line("custom", (", ".join(ch[:3]) + (f" and {len(ch) - 3} more" if len(ch) > 3 else "")) if ch
+                       else "your values",
+                       help="Changed against SMS's default: " + ("; ".join(ch) if ch else "nothing") + ". The settings "
+                            "and where each value came from: Import details, under the map.")
+    elif retry:
+        badge_line("failed", "the readings as the file gives them",
+                   help=f"SMS's import of this file failed ({err}). Apply with 'As SMS' tries it again.")
+    elif is_raw:
+        badge_line("as_logged", "the monitor's own weight and moisture, its dry-yield convention",
+                   help="Decoded again as the monitor logged it: no import as SMS, nothing left out or recomputed.")
+    else:
+        badge_line("as_is", "the export as written: nothing left out or recomputed",
+                   help="No import as SMS: every reading of the export as it is. Step 3's S0 minimum then applies.")
+    notices()
+    if other_dec:
+        st.caption(":orange[Made from an older decode]",
+                   help="This import was made from the readings an older OCED decoded with a product, not from those "
+                        "step 1 shows (SMS's default decode of the raw data). Apply imports it again with these values "
+                        "from step 1's readings (its cleaning is then set aside).")
+    cur_how = "none" if (mode == "as_is" and not retry) else "sms"
+    pending = False
+    # own settings that leave no reading with a position: the fields to change them open (steps 3 and 4 wait)
+    no_reading = mode != "default" and not retry and not _located_count(D["shp"])
+    with st.expander("Edit the settings", type="compact", key=f"fi_edit_{TKi}",
+                     expanded=(mode == "default" or retry or no_reading)):
+        with st.container(key=f"imp_panel_{TKm}"):
+            how = st.segmented_control(
+                "Import", ["sms", "none"], default=cur_how, required=True,
+                key=f"fi_how_{TKi}",
+                format_func=lambda h: HOW_LABEL["none_raw" if (h == "none" and is_raw) else h],
+                help="As SMS: imported with the values below. None: the export as written (raw: decoded again with "
+                     "the monitor's own values), nothing left out or recomputed; step 3's S0 minimum then applies.")
+            how = how or "sms"
+            S_f, changed_vals = None, []
+            if how == "none":
+                st.caption(none_text(is_raw))
+                # the fields are not drawn with 'None': the values typed in them are kept (set again, so that
+                # Streamlit does not drop them) for 'As SMS' again in this file
+                for k_ in [f"fi_{n_}_{TKi}" for n_ in IMPORT_FIELDS]:
+                    if k_ in ss:
+                        ss[k_] = ss[k_]
+            else:
+                def came(k, text=""):
+                    s = SRCP.get(k)
+                    lab = str(SOURCE_LABEL.get(s, s) or "")
+                    lab = lab[5:] if lab.startswith("from ") else lab
+                    return ((f"From: {lab}. " if s else "") + text).strip() or None
+                prods = sorted(common.CROPS)
+                p0 = RP.get("product") if RP.get("product") in prods else None
+                # the data's product as SMS's default resolves it for the file's basis: its crop name, else the
+                # monitor's crop definition (an export whose Deere metadata gives a crop id only)
+                p_data = _crop(R0.get("product"))
+                brand.group_label("Operation")
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    f_prod = st.selectbox(
+                        "Product", [None] + prods, index=([None] + prods).index(p0), key=f"fi_prod_{TKi}",
+                        format_func=lambda c: "unknown" if c is None else c, on_change=_fi_product_changed,
+                        args=(TKi, mon_p, fmt_p, V2s.get("crop")),
+                        help=("From: you. " if (p0 and p0 != p_data) else "From: the data's crop. " if p0 else "")
+                        + "Another product fills in its weight to volume, dry moisture and yield volume limits for "
+                          "this kind of file.")
+                    ss[f"fi_prodwas_{TKi}"] = f_prod      # what the field shows (a product chosen next: from it)
+                    f_tw = st.number_input("Weight to volume (lb/bu)", min_value=1.0, max_value=200.0, step=0.5,
+                                           **_start(f"fi_tw_{TKi}", None if RP.get("test_weight_lb_bu") is None else
+                                                    float(RP["test_weight_lb_bu"])), format="%.2f",
+                                           key=f"fi_tw_{TKi}",
+                                           placeholder="as the file gives it",
+                                           help=came("test_weight_lb_bu", "Turns the wet mass into bushels."))
+                    f_dm = st.number_input("Dry moisture (%)", min_value=0.0, max_value=60.0, step=0.1,
+                                           **_start(f"fi_dm_{TKi}", None if RP.get("dry_moisture_pct") is None else
+                                                    float(RP["dry_moisture_pct"])), format="%.2f",
+                                           key=f"fi_dm_{TKi}",
+                                           placeholder="as the file gives it",
+                                           help=came("dry_moisture_pct", "The moisture the dry yield is given at."))
+                    f_exp = st.checkbox("Expand dry moisture", value=bool(RS.get("expand_dry_moisture")),
+                                        key=f"fi_exp_{TKi}",
+                                        help="Off (SMS's default): grain drier than the dry moisture is not raised to "
+                                             "it. On: dry yield = wet x (100 - M) / (100 - dry moisture) both ways.")
+                brand.group_label("Swath and moisture")
+                shp_w = V1["shp"] if os.path.exists(str(V1.get("shp") or "")) else D["shp"]
+                WA_ = width_audit(read_points(shp_w, mtime(shp_w)))         # the width the monitor logged
+                w_log = max((r["logged width (ft)"] for r in WA_), default=None)
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    f_ums = st.checkbox("Manual swath", value=bool(RS.get("use_manual_swath")), key=f"fi_ums_{TKi}",
+                                        help="Replaces the width the monitor logged"
+                                             + (f" (step 1: {w_log:g} ft)" if w_log else "")
+                                             + ". Per-area values are scaled by logged / manual; the grain mass is "
+                                               "kept.")
+                    w0 = (float(RS.get("manual_swath_ft") or 15.0) if (RS.get("use_manual_swath") or not w_log)
+                          else float(w_log))
+                    f_msw = st.number_input("Width (ft)", 0.1, 300.0, w0, 0.5, format="%.2f", key=f"fi_msw_{TKi}",
+                                            disabled=not f_ums, help="The real width of the header.")
+                    f_umm = st.checkbox("Manual moisture", value=bool(RS.get("use_manual_moisture")),
+                                        key=f"fi_umm_{TKi}", help="Replaces the moisture of every reading.")
+                    mm0 = next((float(RP[k]) for k in ("manual_moisture_pct", "dry_moisture_pct")
+                                if RP.get(k) is not None), None)
+                    f_mm = st.number_input("Moisture (%)", min_value=0.0, max_value=80.0, step=0.1,
+                                           **_start(f"fi_mm_{TKi}", mm0), format="%.2f", key=f"fi_mm_{TKi}",
+                                           disabled=not f_umm, placeholder="= the dry moisture",
+                                           help="Empty = the dry moisture.")
+                brand.group_label("Filter")
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    f_min = st.number_input("Min. yield volume (bu/ac)", min_value=0.0, max_value=1e4, step=1.0,
+                                            **_start(f"fi_min_{TKi}", None if RP.get("min_yield") in (None, si.AUTO)
+                                                     else float(RP["min_yield"])),
+                                            format="%.3f", key=f"fi_min_{TKi}", placeholder="no minimum",
+                                            help=came("min_yield", "A reading with no dry yield or one below this is "
+                                                                   "left out. Empty = no minimum."))
+                    f_max = st.number_input("Max. yield volume (bu/ac)", min_value=0.0, max_value=1e5, step=10.0,
+                                            **_start(f"fi_max_{TKi}", None if RP.get("max_yield") is None else
+                                                     float(RP["max_yield"])),
+                                            format="%.2f", key=f"fi_max_{TKi}", placeholder="no maximum",
+                                            help=came("max_yield", "A reading above this is left out. Empty = no "
+                                                                   "maximum."
+                                                      + (" When SMS holds another maximum for the product, type it "
+                                                         "here." if SRCP.get("max_yield") == si.SRC_JD else "")))
+                brand.group_label("Equipment")
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    f_sd = st.number_input("Start delay (s)", 0.0, 600.0, float(RS.get("start_delay_s") or 0.0), 0.5,
+                                           format="%.2f", key=f"fi_sd_{TKi}",
+                                           help="The first seconds of every pass left out.")
+                    f_ed = st.number_input("Stop delay (s)", 0.0, 600.0, float(RS.get("stop_delay_s") or 0.0), 0.5,
+                                           format="%.2f", key=f"fi_ed_{TKi}",
+                                           help="The last seconds of every pass left out.")
+                    f_fs = st.number_input("Flow shift (s)", -600.0, 600.0, float(RS.get("flow_shift_s") or 0.0), 0.5,
+                                           format="%.2f", key=f"fi_fs_{TKi}",
+                                           help="The grain mass of a reading moved to the position logged that many "
+                                                "seconds earlier (+) or later (-).")
+                # a value that does not act (the manual swath / moisture while its box is unticked) keeps the
+                # recorded one
+                S_f = {"on": True, "product": f_prod, "test_weight_lb_bu": f_tw, "dry_moisture_pct": f_dm,
+                       "expand_dry_moisture": bool(f_exp), "use_manual_swath": bool(f_ums),
+                       "manual_swath_ft": f_msw if f_ums else RS.get("manual_swath_ft", 15.0),
+                       "use_manual_moisture": bool(f_umm),
+                       # unticked: empty, so that the manual moisture follows the dry moisture of the product
+                       "manual_moisture_pct": f_mm if f_umm else None, "min_yield": f_min,
+                       "max_yield": f_max, "start_delay_s": f_sd, "stop_delay_s": f_ed, "flow_shift_s": f_fs}
+                if f_prod is None and p_data and _crop(RP.get("product")) == p_data and not (
+                        IM.get("product_from") or own_settings(D, R0).get("product")):
+                    # 'unknown' on a file whose product in use is its data's own (no product of its own to take
+                    # back): the same product, nothing typed
+                    S_f["product"] = RP.get("product")
+                # against the values the fields started from (an older rule's import: today's values)
+                changed_vals = typed_fields(S_f, RP, RS)
+            pending = how != cur_how or bool(changed_vals)
+            changed = pending or ((retry or refresh) and how == "sms")
+            if pending or (how == "sms" and older_ch):
+                # an older rule's import: what Apply changes in the import in use (today's values with nothing typed)
+                word = {"sms": "as SMS", "none": "as logged" if is_raw else "as it is"}
+                nap = ([f"Import {word[cur_how]} → {word[how]}"] if how != cur_how else []) + (
+                    import_changes(RS if older_ch else RP, S_f) if S_f is not None else [])
+                # the first three changes, and every yield volume limit that changes (never hidden behind 'more')
+                shown = nap[:3] + [x for x in nap[3:] if x.startswith(("Min. yield volume", "Max. yield volume"))]
+                st.caption(":orange[Not applied: " + (", ".join(shown) + (f" and {len(nap) - len(shown)} more"
+                                                                          if len(nap) > len(shown) else "")
+                                                       if nap else "the values above") + "]",
+                           help=("The import in use is an older OCED rule's (step 1 shows it). Apply imports the file "
+                                 "with these values: steps 1 and 2 then show that import." if older_ch else None))
+            # the other harvest files (each named by the plan: reached or left, one with no record of its import too)
+            others = [t for t, D_ in ss.datasets.items() if t != tag and D_.get("yield", True)]
+            # what Apply to all would do (amendment A1: the fields typed, merged into each file's own settings): the
+            # files they reach, each with what changes in it (its cleaning set aside), and the files left as they are.
+            # Nothing typed (an older rule's import refreshed, a failed import tried again): this file only
+            typed = how == "sms" and S_f is not None and bool(changed_vals)
+            # the readings this file is imported from (a raw file on 'None' is decoded again from its raw data): not
+            # at hand, no Apply can change its import, nor Apply to all from it (amendment A1: never a promise the
+            # click does not keep)
+            src_me = ew.resolve_moved(B["all_readings"], ss.workdir)
+            me_away = (how == "sms" or not is_raw) and not (src_me and os.path.exists(src_me))
+            # a raw file on 'None' is decoded again from its raw data: that folder not at hand, no Apply either
+            raw_root = _raw_root(D) if (is_raw and how == "none" and changed) else None
+            raw_away = is_raw and how == "none" and changed and not (raw_root and os.path.isdir(raw_root))
+            plan = {}
+            if raw_away:
+                st.caption(f":orange[The raw data of {tag} is not at hand ({_folder_name(raw_root)}): reconnect the "
+                           "drive or open it again (step 1) to decode it as the monitor logged it.]")
+            elif me_away:
+                at_ = _where(src_me or B["all_readings"])
+                st.caption(":orange[" + (
+                    f"The readings {tag} is imported from are no longer in the work folder ({at_}): open its data "
+                    "again (step 1) to change its import" if _in_folder(src_me or B["all_readings"], ss.workdir) else
+                    f"The readings {tag} is imported from are not at hand ({at_}): reconnect the drive to change its "
+                    "import") + ("; to change the other files, choose one of them in the File list and type the "
+                                 "change on it" if others else "") + ".]")
+            elif others and typed:
+                try:
+                    plan = apply_to_all_plan(tag, S_f, changed_vals)
+                except ValueError:
+                    plan = {}
+            reach = list(plan.get("targets") or [])
+            aside = [t for t in reach if has_cleaning(t)]
+            left = plan_left_lines(plan) if plan else []
+            if not me_away and not raw_away and (has_cleaning(tag) or reach or left):
+                st.caption(":orange[" + " ".join(x for x in (
+                    f"Applying sets aside the cleaning of {tag}: clean it again in step 3." if has_cleaning(tag)
+                    else "",
+                    ("Apply to all also changes " + ", ".join(f"{t} ({plan_changes_text(plan, t)})" for t in reach)
+                     + ".") if reach else "",
+                    f"Apply to all also sets aside the cleaning of {', '.join(aside)}." if aside else "",
+                    *left) if x) + "]")
+            with st.container(horizontal=True, vertical_alignment="center", key="run_go_imp"):
+                go = st.button(f"Apply to {tag}", key=f"fi_go_{TKi}", type="primary" if changed else "secondary",
+                               disabled=not changed or me_away or raw_away, icon=":material/check:",
+                               help="Imports this file again from all its readings with these values; step 2 then "
+                                    "shows the changed data and step 3 cleans it.")
+                go_all = (st.button(f"Apply to all {len(others) + 1} harvest files", key=f"fi_goall_{TKi}",
+                                    disabled=not typed or me_away,
+                                    help="The fields you changed here, each set in the own settings of every other "
+                                         "harvest file (" + ", ".join(others) + "): its other settings stay, the "
+                                         "weight to volume and dry moisture go only to files of the same product, and "
+                                         "a field set back to SMS's default is taken back from each. A product chosen "
+                                         "goes to the files that had this file's product (the same choice of it, or "
+                                         "each its data's), with that product's own weight to volume, dry moisture "
+                                         "and limits for each file; a file of another product, or one whose product "
+                                         "was chosen on it for other data, keeps its own; 'unknown' takes the product "
+                                         "back. A file they bring nothing keeps its import and its cleaning. With "
+                                         "nothing typed, Apply changes this file only.")
+                          if others else False)
+            if go or go_all:
+                prog = st.empty()
+                fails, held_w = [], []                    # files not imported; files held open (warnings)
+                with st.spinner(f"Decoding {tag} again as the monitor logged it (seconds to a minute) ..."
+                                if (how == "none" and is_raw) else "Importing the file again ..."):
+                    try:
+                        ss[f"fi_msg_{TKm}"] = (
+                            apply_to_all(tag, S_f, progress=lambda t, i, n: prog.caption(
+                                f"Importing {t} again ({i} of {n}) ..."), failed=fails, warns=held_w,
+                                changed=changed_vals) if go_all else
+                            apply_as_is(tag, warns=held_w) if how == "none" else
+                            apply_custom(tag, S_f, warns=held_w))
+                        if fails or held_w:
+                            ss[f"fi_warn_{TKm}"] = fails + held_w
+                    except ValueError as e:
+                        st.error(str(e), icon=":material/error:")
+                        return pending
+                    except Exception as e:                   # shown, never swallowed
+                        st.exception(e)
+                        return pending
+                st.rerun()
+    if mode == "default" or retry:                       # (a failed import: step 1's readings, nothing changed)
+        return pending
+    # ---- the changed data: four cards against step 1 and its map, on step 1's colour scale
+    V2 = active_view(D)
+    N2 = data_strip(V2, "strip_2", compare=V1)
+    RS_a, RS_1 = IM.get("resolved") or {}, ((V1.get("sms_import") or {}).get("resolved") or {})
+    if (V2.get("report") or {}).get("sms_summary") and any(
+            not _same_value(RS_a.get(k), RS_1.get(k)) for k in ("test_weight_lb_bu", "dry_moisture_pct",
+                                                                 "expand_dry_moisture")):
+        sms_summary_line(V2.get("report"), D.get("sms_import"))
+    if not N2["located"]:
+        st.warning("Your settings leave no reading with a position: change them and Apply again, or switch back to "
+                   "SMS's default.", icon=":material/warning:")
+        return pending
+    mb2 = map_box(f"imp_{key_of(D['shp'])}", map_folded(tag))
+    with mb2:
+        if mb2.open:
+            explorer(D["shp"], key=f"imp_{key_of(D['shp'])}", default=ss.get(f"attr_raw_{key_of(V1['shp'])}"),
+                     scale_of=V1["shp"], outline=outline, height=440, extras=False,
+                     data=f"{kind_word(import_kind(tag, D))} (step 2)")
+    import_details_box(V2)
+    explorer_extras(D["shp"])
+    return pending
 
 
 # ------------------------------------------------------------------------------------------------ header
@@ -4597,133 +8052,127 @@ with st.container(key="app_header"):
 with st.sidebar:
     st.markdown(f"**{NAME} {VERSION}** · Olds College Extract Data")
     with st.expander("What OCED reads", icon=":material/info:"):
-        st.caption("The data of combines, planters and sprayers: the map of every attribute, the 3-sigma cleaning "
-                   "with the clip to the field boundary, the grower's data to validate or adjust the yields, and the "
-                   "clean shapefiles and reports.")
+        st.caption("The data of combines, planters and sprayers in four steps: 1 the raw data with SMS's default "
+                   "import and the map of every attribute, 2 the import settings, 3 the 3-sigma cleaning with the clip "
+                   "to the field boundary and the grower's data to validate or adjust the yields, 4 the clean files "
+                   "and reports.")
         st.caption("Combines, raw: Case IH / New Holland .cn1 cards, John Deere Gen4 / G5 logs (JD-Data .jdl), John "
                    "Deere GreenStar 3 cards (.fdd / .fdl), ISOXML harvest task data (TASKDATA.XML with its TLG time "
                    "logs, any number of sets). Point exports of combines, planters and sprayers: SMS and "
                    "Operations Center shapefiles (yield also as .kml / .kmz), or any point shapefile of a machine.")
+        with st.expander("SMS's default import, by source", type="compact"):
+            st.caption(sms_defaults_text(None))
+        with st.expander("The SMS 3-sigma cleaning", type="compact"):
+            st.caption(SMS3S_TEXT)
     saved_works_block()
 
+
+def _away_where(A: dict) -> str:
+    """Where the points of a file set aside were: '(the folder X)', '(in the work folder: the folder decoded)'."""
+    shp = str((A.get("dataset") or {}).get("shp") or "")
+    inside = bool(ss.get("workdir")) and _in_folder(shp, ss.workdir)
+    return f"({'in the work folder: ' if inside else ''}{_folder_name(os.path.dirname(shp))})"
+
+
+def _ask_remove_away(t: str):
+    ss[f"rm_away_ask_{file_key(t)}"] = True
+
+
+def _keep_away(t: str):
+    ss.pop(f"rm_away_ask_{file_key(t)}", None)
+
+
+def _remove_away(t: str):
+    """A file set aside taken out of its work (asked first): its cleaning, boundary, grower's data and settings go
+    with it; the files in the work folder stay. The work is saved without it."""
+    ss.pop(f"rm_away_ask_{file_key(t)}", None)
+    (ss.get("away") or {}).pop(t, None)
+    ss.away_order = [x for x in (ss.get("away_order") or []) if x != t]
+    drop_work_msg_file(t)                                # its 'it stays in this work' line no longer holds
+    save_current(quiet=True, even_empty=True)
+    ss["rm_away_msg"] = f"{t} was removed from this work (the files in the work folder stay)."
+
+
+def away_files_block():
+    """Step 1: the files of the work set aside when it was opened (their points not at hand), with where their points
+    were, the way back, and a button per file to take it out of the work (asked first, since its cleaning goes with
+    it): a file whose points are gone for good never stays in the work against the user's will."""
+    if ss.get("rm_away_msg"):
+        st.success(ss.pop("rm_away_msg"), icon=":material/check_circle:")
+    away_ = {t: A for t, A in (ss.get("away") or {}).items() if t not in ss.datasets}
+    if not away_:
+        return
+    clean_ = [t for t, A in away_.items() if A.get("cleaned")]
+    inside = [t for t, A in away_.items() if _away_where(A).startswith("(in the work folder")]
+    ways = (["reconnect the drive and open the work again"] if len(inside) < len(away_) else []) + (
+        ["points that were in the work folder come back only by opening the data again (step 1)"] if inside else [])
+    st.caption(":orange[Set aside, their points away: " + ", ".join(f"{t} {_away_where(A)}" for t, A in away_.items())
+               + ". They stay in this work" + (f" (with the cleaning of {', '.join(clean_)})" if clean_ else "")
+               + ": " + "; ".join(ways) + ". A file you no longer need can be removed from this work.]")
+    with st.container(horizontal=True):
+        for t in away_:
+            k_ = file_key(t)
+            if ss.get(f"rm_away_ask_{k_}"):
+                continue
+            st.button(f"Remove {t} from this work", key=f"rm_away_{k_}", icon=":material/delete:",
+                      on_click=_ask_remove_away, args=(t,),
+                      help="Asked first. Its cleaning, boundary, grower's data and settings go with it; the files in "
+                           "the work folder stay.")
+    for t, A in away_.items():
+        k_ = file_key(t)
+        if not ss.get(f"rm_away_ask_{k_}"):
+            continue
+        st.warning(f"Remove {t} from this work? " + ("Its cleaning, boundary" if A.get("cleaned") else "Its boundary")
+                   + ", grower's data and settings go with it; the files in the work folder stay.",
+                   icon=":material/warning:")
+        with st.container(horizontal=True):
+            st.button("Remove", key=f"rm_away_yes_{k_}", type="primary", on_click=_remove_away, args=(t,))
+            st.button("Keep it", key=f"rm_away_no_{k_}", on_click=_keep_away, args=(t,))
+
+
+def end_of_page():
+    """What every run draws last: the action tree in the sidebar, the Save the page asked for, the save status."""
+    with st.sidebar:
+        action_tree()
+    save_requested()                     # a Save the page did not reach in step 3 (it is saved here at the latest)
+    if SAVE_PH is not None:
+        SAVE_PH.caption(save_status_text())
+    draw_work_msg()                      # the 'Opened ...' message as a cleaning of this run left it
+
+
 # ------------------------------------------------------------------------------------------------ 1 raw data
+# Step 1 is the raw data only, imported with SMS's default for its format (no import setting here): the open row,
+# the input and its units, then the file's import line, its strip of cards, its map and the details.
 with st.container(border=True, key="oced_step_1"):
-    brand.step_header(1, "Machine data", "The files of a combine, planter or sprayer: upload them, or open a file or "
-                                         "folder on this computer")
-    ups = st.file_uploader("Upload files", accept_multiple_files=True, key=f"uploads_{int(ss.get('up_nonce') or 0)}",
-                           help="Combines: a zipped card or JD-Data folder, the files of a GreenStar card, zipped "
-                                "ISOXML task data (TASKDATA sets, also a zip of zips), a yield "
-                                "point export or its .kml / .kmz. Planters and sprayers: the as-applied point export "
-                                "(.shp + .shx + .dbf + .prj, or a zip). Any other point shapefile of a machine too.")
-    with st.container(horizontal=True, vertical_alignment="bottom"):
-        st.text_input("or a file or folder on this computer", key="path_in",
-                      placeholder=r"C:\...\JD-Data   or   C:\...\<card>.cn1   (a folder is read in place, a .zip "
-                                  r"unpacked into the work folder)")
-        if st.button("Open", type="primary", icon=":material/folder_open:", key="open_btn"):
-            p_in = (ss.get("path_in") or "").strip()
-            # a path is the user's latest choice unless it is the one opened last (still typed in the box)
-            fresh_path = bool(p_in) and p_in != str(ss.get("last_open_path") or "")
-            if ups and fresh_path:
-                st.toast("Both files to upload and a path are given: remove the uploaded files or empty the path, "
-                         "then Open", icon=":material/warning:")
-            elif ups:
-                request_open(("upload", ups))
-            elif p_in:
-                request_open(("path", p_in))
-            else:
-                st.toast("Upload files or type a path first", icon=":material/info:")
-    # ---- Import as SMS: the Processing Settings SMS applies when it imports a harvest (engine/sms_import.py)
-    S_p = import_settings()
-    _tv = si.table_values(S_p["product"]) if S_p["product"] else None   # (tw, dm, min, max, SMS product, source)
-    _pd = (_tv[0], _tv[1], _tv[3]) if _tv else None
-    with st.expander("Import as SMS (Processing Settings): the defaults for the data you open"
-                     + ("" if S_p["on"] else ": off, the data as it is"),
-                     icon=":material/filter_alt:"):
-        si_on = st.toggle("Import the data as SMS would", value=True, key="si_on",
-                          help="SMS applies these settings when it imports a harvest: the yields computed with the "
-                               "product's weight to volume and dry moisture, the readings outside the yield volume "
-                               "limits left out. The map, the statistics and the cleaning then start from the data as "
-                               "SMS holds it. Applies to the data opened or extracted after a change.")
-        st.markdown("**Operation settings**")
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            si_prod = st.selectbox("Physical product", [None] + sorted(common.CROPS), key="si_prod",
-                                   format_func=lambda c: "from the data" if c is None else c, disabled=not si_on)
-            si_tw = st.number_input("Weight to volume (lb/bu)", 1.0, 200.0, value=None, step=0.5, format="%.2f",
-                                    key="si_tw", disabled=not si_on,
-                                    placeholder=(f"{_pd[0]:.2f} (SMS product table; John Deere: by file)"
-                                                 if _pd and _pd[0] else "the source's"),
-                                    help="Empty: what SMS gives the source. GreenStar 3 cards: the card's own crop "
-                                         "definition; Gen4 logs and Operations Center exports: SMS's value for the "
-                                         "file's crop (not the file's own); Case IH / New Holland cards and other "
-                                         "exports: SMS's product table by the crop name. A value typed here is used "
-                                         "for every file opened next.")
-            si_dm = st.number_input("Dry moisture (%)", 0.0, 60.0, value=None, step=0.1, format="%.2f", key="si_dm",
-                                    disabled=not si_on,
-                                    placeholder=(f"{_pd[1]:.2f} (SMS product table; John Deere: by file)"
-                                                 if _pd and _pd[1] is not None else "the source's"),
-                                    help="Empty: what SMS gives the source (as for the weight to volume).")
-            si_exp = st.checkbox("Expand dry moisture", key="si_exp", disabled=not si_on,
-                                 help="Off (SMS's default): grain drier than the dry moisture is not raised to it "
-                                      "(one-sided shrink). On: dry yield = wet x (100 - M) / (100 - dry moisture) both "
-                                      "ways.")
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            si_ums = st.checkbox("Use manual swath", key="si_ums", disabled=not si_on)
-            si_msw = st.number_input("Manual swath width (ft)", 0.1, 300.0, 15.0, 0.5, format="%.2f", key="si_msw",
-                                     disabled=not (si_on and si_ums),
-                                     help="Replaces the logged width; the per-area values are scaled by logged / "
-                                          "manual (the grain mass is kept).")
-            si_umm = st.checkbox("Use manual moisture", key="si_umm", disabled=not si_on)
-            si_mm = st.number_input("Manual moisture (%)", 0.0, 80.0, value=None, step=0.1, format="%.2f", key="si_mm",
-                                    placeholder="= the dry moisture", disabled=not (si_on and si_umm))
-        st.markdown("**Filter settings**")
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            si_min = st.number_input("Min. yield volume (bu/ac)", 0.0, 1e4, value=None, step=1.0, format="%.3f",
-                                     key="si_min", disabled=not si_on,
-                                     placeholder=(f"{_tv[2]:.3f} (John Deere: 5.000)" if _tv
-                                                  else "the source's: 5.000 (canola, flax 10.000; rye 0)"),
-                                     help="A reading with no dry yield or one below this is left out. Empty: John "
-                                          "Deere files 5.000; other sources the product's (SMS: 5.000; canola and "
-                                          "flax 10.000; rye 0).")
-            si_max = st.number_input("Max. yield volume (bu/ac)", 0.0, 1e5, value=None, step=10.0, format="%.2f",
-                                     key="si_max", disabled=not si_on,
-                                     placeholder=(f"{_pd[2]:.2f} (John Deere: 10,000.00)" if _pd
-                                                  else "the source's: John Deere 10,000; else the product's"),
-                                     help="A reading above this is left out. Empty: John Deere files 10,000.00 (SMS "
-                                          "keeps every reading); other sources the product's (SMS: wheat 300.00, "
-                                          "barley 200.00, canola and flax 400.00 ...).")
-        st.markdown("**Equipment settings**")
-        with st.container(horizontal=True, vertical_alignment="bottom"):
-            si_sd = st.number_input("Start delay (s)", 0.0, 600.0, 0.0, 0.5, format="%.2f", key="si_sd",
-                                    disabled=not si_on, help="The first seconds of every pass left out.")
-            si_ed = st.number_input("Stop delay (s)", 0.0, 600.0, 0.0, 0.5, format="%.2f", key="si_ed",
-                                    disabled=not si_on, help="The last seconds of every pass left out.")
-            si_fs = st.number_input("Flow shift (s)", -600.0, 600.0, 0.0, 0.5, format="%.2f", key="si_fs",
-                                    disabled=not si_on,
-                                    help="The grain mass of a reading moved to the position logged that many seconds "
-                                         "earlier (positive) or later (negative).")
-        prod_txt = "; ".join(f"{p} {v[0]:g} lb/bu, {v[1]:g} %, {v[2]:g}-{v[3]:,.0f}" for p, v in si.SMS_PRODUCTS.items()
-                             if p != "Barley - Spring")
-        jd_txt = "; ".join(f"{k} {v[1]:g} lb/bu, {v[2]:g} %" for k, v in common.JD_SMS_CROPS.items())
-        st.caption("Empty = what SMS gives the source. GreenStar 3 cards: the weight to volume and dry moisture of the "
-                   "card's own crop definition. Gen4 .jdl logs and Operations Center exports: what SMS gives the "
-                   f"file's crop ({jd_txt}; another crop: SMS's product table), not the values the file states. John "
-                   "Deere files: min 5.000 and max 10,000.00 bu/ac (set the max if SMS holds another for the "
-                   "product). ISOXML task data: what SMS gives the task's crop ("
-                   + "; ".join(f"{k} {v[0]:g} lb/bu, {v[1]:g} %" for k, v in iso_crops().items())
-                   + "; another crop OCED knows: SMS's product table), not the density and reference moisture of the "
-                   "log; a crop code OCED does not know: the log's own density and reference moisture ('from the "
-                   "file', with a warning to check the product); no crop and no density: 56 lb/bu, 13 %, SMS's "
-                   "values for a dataset without a product. Min 5.000 and max 10,000.00 bu/ac. Case IH / New "
-                   "Holland cards and other point "
-                   f"exports: SMS's product table by the crop name ({prod_txt} bu/ac; another crop: the crop table, "
-                   "5-300). Expand dry moisture off, no manual swath or moisture, delays and flow shift 0. A value you "
-                   "type wins; the import settings of each file (step 2) say where every value came from ('from the "
-                   "file', 'SMS for this John Deere crop', 'SMS product table', 'you').")
-    ss.smsimp = {"on": bool(si_on), "product": si_prod, "test_weight_lb_bu": si_tw, "dry_moisture_pct": si_dm,
-                 "expand_dry_moisture": bool(si_exp), "use_manual_swath": bool(si_ums), "manual_swath_ft": si_msw,
-                 "use_manual_moisture": bool(si_umm), "manual_moisture_pct": si_mm,
-                 "min_yield": si_min if si_min is not None else si.AUTO,
-                 "max_yield": si_max, "start_delay_s": si_sd, "stop_delay_s": si_ed, "flow_shift_s": si_fs}
+    brand.step_header(1, "Raw data", "Open the files of a combine, planter or sprayer")
+    with (st.expander("Open other data", type="compact", key="open_box") if ss.datasets else st.container()):
+        c_up, c_path = st.columns([1.35, 1], vertical_alignment="bottom")
+        with c_up:
+            ups = st.file_uploader("Upload files", accept_multiple_files=True,
+                                   key=f"uploads_{int(ss.get('up_nonce') or 0)}",
+                                   help="Combines: a zipped card or JD-Data folder, the files of a GreenStar card, "
+                                        "zipped ISOXML task data (TASKDATA sets, also a zip of zips), a yield "
+                                        "point export or its .kml / .kmz. Planters and sprayers: the as-applied point "
+                                        "export (.shp + .shx + .dbf + .prj, or a zip). Any other point shapefile of a "
+                                        "machine too.")
+        with c_path:
+            with st.container(horizontal=True, vertical_alignment="bottom"):
+                st.text_input("or a file or folder on this computer", key="path_in",
+                              placeholder=r"C:\...\JD-Data   or   C:\...\card.cn1",
+                              help="A folder is read where it is; a .zip is unpacked into the work folder.")
+                if st.button("Open", type="primary", icon=":material/folder_open:", key="open_btn"):
+                    p_in = (ss.get("path_in") or "").strip()
+                    # a path is the user's latest choice unless it is the one opened last (still typed in the box)
+                    fresh_path = bool(p_in) and p_in != str(ss.get("last_open_path") or "")
+                    if ups and fresh_path:
+                        st.toast("Both files to upload and a path are given: remove the uploaded files or empty the "
+                                 "path, then Open", icon=":material/warning:")
+                    elif ups:
+                        request_open(("upload", ups))
+                    elif p_in:
+                        request_open(("path", p_in))
+                    else:
+                        st.toast("Upload files or type a path first", icon=":material/info:")
     if ss.open_request:
         req, ss.open_request = ss.open_request, None
         with st.spinner("Unpacking and recognising the input ..."):
@@ -4737,7 +8186,7 @@ with st.container(border=True, key="oced_step_1"):
         if ss.open_exc is not None:
             st.exception(ss.open_exc)
         if ss.get("open_fail_log"):
-            with st.expander("Details of the input that could not be opened"):
+            with st.expander("Details of the input that could not be opened", type="compact"):
                 st.text("\n".join(ss.open_fail_log))
         if ss.datasets:
             st.caption("The work on screen is unchanged.")
@@ -4746,9 +8195,10 @@ with st.container(border=True, key="oced_step_1"):
         st.warning(deep, icon=":material/warning:")
     cands, cand, cand_lab = ss.cands, None, None
     if cands is None and ss.datasets:
-        st.info(f"Saved work **{ss.get('work_name') or default_work_name()}**: "
-                + (f"{ss.input_label} · " if ss.get("input_label") else "") + f"{len(ss.datasets)} file(s). Open "
-                "other data above to start a new work.", icon=":material/folder_open:")
+        st.caption(f":material/folder_open: Saved work **{ss.get('work_name') or default_work_name()}**"
+                   + (f" · {ss.input_label}" if ss.get("input_label") else "")
+                   + f" · {len(ss.datasets)} file" + ("s" if len(ss.datasets) != 1 else ""),
+                   help="Open other data above to start a new work.")
         for w in (ss.get("left_out") or []):                 # left out when this work's data was opened
             st.warning(w, icon=":material/warning:")
     if cands is not None:
@@ -4764,11 +8214,14 @@ with st.container(border=True, key="oced_step_1"):
             same_harvest_warning(cands)
         for w in (getattr(cands, "left_out", None) or []):   # a damaged zip among those of the input, passed over
             st.warning(w, icon=":material/warning:")
-        with st.expander("Details of the unpacking"):
-            st.text("\n".join(ss.open_log) or "nothing")      # open_input logged every note once
+        lab_full = (cand_lab or cand["label"]) if cand is not None else ""
+        with st.expander("Unpacking log", type="compact"):
+            # the whole line of the dataset when the line above is cut short (its field, crop and farm ...)
+            st.text("\n".join(([lab_full] if cand_line(lab_full) != lab_full else []) + list(ss.open_log))
+                    or "nothing")                          # open_input logged every note once
     if cand is not None:
         icon = ":material/memory:" if cand["kind"] == "raw" else ":material/scatter_plot:"
-        st.success(cand_lab or cand["label"], icon=icon)
+        st.success(cand_line(cand_lab or cand["label"]), icon=icon)
         for w in (getattr(cand.get("probe"), "warnings", None) or []):
             st.warning(w, icon=":material/warning:")
         CK = key_of(cand.get("path") or cand["probe"].root)
@@ -4784,115 +8237,151 @@ with st.container(border=True, key="oced_step_1"):
                          "display's export): the raw planter and sprayer formats of the cards are not decoded yet.",
                          icon=":material/error:")
             else:
-                U = pd.DataFrame([dataclasses.asdict(u) for u in units])
-                U["field"] = U["field"].replace("", "(no field)")
-                U = U.sort_values(["field", "year", "start"], na_position="last").reset_index(drop=True)
-                n_fields = U["field"].nunique()
-                st.markdown(f"**{len(U):,} unit(s) in {n_fields:,} field(s).** Choose the units to extract: each "
-                            "field, season and crop becomes its own shapefile. The most recent season is pre-selected.")
-                ev = st.dataframe(U[["field", "year", "crop", "machine", "n_records", "start", "end", "label"]],
-                                  hide_index=True, on_select="rerun", selection_mode="multi-row", key=f"units_{CK}",
-                                  selection_default={"selection": {"rows": [int(i) for i in U.index[U["default"]]]}},
-                                  column_config={"n_records": st.column_config.NumberColumn("records", format="%d"),
-                                                 "label": st.column_config.TextColumn("unit", width="large")})
-                chosen_ids = U.iloc[list(ev.selection.rows)]["id"].tolist()
-                chosen = [u for u in units if u.id in set(chosen_ids)]
-                groups = sorted({(u.field or "(no field)", u.year) for u in chosen}, key=lambda g: (g[0], g[1] or 0))
-                fid = cand["decoder"]
-                dflt = detect.default_options(fid)
-                with st.expander("Decoding options of this format", icon=":material/tune:"):
-                    st.caption("The product, the weight to volume, the dry moisture and the dry yield (expand dry "
-                               "moisture) are the SMS import settings above.")
-                    kw = {}
-                    if fid == "cnh_cn1":
-                        kw["calibration"] = st.segmented_control(
-                            "Calibration curve", ["task", "latest"], default="task", required=True, key=f"cal_{CK}",
-                            format_func={"task": "Each task's own (as SMS)", "latest": "Crop's latest"}.get)
-                        kw["time_basis"] = st.segmented_control(
-                            "Time and distance of a reading", ["sms", "period"], default="sms", required=True,
-                            key=f"tb_{CK}", format_func={"sms": "Its record's own (as SMS)",
-                                                         "period": "One logging period (the display's clock)"}.get)
-                        TO = totals_only_of(cand, chosen)
-                        if TO:
-                            if st.checkbox(f"Add the totals of the {len(TO)} task(s) whose log is not on the card to "
-                                           "the SMS Summary", value=False, key=f"cnh_tot_{CK}",
-                                           help="SMS lists such a task as a dataset with an area and a weight and no "
-                                                "point (the display kept its totals, not its log): "
-                                                + "; ".join(f"{r.get('label') or r.get('task')} "
-                                                            f"({float(r.get('area_ac') or 0):,.2f} ac)" for r in TO[:6])
-                                                + (" ..." if len(TO) > 6 else "")
-                                                + ". They add to the Summary only, never to the readings."):
-                                kw["totals_only"] = [r["id"] for r in TO]
-                    elif fid == "jd_gs3_rcd":
-                        from engine.formats import jd_gs3_rcd as gs3
-                        kw["alignment"] = st.segmented_control(
-                            "Grain and moisture of a reading", ["sms", "shift"], default="sms", required=True,
-                            key=f"al_{CK}", format_func={"sms": "As SMS (no grain lost)",
-                                                         "shift": "Fixed time shift (earlier versions)"}.get,
-                            help="As SMS: the grain and the moisture of each reading as SMS holds them after reading "
-                                 "the card. Fixed time shift: the delays below move them by fixed times.")
-                        with st.container(horizontal=True):
-                            kw["flow_delay_s"] = st.number_input("Grain flow delay (s)", 0.0, 60.0, gs3.FLOW_DELAY_S,
-                                                                 1.0, key=f"fd_{CK}")
-                            kw["moisture_delay_s"] = st.number_input("Moisture delay (s)", 0.0, 60.0,
-                                                                     gs3.MOISTURE_DELAY_S, 1.0, key=f"md_{CK}")
-                    elif fid == "jd_jdl":
-                        kw["points"] = st.segmented_control(
-                            "Points", ["sms", "ops_center"], default="sms", required=True, key=f"pts_{CK}",
-                            format_func={"sms": "As SMS Advanced reads the .jdl",
-                                         "ops_center": "One per flow sample, as Operations Center"}.get,
-                            help="As SMS Advanced: the points SMS makes of the logs (the file then holds what SMS "
-                                 "holds after its import). As Operations Center: one reading per flow sample.")
-                    elif fid == "isoxml":
-                        kw["time_logs"] = st.segmented_control(
-                            "Time logs", ["sms", "joined"], default="sms", required=True, key=f"isl_{CK}",
-                            format_func={"sms": "Each on its own (as SMS)",
-                                         "joined": "Joined where one follows the other"}.get,
-                            help="As SMS: every time log file is read on its own, so the grain of its first seconds "
-                                 "goes to no reading and its last seconds are no readings (a task handed out in "
-                                 "30-minute slices loses that at every slice). Joined: the logs that follow each "
-                                 "other without a gap are read as one, which keeps those readings (more readings "
-                                 "and grain than SMS holds).")
-                    st.caption("With the SMS import off: the monitor's own weight and moisture (else the crop table) "
-                               f"and the vendor's dry yield convention, {dflt.shrink.replace('_', '-')}.")
-                with st.container(key="run_go"):
-                    go = st.button(f"Extract {len(groups)} file" + ("s" if len(groups) != 1 else "") if groups
-                                   else "Extract", type="primary",
-                                   icon=":material/file_export:", disabled=not chosen, key=f"extract_{CK}")
-                done = ss.pop(f"extract_done_{CK}", None)   # the extraction of the run before (see below)
-                if done and not go:
+                done_tags = extracted_units(root)            # the units of this input already in the work
+                k_ex = len(set(done_tags.values()))
+                n_ex = int(ss.get(f"extract_n_{CK}") or 0)   # extractions of this input in this session
+                if ss.pop(f"src_collapse_{CK}", False):      # an extraction of the run before: the box folds
+                    ss[f"src_box_{CK}"] = False
+                box_kw = {} if f"src_box_{CK}" in ss else {"expanded": True}
+                with st.expander("Extract more of this input" if k_ex else "Extract", key=f"src_box_{CK}",
+                                 on_change="rerun", **box_kw):
+                    U = pd.DataFrame([dataclasses.asdict(u) for u in units])
+                    U["field"] = U["field"].replace("", "(no field)")
+                    U = U.sort_values(["field", "year", "start"], na_position="last").reset_index(drop=True)
+                    U.insert(0, "file", [done_tags.get(str(i), "") for i in U["id"]])
+                    n_fields = U["field"].nunique()
+                    st.markdown(f"Tick the units to extract · **{len(U):,} unit{'s' if len(U) != 1 else ''} in "
+                                f"{n_fields:,} field{'s' if n_fields != 1 else ''}**",
+                                help="Each field, season and crop becomes its own shapefile. The most recent season "
+                                     "is pre-selected; the column 'file' names a file of this work already extracted "
+                                     "from the unit.")
+                    # a new table after every extraction: the most recent season the first time, nothing selected
+                    # once files of this input are in the work
+                    ev = st.dataframe(U[["file", "field", "year", "crop", "machine", "n_records", "start", "end",
+                                         "label"]],
+                                      hide_index=True, on_select="rerun", selection_mode="multi-row",
+                                      key=f"units_{CK}_{n_ex}",
+                                      selection_default={"selection": {"rows": [] if k_ex else
+                                                                       [int(i) for i in U.index[U["default"]]]}},
+                                      column_config={"n_records": st.column_config.NumberColumn("records",
+                                                                                                format="%d"),
+                                                     "label": st.column_config.TextColumn("unit", width="large")})
+                    chosen_ids = U.iloc[list(ev.selection.rows)]["id"].tolist()
+                    chosen = [u for u in units if u.id in set(chosen_ids)]
+                    groups = sorted({(u.field or "(no field)", u.year) for u in chosen},
+                                    key=lambda g: (g[0], g[1] or 0))
+                    again = sorted({done_tags[str(i)] for i in chosen_ids if str(i) in done_tags})
+                    if again:
+                        cl = [t for t in again if has_cleaning(t)]
+                        st.caption(":orange[Extracting " + ", ".join(again) + " again replaces "
+                                   + ("it" if len(again) == 1 else "them")
+                                   + (" and sets aside " + ("its" if len(again) == 1 else "their") + " cleaning"
+                                      if cl else "")
+                                   + (" (your import settings are applied again)"
+                                      if any(import_mode(ss.datasets[t]) == "custom" for t in again) else "") + "]")
+                    fid = cand["decoder"]
+                    dflt = detect.default_options(fid)
+                    with st.expander("Decoding options", type="compact"):
+                        kw = {}
+                        if fid == "cnh_cn1":
+                            kw["calibration"] = st.segmented_control(
+                                "Calibration curve", ["task", "latest"], default="task", required=True,
+                                key=f"cal_{CK}", format_func={"task": "Each task's own (as SMS)",
+                                                              "latest": "Crop's latest"}.get)
+                            kw["time_basis"] = st.segmented_control(
+                                "Time and distance of a reading", ["sms", "period"], default="sms", required=True,
+                                key=f"tb_{CK}", format_func={"sms": "Its record's own (as SMS)",
+                                                             "period": "One logging period (the display's clock)"}.get)
+                            TO = totals_only_of(cand, chosen)
+                            if TO:
+                                if st.checkbox(f"Add the totals of the {len(TO)} task(s) whose log is not on the card "
+                                               "to the SMS Summary", value=False, key=f"cnh_tot_{CK}",
+                                               help="SMS lists such a task as a dataset with an area and a weight and "
+                                                    "no point (the display kept its totals, not its log): "
+                                                    + "; ".join(f"{r.get('label') or r.get('task')} "
+                                                                f"({float(r.get('area_ac') or 0):,.2f} ac)"
+                                                                for r in TO[:6])
+                                                    + (" ..." if len(TO) > 6 else "")
+                                                    + ". They add to the Summary only, never to the readings."):
+                                    kw["totals_only"] = [r["id"] for r in TO]
+                        elif fid == "jd_gs3_rcd":
+                            from engine.formats import jd_gs3_rcd as gs3
+                            kw["alignment"] = st.segmented_control(
+                                "Grain and moisture of a reading", ["sms", "shift"], default="sms", required=True,
+                                key=f"al_{CK}", format_func={"sms": "As SMS (no grain lost)",
+                                                             "shift": "Fixed time shift (earlier versions)"}.get,
+                                help="As SMS: the grain and the moisture of each reading as SMS holds them after "
+                                     "reading the card. Fixed time shift: the delays below move them by fixed times.")
+                            with st.container(horizontal=True):
+                                kw["flow_delay_s"] = st.number_input("Grain flow delay (s)", 0.0, 60.0,
+                                                                     gs3.FLOW_DELAY_S, 1.0, key=f"fd_{CK}")
+                                kw["moisture_delay_s"] = st.number_input("Moisture delay (s)", 0.0, 60.0,
+                                                                         gs3.MOISTURE_DELAY_S, 1.0, key=f"md_{CK}")
+                        elif fid == "jd_jdl":
+                            kw["points"] = st.segmented_control(
+                                "Points", ["sms", "ops_center"], default="sms", required=True, key=f"pts_{CK}",
+                                format_func={"sms": "As SMS Advanced reads the .jdl",
+                                             "ops_center": "One per flow sample, as Operations Center"}.get,
+                                help="As SMS Advanced: the points SMS makes of the logs (the file then holds what "
+                                     "SMS holds after its import). As Operations Center: one reading per flow sample.")
+                        elif fid == "isoxml":
+                            kw["time_logs"] = st.segmented_control(
+                                "Time logs", ["sms", "joined"], default="sms", required=True, key=f"isl_{CK}",
+                                format_func={"sms": "Each on its own (as SMS)",
+                                             "joined": "Joined where one follows the other"}.get,
+                                help="As SMS: every time log file is read on its own, so the grain of its first "
+                                     "seconds goes to no reading and its last seconds are no readings. Joined: the "
+                                     "logs that follow each other without a gap are read as one, which keeps those "
+                                     "readings (more readings and grain than SMS holds).")
+                    with st.container(key="run_go"):
+                        go = st.button(f"Extract {len(groups)} file" + ("s" if len(groups) != 1 else "") if groups
+                                       else "Extract", type="primary", icon=":material/file_export:",
+                                       disabled=not chosen, key=f"extract_{CK}",
+                                       help="Each field, season and crop becomes a file.")
+                    if go:
+                        opts = dataclasses.replace(dflt)
+                        done = {"log": [], "warnings": []}
+                        with st.status("Extracting ...", expanded=True) as status:
+                            try:
+                                made = extract(cand, chosen, opts, kw,
+                                               lambda m: (done["log"].append(str(m)), status.text(m)),
+                                               warn=lambda m: (done["warnings"].append(str(m)),
+                                                               st.warning(m, icon=":material/warning:")))
+                                ss.datasets.update(made)
+                                again_l = reapply_after_extract(              # a custom import of a replaced file
+                                    made, warn=lambda m: (done["warnings"].append(str(m)),
+                                                          st.warning(m, icon=":material/warning:")))
+                                for m in again_l:
+                                    done["log"].append(m)
+                                    status.text(m)
+                                ss.active = next(iter(made), ss.active)
+                                ss["active_pick"] = ss.active            # the File picker follows
+                                save_current(quiet=True)
+                                done["label"] = (f"Extracted {len(made)} file(s): "
+                                                 + ", ".join(f"{m['tag']} ({int(ss.datasets[m['tag']]['n']):,} "
+                                                             "readings)" for m in made.values())
+                                                 + "".join(f"; {m}" for m in again_l))
+                                status.update(label=done["label"], state="complete", expanded=False)
+                                # the sidebar (this work, Save, the saved works) was drawn before the extraction:
+                                # the page is drawn again, with this extraction's account under the box (folded)
+                                ss[f"extract_done_{CK}"] = done
+                                ss[f"src_collapse_{CK}"] = True
+                                ss[f"extract_n_{CK}"] = n_ex + 1         # a new table, from its default
+                            except ValueError as e:
+                                status.update(label="Extraction stopped", state="error")
+                                st.error(str(e), icon=":material/error:")
+                            except Exception as e:                   # shown, never swallowed
+                                status.update(label="Extraction failed", state="error")
+                                st.exception(e)
+                        if ss.get(f"extract_done_{CK}") is done:
+                            st.rerun()
+                done = ss.pop(f"extract_done_{CK}", None)       # the extraction of the run before: under the box
+                if done:
                     with st.status(done["label"], state="complete", expanded=False):
                         for m in done["log"]:
                             st.text(m)
                     for m in done["warnings"]:
                         st.warning(m, icon=":material/warning:")
-                if go:
-                    opts = dataclasses.replace(dflt)
-                    done = {"log": [], "warnings": []}
-                    with st.status("Extracting ...", expanded=True) as status:
-                        try:
-                            made = extract(cand, chosen, opts, kw,
-                                           lambda m: (done["log"].append(str(m)), status.text(m)),
-                                           warn=lambda m: (done["warnings"].append(str(m)),
-                                                           st.warning(m, icon=":material/warning:")))
-                            ss.datasets.update(made)
-                            ss.active = next(iter(made), ss.active)
-                            ss["active_pick"] = ss.active            # the File picker of step 2 follows
-                            save_current(quiet=True)
-                            done["label"] = (f"Extracted {len(made)} file(s): "
-                                             + ", ".join(f"{m['tag']} ({m['n']:,} readings)" for m in made.values()))
-                            status.update(label=done["label"], state="complete", expanded=False)
-                            # the sidebar (this work, Save, the saved works) was drawn before the extraction: the
-                            # page is drawn again (below), with this extraction's account above the button
-                            ss[f"extract_done_{CK}"] = done
-                        except ValueError as e:
-                            status.update(label="Extraction stopped", state="error")
-                            st.error(str(e), icon=":material/error:")
-                        except Exception as e:                       # shown, never swallowed
-                            status.update(label="Extraction failed", state="error")
-                            st.exception(e)
-                    if ss.get(f"extract_done_{CK}") is done:
-                        st.rerun()
         else:
             # a point export is known by the file it comes from, not by its name: two exports with the same file name
             # (one per combine folder) are two files of the work, each with its own tag
@@ -4912,21 +8401,39 @@ with st.container(border=True, key="oced_step_1"):
                         er.use_candidate(cand, wd_sec, log=ss.open_log.append)
                 tag = free_tag(er.candidate_tag(cand), src)
                 n0 = int(cand.get("n") or 0)
-                shp_i, n_i, rec = (import_as_sms(cand["path"], tag, os.path.join(ss.workdir, "imported"),
-                                                 crop=cand.get("crop"), monitor=cand.get("monitor_product"),
-                                                 fmt=import_fmt(None, cand))
-                                   if cand.get("yield", True) else (cand["path"], None, None))
+                err_i = None
+                if cand.get("yield", True):
+                    # SMS's default import, the file's default (step 1); a failure opens the file as it is
+                    try:
+                        shp_i, n_i, rec = import_as_sms(cand["path"], tag, os.path.join(ss.workdir, "imported"),
+                                                        crop=cand.get("crop"), monitor=cand.get("monitor_product"),
+                                                        fmt=import_fmt(None, cand))
+                    except Exception as e:
+                        shp_i, n_i, rec, err_i = cand["path"], None, None, f"{type(e).__name__}: {e}"
+                else:
+                    shp_i, n_i, rec = cand["path"], None, None
+                n_d = n_i if n_i is not None else n0
+                if not cand.get("yield", True):
+                    imp_d = {"shp": shp_i, "n": n_d, **stamp(shp_i), "sms_import": None}
+                elif rec is None:
+                    imp_d = {"shp": shp_i, "n": n_d, **stamp(shp_i), "sms_import": None, "error": err_i,
+                             "basis": export_import_basis_of(cand["path"], cand)}
+                else:
+                    imp_d = {"shp": shp_i, "n": n_d, **stamp(shp_i), "sms_import": copy.deepcopy(rec),
+                             "basis": {"all_readings": cand["path"], "crop": rec.get("crop"),
+                                       "monitor": copy.deepcopy(rec.get("monitor")), "fmt": rec.get("fmt")}}
                 base_name = os.path.basename(cand.get("source_path") or cand["path"])
                 same = [c for c in cands if c.get("kind") == "export" and c is not cand and
                         os.path.basename(c.get("source_path") or c["path"]).lower() == base_name.lower()]
-                ss.datasets[tag] = {"tag": tag, "shp": shp_i, "zip": None, "n": n_i if n_i is not None else n0,
+                ss.datasets[tag] = {"tag": tag, "shp": shp_i, "zip": None, "n": n_d,
                                     "kind": "export", "src": src,
                                     "label": (os.path.join(os.path.basename(os.path.dirname(src)), base_name) if same
                                               else base_name),
                                     "op": cand.get("operation") or "harvest", "yield": bool(cand.get("yield", True)),
                                     "source": None, "report": None, "area_ac": None, "units": [],
                                     "sms_import": rec,
-                                    "inputs_left_out": [str(w) for w in (cand.get("inputs_left_out") or [])]}
+                                    "inputs_left_out": [str(w) for w in (cand.get("inputs_left_out") or [])],
+                                    "import_default": imp_d, "import_mode": "as_is" if err_i else "default"}
                 save_current(quiet=True)             # listed in Saved works with its import from now on
                 existing = tag
             if ss.get("last_cand") != src:           # a new choice in the list: that file on screen
@@ -4934,42 +8441,50 @@ with st.container(border=True, key="oced_step_1"):
                 ss.active = existing
                 ss["active_pick"] = existing
                 st.rerun()                           # the sidebar (this work, Save) is drawn again with the file
-            IMc = (ss.datasets.get(existing) or {}).get("sms_import")
-            st.caption((f"Imported like any other file, as SMS imports it: {int(IMc['n_in']):,} of "
-                        f"{int(IMc['n_all']):,} readings; {IMc['settings']}"
-                        + (f"; recomputed {', '.join(IMc['changed'])} (its dry yield computed again from its wet mass)"
-                           if IMc.get("changed") else "; no column recomputed")
-                        + ". Its attributes are the vendor's columns." if IMc else
-                        "A point export is used as it is: its attributes are the vendor's columns.")
-                       + ("" if cand.get("yield", True) else " Not a yield file: it is cleaned with the 3-sigma of the "
-                          "attributes you choose (the applied rate, the speed ...)."))
 
-DS = ss.datasets
-if not DS:
-    st.info("Open the data of a field (step 1): the map, the attributes and the cleaning follow.",
-            icon=":material/arrow_upward:")
-    st.stop()
-
-def end_of_page():
-    """What every run draws last: the action tree in the sidebar, the Save the page asked for, the save status."""
-    with st.sidebar:
-        action_tree()
-    save_requested()                     # a Save the page did not reach in step 3 (it is saved here at the latest)
-    if SAVE_PH is not None:
-        SAVE_PH.caption(save_status_text())
-    draw_work_msg()                      # the 'Opened ...' message as a cleaning of this run left it
-
-
-# ------------------------------------------------------------------------------------------------ 2 map and attributes
-with st.container(border=True, key="oced_step_2"):
-    brand.step_header(2, "Map and attributes", "One button per attribute: the map, its legend, its statistics")
+    DS = ss.datasets
+    if not DS:
+        # the next action: open the data, choose one of its datasets, or tick its units and Extract
+        st.info("Choose the dataset to work on in the list above." if (cands and cand is None) else
+                "Tick the units to extract and click Extract: each field, season and crop becomes a file." if (
+                    cand is not None and cand.get("kind") == "raw" and ss.units.get(cand["probe"].root)) else
+                "Open the data of a field: the import settings, the cleaning and the clean files follow.",
+                icon=":material/arrow_upward:")
+        away_files_block()                               # a work whose every file is set aside: the way out
+        end_of_page()
+        st.stop()
+    brand.rule()
     tags = list(DS)
     if ss.active not in tags:
         ss.active = tags[0]
-    if len(tags) > 1:
-        ss.active = st.selectbox("File", tags, index=tags.index(ss.active), key="active_pick",
-                                 format_func=lambda t: f"{t} · {DS[t]['label']} · {DS[t]['n']:,} readings")
     D = DS[ss.active]
+    # SMS's default import of the file picked (a work of an earlier version), before the picker names its readings
+    if default_needs_build(ss.active):
+        with st.spinner("Preparing SMS's default import of this file ..."):
+            default_note = ensure_default(ss.active)
+    else:
+        default_note = ensure_default(ss.active)         # only says when its readings are gone
+    if len(tags) > 1:
+        ss["active_pick"] = ss.active
+        st.selectbox("File", tags, key="active_pick", on_change=_pick_file,
+                     format_func=lambda t: f"{t} · {int(default_view(DS[t]).get('n') or DS[t].get('n') or 0):,} "
+                                           "readings")
+    away_files_block()
+    if (not D.get("shp") or not os.path.exists(D["shp"])) and import_mode(D) != "default" \
+            and default_of(D).get("shp") and os.path.exists(default_of(D)["shp"]) \
+            and derived_import(ss.active, D.get("shp")):
+        # the file of its own import is gone, its default import is there: back to it (a default still made from the
+        # readings an older version decoded is named as such, with the way to SMS's default). A file in use read in
+        # place (the export as it is, an import that changed nothing) is not: its folder is away (the error below),
+        # and its record and cleaning stay as they are
+        gone_ = f"{ss.active}: its import with your settings is no longer on disk: back to "
+        try:
+            st.warning(back_to_default(ss.active, msg=(
+                gone_ + "the import of the older version's readings (Older rule), not SMS's default. To get SMS's "
+                f"default (today's rule), {older_decode_way(D)}." if default_of(D).get("older_decode") else
+                gone_ + "SMS's default import.")), icon=":material/warning:")
+        except ValueError:
+            pass
     if not D.get("shp") or not os.path.exists(D["shp"]):
         st.error(f"The points of this file are no longer at {D.get('shp')}: reconnect the drive or the folder they "
                  "were read from, or remove the file from this work.", icon=":material/error:")
@@ -4979,494 +8494,461 @@ with st.container(border=True, key="oced_step_2"):
                 ss.cands, ss.last_cand = None, None     # the list of step 1 would import the export again
             for d_ in (ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set, ss.cfset):
                 d_.pop(ss.active, None)
+            drop_work_msg_file(ss.active)
             ss.active = next(iter(ss.datasets), None)
             ss.pop("active_pick", None)
-            save_current(quiet=True)
+            save_current(quiet=True, even_empty=True)    # (its only file removed: saved with none)
             st.rerun()
-        save_requested()
-        st.stop()
-    df0 = read_points(D["shp"], mtime(D["shp"]))
-    det = yc.detect_columns([c for c in df0.columns if c not in ("lon", "lat")])
-    OPX = operation_of(D["shp"], mtime(D["shp"]))
-    yv = pd.to_numeric(df0[det["yield"]], errors="coerce") if det.get("yield") else None
-    tcol = det.get("time")
-    tt = pd.to_datetime(df0[tcol], errors="coerce") if tcol else None
-    mcol = det.get("machine")
-    with st.container(horizontal=True):
-        st.metric("Operation", a3.OPERATION_LABEL.get(D.get("op") or "harvest", "Point data").split(" (")[0],
-                  border=True, help=a3.OPERATION_LABEL.get(D.get("op") or "harvest"))
-        IM = D.get("sms_import") or {}
-        if not IM and D.get("import_min"):             # a work saved with the first import (the minimum only)
-            o = D["import_min"]
-            IM = {"left_out": ({"below the min. yield volume": int(o.get("left_out") or 0)} if o.get("left_out") else {}),
-                  "n_all": o.get("n_all"), "settings": f"min. yield volume {float(o.get('min_yield') or 0):g} bu/ac"}
-        n_left = sum(int(v) for v in (IM.get("left_out") or {}).values())
-        st.metric("Readings", f"{len(df0):,}", border=True, delta_color="off", delta_arrow="off",
-                  delta=f"{n_left:,} left out at import" if n_left else None,
-                  help=(f"Imported as SMS: {int(IM.get('n_all') or 0):,} readings in the data"
-                        + ("; left out: " + ", ".join(f"{k} {int(v):,}" for k, v in IM["left_out"].items())
-                           if n_left else "; none left out")
-                        + (f"; recomputed: {', '.join(IM['changed'])}" if IM.get("changed") else "")
-                        + f". Settings: {IM.get('settings')}."
-                        + (f" Where the values came from: {sources_line(IM)}." if IM.get("sources") else "")
-                        + (" " + " ".join(IM["notes"]) if IM.get("notes") else "")
-                        + (" The extracted points with every reading stay downloadable below." if n_left else "")
-                        if IM else "Not imported as SMS: the data as it is (step 1)."))
-        if not D.get("yield", True) and OPX["rates"]:
-            r0 = OPX["rates"][0]
-            rv = pd.to_numeric(df0[r0], errors="coerce")
-            if rv.notna().any():
-                st.metric("Mean applied rate", f"{rv.mean():,.2f} {OPX['units'].get(r0, '')}".strip(), border=True,
-                          help=f"{r0}, every reading: the plain mean (as SMS Edit Legend)")
-                ra = avg_of(df0, r0) if per_area(OPX["units"].get(r0, "")) else None
-                if ra is not None:
-                    st.metric("Average applied rate (SMS)", f"{ra:,.2f} {OPX['units'].get(r0, '')}".strip(),
-                              border=True, help="As the SMS summary: area-weighted, the total divided by the area.")
-        a0 = area_of(df0)                         # the readings on screen: follows every import and re-import
-        a_tot = float(a0[np.isfinite(a0) & (a0 > 0)].sum()) if a0 is not None else 0.0
-        if a_tot > 0:
-            st.metric("Area harvested" if D.get("yield", True) else "Area covered", f"{a_tot:,.2f} ac", border=True,
-                      help="The strips the readings on screen swept (distance x width), added up."
-                           + (f" Every decoded reading, before the import as SMS: {float(D['area_ac']):,.2f} ac."
-                              if D.get("area_ac") and abs(float(D["area_ac"]) - a_tot) > 0.005 else ""))
-        if D.get("yield", True) and yv is not None and yv.notna().any():
-            st.metric("Mean dry yield", f"{yv.mean():,.2f} bu/ac", border=True,
-                      help="The plain mean of the readings (as SMS Edit Legend).")
-            ya = avg_of(df0, det["yield"])
-            if ya is not None:
-                card_sum = bool((D.get("report") or {}).get("sms_summary"))
-                # a Case IH card: SMS's Summary is the display's own totals (the caption below), not the readings
-                st.metric("Average dry yield of the readings" if card_sum else "Average dry yield (SMS)",
-                          f"{ya:,.2f} bu/ac", border=True,
-                          help=("The area-weighted average of the readings (each reading's yield x its area, added up, "
-                                "divided by the area). SMS's Summary of a Case IH card is the display's own totals "
-                                "instead: its average is in the line 'SMS Summary of these datasets' below."
-                                if card_sum else
-                                "As the SMS summary: the area-weighted average (each reading's yield x its area, "
-                                "added up, divided by the area) = the total divided by the area."))
-        if tt is not None and tt.notna().any():
-            st.metric("Date", f"{tt.min():%d %b %Y}" + (f" – {tt.max():%d %b}" if tt.max().date() != tt.min().date()
-                                                            else ""), border=True)
-        if mcol:
-            st.metric("Machines", f"{df0[mcol].astype(str).replace('', np.nan).nunique():,}", border=True)
-    if IM.get("crops_note"):
-        st.warning(IM["crops_note"][0].upper() + IM["crops_note"][1:] + ".", icon=":material/warning:")
-    if D.get("yield", True):
-        width_audit_box(df0)
-    SS_T, SS_D, SS_how = sms_summary_view(D.get("report"), D.get("sms_import"))
-    if SS_T.get("area_ac"):
-        st.caption("SMS Summary of these datasets (the display's own totals on the card, not the sum of the readings): "
-                   + " · ".join(x for x in (
-                       f"{SS_T['area_ac']:,.2f} ac",
-                       f"{SS_T['wet_lb']:,.0f} lb wet" if SS_T.get("wet_lb") is not None else "",
-                       f"{SS_T['dry_bu']:,.1f} bu dry, {SS_T['bu_ac']:,.2f} bu/ac" if SS_T.get("bu_ac") is not None else "",
-                       f"moisture {SS_T['moisture_pct']:.2f} %" if SS_T.get("moisture_pct") is not None else "") if x)
-                   + f" ({SS_how}). Each dataset under 'What the decoder reported'.")
-    file_import_panel(ss.active, D)
-    n_located = int((np.isfinite(pd.to_numeric(df0["lon"], errors="coerce"))
-                     & np.isfinite(pd.to_numeric(df0["lat"], errors="coerce"))).sum()) if len(df0) else 0
-    if not n_located:
-        # an import that left no reading (every yield below the min. yield volume, an export without points): nothing
-        # to map or clean; the import settings above can be changed and the file imported again
-        st.warning(("The import left no reading" if (D.get("sms_import") or {}).get("n_all") else
-                    "This file holds no reading") + (" with a position" if len(df0) else "") + ": nothing to map or "
-                   "clean. Change the min. yield volume (or another value) in the import settings above and import it "
-                   "again, or open another file.", icon=":material/warning:")
         end_of_page()
         st.stop()
+    V1 = default_view(D)                                 # step 1: SMS's default import of the file
+    if not V1.get("shp") or not os.path.exists(V1["shp"]):
+        V1 = active_view(D)
+    kind1, text1, help1 = step1_badge(V1, D, ss.active)
+    badge_line(kind1, text1, help1)
+    if default_note:
+        st.caption(f":orange[{default_note[0].upper() + default_note[1:]}.]")
+    IM1 = V1.get("sms_import") or {}
+    if IM1 and V1.get("yield", True) and unknown_point_product(IM1):
+        st.warning(UNKNOWN_POINT_PRODUCT, icon=":material/warning:")
+    N1 = data_strip(V1, "strip_1")
+    if IM1.get("crops_note"):
+        st.warning(IM1["crops_note"][0].upper() + IM1["crops_note"][1:] + ".", icon=":material/warning:")
+    sms_summary_line(V1.get("report"), V1.get("sms_import"))
     B_ = boundary_of(ss.active)
-    dflt_attr = (("Yld_Vol_Dr" if "Yld_Vol_Dr" in df0 else det.get("yield")) if D.get("yield", True) else
-                 (OPX["rates"][0] if OPX["rates"] else None))
-    explorer(D["shp"], key=f"raw_{key_of(D['shp'])}", default=dflt_attr, outline=B_["outline"] if B_ else None)
-    if D.get("report"):
-        with st.expander("What the decoder reported", icon=":material/memory:"):
-            rep = D["report"]
-            st.caption("Units: " + "; ".join(D.get("units") or []))
-            if rep.get("points"):
-                st.caption("Points: " + {"sms": "as SMS Advanced reads the .jdl",
-                                         "ops_center": "one per flow sample, as Operations Center"}.get(
-                    str(rep["points"]), str(rep["points"])) + ".")
-            if rep.get("machines"):
-                st.dataframe(pd.DataFrame(rep["machines"]), hide_index=True)
-            if SS_D is not None:
-                st.caption("SMS Summary of each dataset: " + str(rep["sms_summary"].get("what") or "")
-                           + f" Dry volume and yield {SS_how}.")
-                st.dataframe(SS_D, hide_index=True,
-                             column_config={c: st.column_config.NumberColumn(
-                                 "readings decoded (before the import's min / max)", format="%d")
-                                 for c in ("decoded_readings", "readings")})
-                st.caption("The SMS GPS count is the readings left after the import (the Readings card above).")
-            if rep.get("pre_step"):
-                st.dataframe(pd.DataFrame([{"not exported as readings": PRE_STEP_LABEL.get(str(k), str(k)),
-                                            "records": v} for k, v in rep["pre_step"].items()]), hide_index=True)
-            if rep.get("sessions_left_out"):
-                st.caption(f"{int(rep['sessions_left_out']):,} GreenStar 3 session(s) found twice in the input were "
-                           "read once (the copies left out).")
-            al = rep.get("alignment")
-            if isinstance(al, dict) and al:
-                st.caption("Grain and moisture of the readings (" + str(al.get("method") or "") + "): "
-                           + ", ".join(f"{k.replace('_', ' ')} {v:,.0f}" if isinstance(v, (int, float)) else
-                                       f"{k.replace('_', ' ')} {v}" for k, v in al.items() if k != "method") + ".")
-            for i, dd in enumerate(rep.get("details") or []):
-                lays = (dd or {}).get("layouts") if isinstance(dd, dict) else None
-                if isinstance(lays, list) and len(lays) > 1:
-                    st.caption(f"{dd.get('unit') or dd.get('machine') or f'Unit {i + 1}'}: {len(lays)} section layouts "
-                               "in its logs (each reading takes the layout of its own log file)")
-                    st.dataframe(pd.DataFrame(lays), hide_index=True)
-            for w in rep.get("warnings") or []:
-                st.warning(w, icon=":material/warning:")
-    if D.get("zip"):
-        download("Extracted points, all readings (.zip)", D["zip"], "application/zip", key=f"dl_ext_{ss.active}")
+    OPX1 = N1["op"]
+    if not N1["located"]:
+        # an import that left no reading (every yield below the min. yield volume, an export without points): no map;
+        # step 2 can change the import
+        st.warning(("The import left no reading with a position" if IM1.get("n_all") else
+                    "This file holds no reading with a position") + ": nothing to map. Change the min. yield volume "
+                   "(or another value) in step 2, or open another file.", icon=":material/warning:")
+    else:
+        dflt_attr = (("Yld_Vol_Dr" if "Yld_Vol_Dr" in N1["df"] else N1["det"].get("yield")) if V1.get("yield", True)
+                     else (OPX1["rates"][0] if OPX1["rates"] else None))
+        mb1 = map_box(f"raw_{key_of(V1['shp'])}", map_folded(ss.active))
+        with mb1:
+            if mb1.open:
+                explorer(V1["shp"], key=f"raw_{key_of(V1['shp'])}", default=dflt_attr,
+                         outline=B_["outline"] if B_ else None, height=520, extras=False,
+                         data=f"{kind_word(kind1)} (step 1)")
+    # the details, one compact line each: the header width as logged, the import record, the decoder's report, the
+    # attributes, the first records, the extracted points
+    if V1.get("yield", True):
+        width_audit_box(N1["df"])
+    import_details_box(V1)
+    decoder_report_box(V1, D)
+    explorer_extras(V1["shp"])
+    if V1.get("zip"):
+        download("Extracted points (.zip)", V1["zip"], "application/zip", key=f"dl_ext_{ss.active}",
+                 help="Every decoded reading, before the import as SMS.")
+    if (N1["located"] if _norm_p(V1["shp"]) == _norm_p(D["shp"]) else _located_count(D["shp"])):
+        brand.next_step(3, "Cleaning", note="2 · Import settings only to change them")
+    else:                                                # the page stops after step 2: its settings first
+        brand.next_step(2, "Import settings", note="nothing to clean yet")
+
+# ------------------------------------------------------------------------------------------------ 2 import settings
+# Step 2: the switch 'Use SMS's default settings' (on: the data is step 1's), off: the import settings of the file
+# with Apply; once applied, the changed data (its strip and its map, on step 1's scale). Step 3 cleans what step 2
+# holds.
+with st.container(border=True, key="oced_step_2"):
+    brand.step_header(2, "Import settings", (f"{ss.active} · {tags.index(ss.active) + 1} of {len(tags)}"
+                                             if len(tags) > 1 else "SMS's default, or your own values"))
+    IMPORT_PENDING = import_panel(ss.active, D, V1, outline=B_["outline"] if B_ else None)
+    D = DS[ss.active]
+    df0 = read_points(D["shp"], mtime(D["shp"]))            # the import in use: what step 3 cleans
+    OPX = operation_of(D["shp"], mtime(D["shp"]))
+    n_located = located_in(df0)
+    if n_located:
+        brand.next_step(3, "Cleaning")
+if not n_located:
+    # nothing to clean: the page stops after step 2 (its settings can be changed and applied)
+    end_of_page()
+    st.stop()
 
 # ------------------------------------------------------------------------------------------------ 3 SMS 3-sigma
+# Step 3: the import it starts from (with S0's minimum), the sequence, the settings (folded into one line once the
+# file is cleaned), Clean; then the strip of the result, the clean map under it (its statistics at its side) and the
+# details in tabs.
 with st.container(border=True, key="oced_step_3"):
     IS_Y = bool(D.get("yield", True))
+    TK = file_key(ss.active)
     seam_box = None
     D0 = sms.DEFAULTS
+    sub_n = f"{ss.active} · {tags.index(ss.active) + 1} of {len(tags)}" if len(tags) > 1 else ""
+    C_prev = ss.cleaned.get(ss.active)
+    folded = bool(C_prev) and os.path.exists(str(C_prev.get("shp") or ""))   # settings in one line after a cleaning
+    MCH, mbasis = combines_of(df0) if IS_Y else ([], "")
+    P0 = ss.get("smsset") or {}
     if IS_Y:
-        brand.step_header(3, "Cleaning: SMS 3-sigma", "The sequence of Ag Leader SMS Advanced, with the field boundary "
-                                                      "and the grower's data")
-        P0 = ss.get("smsset") or {}
+        brand.step_header(3, "Cleaning: SMS 3-sigma", sub_n or "With the field boundary and the grower's data")
         f_order0 = P0.get("filter_order") if P0.get("filter_order") in sms.FILTER_ORDERS else D0["filter_order"]
         f_order = ss.get("filter_order") if ss.get("filter_order") in sms.FILTER_ORDERS else f_order0
         SI = sms.step_info(f_order)
-        st.caption("S0 import check (no position, no yield, dry yield below the SMS import minimum) · S1 Clip To Field "
-                   "Boundary (the readings outside the boundary of the file; a point on the edge is inside) · S2 "
-                   "Optimize Swath Widths (overlapping strips removed or narrowed, per-area values scaled) · "
-                   f"S3 {SI['S3']['attribute']}, S4 {SI['S4']['attribute']} (the order of the filters below) and S5 "
-                   "dry yield: keep the mean ± k SD of the points still alive (a reading without a moisture or a speed "
-                   "is not removed by that filter), another yield pass while the SD falls by more than 25 %. With "
-                   "several combines, the combine factor below runs after these steps when you switch it on.")
-        with st.container(key="method_panel"):
-            with st.container(horizontal=True, vertical_alignment="bottom"):
-                k_sd = st.number_input("k (SD)", 1.0, 6.0, float(P0.get("k_sd", D0["k_sd"])), 0.5, key="k_sd",
-                                       help="Keep mean ± k standard deviations (3 = the 3-sigma of SMS).")
-                gm = list(sms.GROUP_MODES)
-                group_by = st.selectbox("Mean and SD per", gm, index=gm.index(P0.get("group_by", "auto")),
-                                        key="group_by", format_func=GROUP_LABEL.get,
-                                        help="auto: one mean and SD per combine over all its tasks and days (one for "
-                                             "the field when one combine cut it). task: each dataset (one combine on "
-                                             "one day). combine: one per combine. field: one for every reading of the "
-                                             "file.")
-                max_passes = st.number_input("Yield passes (max)", 1, 10,
-                                             int(P0.get("max_yield_passes", D0["max_yield_passes"])), 1,
-                                             key="max_passes")
-                imp_min, has_imp = import_min_yield(ss.active)
-                min_yield = st.number_input("Import minimum (bu/ac)", 0.0, 50.0,
-                                            float(P0.get("min_yield", D0["min_yield"])), 1.0, key="min_yield",
-                                            disabled=has_imp,
-                                            help=("S0 takes the minimum of this file's own import as SMS (step 2, "
-                                                  "Import settings of this file)" if has_imp else
-                                                  "S0: SMS drops the readings below 5 bu/ac at import (files not "
-                                                  "imported as SMS)."))
-            if has_imp:
-                st.caption("S0 minimum: " + ("none" if imp_min is None else f"{imp_min:,.3f} bu/ac")
-                           + ", from the import settings of this file (the import left out the readings below it).")
-            with st.container(horizontal=True, vertical_alignment="bottom"):
-                fo_opts = list(sms.FILTER_ORDER_LABELS)
-                f_order = st.selectbox("Order of the filters", fo_opts, index=fo_opts.index(f_order0),
-                                       key="filter_order", format_func=sms.FILTER_ORDER_LABELS.get,
-                                       help="S3 and S4: moisture, then speed is the method. Speed, then moisture "
-                                            "repeats an SMS cleaning made in that earlier order.")
-                SI = sms.step_info(f_order)
-                sc_opts = list(sms.SWATH_SCOPES)
-                sw_scope = st.selectbox("Optimize Swath Widths over", sc_opts,
-                                        index=sc_opts.index(P0.get("swath_scope") if P0.get("swath_scope") in sc_opts
-                                                            else D0["swath_scope"]),
-                                        key="swath_scope", format_func=SWATH_SCOPE_LABEL.get,
-                                        help="All combines: one SMS instance holds every combine, so a strip one combine "
-                                             "cut is overlap for the others (the default). Each combine alone: an SMS "
-                                             "cleaning with one instance per combine. Not yet established against "
-                                             "SMS: keep the default unless you repeat such a cleaning.")
-                bi_opts = list(sms.SWATH_BIASES)
-                sw_bias = st.selectbox("Lateral offset check", bi_opts,
-                                       index=bi_opts.index(P0.get("swath_bias") if P0.get("swath_bias") in bi_opts
-                                                           else D0["swath_bias"]),
-                                       key="swath_bias", format_func=SWATH_BIAS_LABEL.get,
-                                       help="A combine whose logged points sit beside the centre of the strip it cut "
-                                            "(measured on its passes side by side). Warn (the default): the S2 card "
-                                            "and the warnings say so. Auto: the points are moved back before S2 (not "
-                                            "yet established against SMS). Off: not measured.")
-                sw_passes = st.number_input("Optimize Swath Widths passes", 1, int(sms.SWATH_PASSES_MAX),
-                                            swath_passes_of(P0), 1, key="swath_passes",
-                                            help="1 (the default): Clip To Field Boundary and Optimize Swath Widths "
-                                                 "run once. 2 or 3 repeat an SMS cleaning in whose chain Clip + "
-                                                 "Optimize Swath Widths was added that many times: each further pass "
-                                                 "clips again and narrows the readings the pass before left. Keep 1 "
-                                                 "unless you repeat such a cleaning.")
-            with st.container(horizontal=True):
-                clip = st.toggle("S1 Clip To Field Boundary", value=bool(P0.get("clip", D0["clip"])), key="t_clip",
-                                 help="Needs the boundary of the file (below); a file without one is not clipped.")
-                swath = st.toggle("S2 Optimize Swath Widths", value=bool(P0.get("swath", D0["swath"])), key="t_swath")
-                flt = {}
-                for fid in ("S3", "S4"):                 # the two filters in the order chosen (keys unchanged)
-                    a = SI[fid]["attribute"]
-                    flt[a] = st.toggle(f"{fid} {a}", value=bool(P0.get(a, D0[a])),
-                                       key="t_moist" if a == "moisture" else "t_speed")
-                yld = st.toggle("S5 dry yield", value=bool(P0.get("yield", D0["yield"])), key="t_yield")
-        sset = {"k_sd": float(k_sd), "group_by": group_by, "max_yield_passes": int(max_passes),
-                "min_yield": float(min_yield), "clip": bool(clip), "swath": bool(swath), "speed": bool(flt["speed"]),
-                "moisture": bool(flt["moisture"]), "yield": bool(yld), "filter_order": f_order,
-                "swath_scope": sw_scope, "swath_bias": sw_bias, "swath_passes": int(sw_passes)}
-        ss.smsset = dict(sset)
-        # ---- several combines: the combine factor, switched on by the user, beside the passes side by side
-        TK = file_key(ss.active)
-        MCH, mbasis = combines_of(df0)
-        CF0 = combine_settings(ss.active)
-        with st.container(key=f"field_box_m_{TK}"):
-            st.markdown(f"**Several combines: the combine factor** · `{ss.active}`")
-            c_l, c_r = st.columns([1, 1.15], gap="medium")
-            with c_l:
-                cf_on = st.toggle("Apply the combine factor", value=CF0["on"] and len(MCH) >= 2, key=f"cf_on_{TK}",
-                                  disabled=len(MCH) < 2,
-                                  help="Off by default, also with several combines: you decide, from the differences "
-                                       "of the passes side by side (at the right). It runs after the 3-sigma steps on "
-                                       "the kept readings and applies a factor to a combine only where the passes side "
-                                       "by side prove it (Yld_Harm = the cleaned yield x the factor).")
-                cf_m = st.segmented_control("How to compute the factor", CF_METHODS, default=CF0["method"],
-                                            required=True, key=f"cf_m_{TK}", format_func=CF_LABEL.get,
-                                            disabled=not cf_on) or "auto"
-                st.caption(CF_HELP[cf_m])
-                names = [r["combine"] for r in MCH]
-                with st.container(horizontal=True, vertical_alignment="bottom"):
-                    refs = ["auto"] + names
-                    cf_ref = st.selectbox("Reference combine", refs,
-                                          index=refs.index(CF0["reference"]) if CF0["reference"] in refs else 0,
-                                          key=f"cf_ref_{TK}", disabled=not cf_on or len(names) < 2,
-                                          format_func=lambda m: "auto (the most kept readings)" if m == "auto" else m)
-                    cf_max = st.number_input("Max factor (%)", 1.0, 50.0, CF0["max_pct"], 1.0, key=f"cf_max_{TK}",
-                                             disabled=not cf_on,
-                                             help="A proven difference larger than this is reported but not applied, "
-                                                  "unless the grower's weight confirms it (with 'Validate and adjust "
-                                                  "the yields' only).")
-                # 'Validate only' changes nothing in the clean file: the weight then confirms no factor (the engine
-                # reports the factor it would confirm)
-                g_use_now = ss.get(f"gw_use_{TK}") or (ss.grower.get(ss.active) or {}).get("use") or "validate"
-                cf_tc = st.toggle("The grower's weight may confirm a factor above the max", value=CF0["ticket_confirms"],
-                                  key=f"cf_tc_{TK}", disabled=not cf_on,
-                                  help="With 'Validate and adjust the yields': applied when the monitor total with the "
-                                       "factor closes with the grower's weight (within 1 %) and without it does not "
-                                       "(more than 3 %). With 'Validate only' the weight confirms nothing; the Combines "
-                                       "tab says which factor it would confirm.")
-                if cf_on and cf_tc and g_use_now != "adjust":
-                    st.caption("Validate only: the grower's weight confirms no factor (it is compared, never applied).")
-                if MCH:
-                    st.dataframe(pd.DataFrame(MCH), hide_index=True,
-                                 column_config={"readings": st.column_config.NumberColumn(format="%d"),
-                                                "mean dry yield (bu/ac)": st.column_config.NumberColumn(format="%.2f")})
-                    st.caption(f"{len(MCH)} combines, from {mbasis}.")
-                else:
-                    st.caption(f"One combine in this file ({mbasis}): nothing to harmonise.")
-            with c_r:
-                seam_box = st.container()        # filled after the cleaning of this run (below)
-        ss.cfset[ss.active] = {"on": bool(cf_on) and len(MCH) >= 2, "method": cf_m, "reference": cf_ref,
-                               "max_pct": float(cf_max), "ticket_confirms": bool(cf_tc)}
+        has_imp = import_min_yield(ss.active)[1]
+        # None: the S0 of a cleaning that ran with no minimum (a work rebuilt from its cleaning record)
+        min0 = P0.get("min_yield", D0["min_yield"])
+        min0 = 0.0 if min0 is None else float(min0)
+        min_kept = float(ss.get("min_yield_v", min0))   # step 3's own minimum (files not imported as SMS)
+        starts_from_line(ss.active, D, None if has_imp else float(ss.get("min_yield", min_kept)), IMPORT_PENDING)
+        st.caption(f"S0 import check → S1 clip → S2 swath → S3 {SI['S3']['attribute']} → S4 {SI['S4']['attribute']} "
+                   "→ S5 dry yield", help=SEQ_HELP)
     else:
-        brand.step_header(3, "Cleaning: 3-sigma", "The SMS 3-sigma rule on the attributes you choose, with the field "
-                                                  "boundary")
-        st.caption("S0 import check (no position; the main attribute missing or at or below the minimum: no product "
-                   "applied) · S1 Clip To Field Boundary · then one 3-sigma step per attribute, the speed first: keep "
-                   "the mean ± k SD of the points still alive (limits rounded to 2 decimals, as typed in SMS); the "
-                   "main attribute again while its SD falls by more than 25 %.")
-        sset = a3_panel(ss.active, OPX, df0)
-    clip = bool(sset.get("clip", True))
-    # ---- the field boundary and the grower's data of the file on screen (each file keeps its own)
-    TK = file_key(ss.active)
-    c_b, c_g = st.columns(2, gap="medium")
-    with c_b:
-        with st.container(key=f"field_box_b_{TK}"):
-            st.markdown(f"**Field boundary (S1)** · `{ss.active}`")
-            B = ss.boundary.get(ss.active)
-            if B:
-                if B["needs_choice"]:
-                    st.info(f"{B['name']} · {len(B.get('fields') or [])} fields in one file", icon=":material/crop_free:")
-                else:
-                    st.success(f"{B['name']} · " + (f"{chosen_fields(B)} · " if B.get("feature")
-                                                     else f"{B['n_polygons']} polygon(s) · ")
-                               + f"{B['area_ac']:,.2f} ac" + ("" if clip else " · S1 is off: not clipped"),
-                               icon=":material/crop_free:")
-                if B.get("fields") and (B["needs_choice"] or B.get("feature")):
-                    opts = [int(f["index"]) for f in B["fields"]]
-                    lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])} "
-                                            f"({float(f.get('area_ac') or 0):,.2f} ac)" for f in B["fields"]}
-                    sel = st.multiselect("This file holds several fields: which one is this field?", opts,
-                                         default=[v for v in (B.get("feature") or []) if v in opts], key=f"bnd_feat_{TK}",
-                                         format_func=lab.get, placeholder="choose the field ...",
-                                         help="Several polygons together = one field drawn in parts (their union).")
-                    if sorted(sel) != sorted(B.get("feature") or []):
-                        try:
-                            if sel:
-                                nb = load_boundary(ss.active, ("path", B["path"]), feature=sel)
-                                nb["fields"] = nb["fields"] or B["fields"]
-                            else:
-                                nb = dict(B, feature=None, needs_choice=True, outline=[])
-                            ss.boundary[ss.active] = nb
-                            st.rerun()
-                        except ValueError as e:
-                            st.error(str(e), icon=":material/error:")
-                    if B["needs_choice"]:
-                        st.warning("Choose the field: until then the file is cleaned without the clip.",
-                                   icon=":material/warning:")
-                if B.get("is_plan"):
-                    st.caption("This file looks like a trial plan (plots): S1 clips to the plots, not to a field "
-                               "boundary. Give the field boundary to keep the alleys and the border.")
-                for w in B.get("warnings") or []:
-                    st.caption(w)
-                if st.button("Remove the boundary", icon=":material/delete:", key=f"bnd_rm_{TK}"):
-                    ss.boundary.pop(ss.active, None)
-                    st.rerun()
-            else:
-                bup = st.file_uploader("Boundary file", accept_multiple_files=True, key=f"bnd_up_{TK}_{int(ss.get('up_nonce') or 0)}",
-                                       type=BOUNDARY_TYPES,
-                                       help="A .zip (a shapefile or an SMS 'Boundaries' export), the .shp + .shx + "
-                                            ".dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz.")
+        brand.step_header(3, "Cleaning: 3-sigma", sub_n or "With the field boundary")
+        starts_from_line(ss.active, D)
+        st.caption("S0 import check → S1 clip → 3-sigma per attribute", help=A3_SEQ_HELP)
+    set_key = f"set_box_{TK}_{key_of(str(C_prev.get('at')) + '|' + str(mtime(C_prev['shp'])))}" if folded else None
+    set_box = (st.expander("Settings · " + settings_summary(ss.active, IS_Y, P0, len(MCH)), key=set_key)
+               if folded else st.container())
+    with set_box:
+        if IS_Y:
+            with st.container(key="method_panel"):
                 with st.container(horizontal=True, vertical_alignment="bottom"):
-                    bpath = st.text_input("or a file on this computer", key=f"bnd_path_{TK}",
-                                          placeholder=r"C:\...\field boundary.zip")
-                    use_b = st.button("Use", type="primary", icon=":material/crop_free:", key=f"bnd_use_{TK}")
-                if use_b:
-                    if not bup and not (bpath or "").strip():
-                        st.toast("Upload a boundary file or type its path first", icon=":material/info:")
+                    k_sd = st.number_input("k (SD)", 1.0, 6.0, float(P0.get("k_sd", D0["k_sd"])), 0.5, key="k_sd",
+                                           help="Keep mean ± k standard deviations (3 = the 3-sigma of SMS).")
+                    gm = list(sms.GROUP_MODES)
+                    group_by = st.selectbox("Mean and SD per", gm, index=gm.index(P0.get("group_by", "auto")),
+                                            key="group_by", format_func=GROUP_LABEL.get,
+                                            help="auto: one mean and SD per combine over all its tasks and days (one "
+                                                 "for the field when one combine cut it). task: each dataset (one "
+                                                 "combine on one day). combine: one per combine. field: one for every "
+                                                 "reading of the file.")
+                    max_passes = st.number_input("Yield passes (max)", 1, 10,
+                                                 int(P0.get("max_yield_passes", D0["max_yield_passes"])), 1,
+                                                 key="max_passes",
+                                                 help="Another yield pass runs while the SD falls by more than 25 %, "
+                                                      "up to this many.")
+                    if has_imp:
+                        # S0 takes the import's minimum (the Starts-from line gives it): step 3's own minimum, which
+                        # the files not imported as SMS take, stays as it was
+                        min_yield = min_kept
                     else:
-                        try:
-                            ss.boundary[ss.active] = load_boundary(ss.active, ("upload", bup) if bup
-                                                                   else ("path", bpath))
-                            st.rerun()
-                        except ValueError as e:
-                            st.error(str(e), icon=":material/error:")
-                        except Exception as e:                       # shown, never swallowed
-                            st.exception(e)
-                st.caption("Without a boundary S1 is skipped and every reading of the file goes into the cleaning.")
-    with c_g:
-        if not IS_Y:
-            with st.container(key=f"field_box_g_{TK}"):
-                st.markdown(f"**What the file is** · `{ss.active}`")
-                rows_i = [("Operation", OPX["label"]),
-                          ("Applied rate", ", ".join(OPX["rates"]) or "none found (choose the attributes at the left)"),
-                          ("Target rate", ", ".join(OPX["targets"]) or "-"), ("Speed", OPX["speed"] or "-"),
-                          ("Machine", OPX["machine"] or "-"), ("Dataset", OPX["dataset"] or "-")]
-                if OPX["product"]:
-                    pv = df0[OPX["product"]].astype(str).replace({"": np.nan, "nan": np.nan}).dropna().unique()
-                    rows_i.append(("Product", ", ".join(map(str, pv[:5])) + (f" … ({len(pv)})" if len(pv) > 5 else "")))
-                st.dataframe(pd.DataFrame(rows_i, columns=["", "in this file"]), hide_index=True)
-                st.caption("Recognised from the column names. The grower's data (total weight, moisture, bushel "
-                           "weight) apply to harvest files.")
+                        min_yield = st.number_input("S0 minimum (bu/ac)", 0.0, 50.0, min_kept, 1.0, key="min_yield",
+                                                    on_change=_keep_min_yield,
+                                                    help="S0 drops the readings below this (files not imported as "
+                                                         "SMS).")
+                with st.container(horizontal=True):
+                    clip = st.toggle("S1 Clip To Field Boundary", value=bool(P0.get("clip", D0["clip"])),
+                                     key="t_clip", help="Needs the boundary of the file (below); a file without one "
+                                                        "is not clipped.")
+                    swath = st.toggle("S2 Optimize Swath Widths", value=bool(P0.get("swath", D0["swath"])),
+                                      key="t_swath")
+                    flt = {}
+                    for fid in ("S3", "S4"):             # the two filters in the order chosen (keys unchanged)
+                        a = SI[fid]["attribute"]
+                        flt[a] = st.toggle(f"{fid} {a}", value=bool(P0.get(a, D0[a])),
+                                           key="t_moist" if a == "moisture" else "t_speed")
+                    yld = st.toggle("S5 dry yield", value=bool(P0.get("yield", D0["yield"])), key="t_yield")
+                with st.expander("More settings", type="compact", key="more_sms"):
+                    with st.container(horizontal=True, vertical_alignment="bottom"):
+                        fo_opts = list(sms.FILTER_ORDER_LABELS)
+                        f_order = st.selectbox("Order of the filters", fo_opts, index=fo_opts.index(f_order0),
+                                               key="filter_order", format_func=sms.FILTER_ORDER_LABELS.get,
+                                               help="S3 and S4: moisture, then speed is the method. Speed, then "
+                                                    "moisture repeats an SMS cleaning made in that earlier order.")
+                        sc_opts = list(sms.SWATH_SCOPES)
+                        sw_scope = st.selectbox("Optimize Swath Widths over", sc_opts,
+                                                index=sc_opts.index(P0.get("swath_scope") if P0.get("swath_scope")
+                                                                    in sc_opts else D0["swath_scope"]),
+                                                key="swath_scope", format_func=SWATH_SCOPE_LABEL.get,
+                                                help="All combines: one SMS instance holds every combine, so a strip "
+                                                     "one combine cut is overlap for the others (the default). Each "
+                                                     "combine alone: one instance per combine. Not yet established "
+                                                     "against SMS: keep the default unless you repeat such a "
+                                                     "cleaning.")
+                        bi_opts = list(sms.SWATH_BIASES)
+                        sw_bias = st.selectbox("Lateral offset check", bi_opts,
+                                               index=bi_opts.index(P0.get("swath_bias") if P0.get("swath_bias")
+                                                                   in bi_opts else D0["swath_bias"]),
+                                               key="swath_bias", format_func=SWATH_BIAS_LABEL.get,
+                                               help="A combine whose logged points sit beside the centre of the strip "
+                                                    "it cut. Warn (the default): the warnings say so. Auto: the points "
+                                                    "are moved back before S2 (not yet established against SMS). Off: "
+                                                    "not measured.")
+                        sw_passes = st.number_input("Optimize Swath Widths passes", 1, int(sms.SWATH_PASSES_MAX),
+                                                    swath_passes_of(P0), 1, key="swath_passes",
+                                                    help="1 (the default): Clip To Field Boundary and Optimize Swath "
+                                                         "Widths run once. 2 or 3 repeat an SMS cleaning whose chain "
+                                                         "had them that many times. Keep 1 unless you repeat such a "
+                                                         "cleaning.")
+            sset = {"k_sd": float(k_sd), "group_by": group_by, "max_yield_passes": int(max_passes),
+                    "min_yield": float(min_yield), "clip": bool(clip), "swath": bool(swath),
+                    "speed": bool(flt["speed"]), "moisture": bool(flt["moisture"]), "yield": bool(yld),
+                    "filter_order": f_order, "swath_scope": sw_scope, "swath_bias": sw_bias,
+                    "swath_passes": int(sw_passes)}
+            ss.smsset = dict(sset)
         else:
-            with st.container(key=f"field_box_g_{TK}"):
-                st.markdown(f"**Grower's data** · `{ss.active}`")
-                G0 = ss.grower.get(ss.active) or {}
-                with st.container(horizontal=True, vertical_alignment="bottom"):
-                    g_unit_prev = ss.get(f"gw_u_{TK}", G0.get("unit") or "lb")
-                    per_ac = g_unit_prev == "bu/ac"
-                    g_w = st.number_input("Yield of the field" if per_ac else "Total weight of the field", 0.0, 1e12,
-                                          value=G0.get("weight"), step=1.0 if per_ac else 100.0, key=f"gw_w_{TK}",
-                                          format=("%.2f" if per_ac else "%.3f" if g_unit_prev == "t" else "%.0f"),
-                                          placeholder="optional",
-                                          help="What the grower got for this field (scale tickets or the grain cart), as "
-                                               "written, in the unit at the right; bu/ac when the grower gives the "
-                                               "yield per acre (it is made a total with the acres).")
-                    g_unit = st.segmented_control("Unit", list(er.TICKET_UNITS), default=G0.get("unit") or "lb",
-                                                  required=True, key=f"gw_u_{TK}", format_func=TICKET_UNIT_LABEL.get)
-                B_g = boundary_of(ss.active)
-                # the boundary's acres only when S1 clips to it: with the clip off the monitor total is the whole
-                # file's, and the engine then takes the area harvested
-                B_c = B_g if (B_g and clip) else None
-                g_area = None
-                if g_unit == "bu/ac":
-                    ph = (f"empty = the boundary, {B_c['area_ac']:,.2f} ac" if B_c else
-                          "empty = the area harvested (every strip once)"
-                          + (" - S1 is off: type the grower's acres" if B_g else ""))
-                    g_area = st.number_input("Acres the yield is over", 0.0, 1e7, value=G0.get("area_ac"), step=1.0,
-                                             key=f"gw_a_{TK}", format="%.2f", placeholder=ph,
-                                             help="The grower's acres for this yield. Empty: the field boundary's "
-                                                  "area; without a boundary or with the clip off, the area harvested, "
-                                                  "every strip once. bu/ac x acres = the grower's total in bushels, "
-                                                  "compared with the monitor's total over the same field.")
-                with st.container(horizontal=True, vertical_alignment="bottom"):
-                    g_basis = st.segmented_control("Weighed", ["wet", "dry"], default=G0.get("basis") or "wet",
-                                                   required=True, key=f"gw_b_{TK}",
-                                                   format_func={"wet": "As delivered (wet)",
-                                                                "dry": "At the standard moisture"}.get,
-                                                   help="As delivered: compared with the monitor's wet total (or, with "
-                                                        "the grain moisture, brought to the standard moisture by the "
-                                                        "one-sided rule: grain drier than the standard stays as "
-                                                        "weighed). At the standard moisture: compared with the file's "
-                                                        "dry total (the dry yield as imported).")
-                    g_m = st.number_input("Grain moisture (%)", 0.0, 60.0, value=G0.get("moisture"), step=0.1,
-                                          key=f"gw_m_{TK}", placeholder="optional", disabled=g_basis != "wet",
-                                          help="The moisture of the grain the grower weighed: the weight is brought to the "
-                                               "standard moisture and compared with the monitor's dry total.")
-                    g_tw = st.number_input("Bushel weight (lb/bu)", 1.0, 100.0, value=G0.get("test_weight"), step=0.1,
-                                           key=f"gw_tw_{TK}", placeholder="optional",
-                                           help="The weight of the grower's bushel. A weight in lb, kg or t is always "
-                                                "compared as a mass, in the file's bushels (its wet mass / wet volume): "
-                                                "this value changes no number then and is only reported. For bushels "
-                                                "(bu, bu/ac) it is used only when you say below that they are bushels "
-                                                "of this weight.")
-                g_bush = G0.get("bushels") or "given"
-                if g_unit in ("bu", "bu/ac") and g_tw:
-                    g_bush = st.segmented_control("The grower's bushels are", list(GROWER_BUSHELS),
-                                                  default=G0.get("bushels") or "given", required=True,
-                                                  key=f"gw_bu_{TK}", format_func=GROWER_BUSHELS.get,
-                                                  help="As given: trade bushels (an elevator's weight / its standard "
-                                                       "bushel), compared with the monitor's bushels as they are. "
-                                                       "Bushels of the bushel weight above: the grain was measured by "
-                                                       "volume, so it is converted through its mass (bu x that weight / "
-                                                       "the file's bushel weight).") or "given"
-                with st.container(horizontal=True, vertical_alignment="bottom"):
-                    crops = [None] + sorted(common.CROPS)
-                    g_crop = st.selectbox("Crop", crops, index=crops.index(G0.get("crop")) if G0.get("crop") in crops else 0,
-                                          key=f"gw_c_{TK}", format_func=lambda c: "from the file" if c is None else c,
-                                          help="For the standard moisture and the crop's bushel weight when the file does "
-                                               "not give them.")
-                    g_sm = st.number_input("Standard moisture (%)", 0.0, 40.0, value=G0.get("std_moisture"), step=0.5,
-                                           key=f"gw_sm_{TK}", placeholder="decoder / crop table")
-                    bf_opts = list(BUSHEL_FROM_LABEL)
-                    g_bf = st.selectbox("Bushel of the monitor's total", bf_opts,
-                                        index=bf_opts.index(G0.get("bushel_from") if G0.get("bushel_from") in bf_opts
-                                                            else "file"),
-                                        key=f"gw_bf_{TK}", format_func=BUSHEL_FROM_LABEL.get,
-                                        help="The file's (the default): its own wet mass / wet volume, the bushel the "
-                                             "monitor's volume columns are in. The declared one: the import's weight "
-                                             "to volume, else the crop table, for a file whose mass column is not in "
-                                             "lb/ac (the cleaning warns when the two differ by more than 0.5 %).")
-                g_use = st.segmented_control("Use the grower's weight to", list(GROWER_USE),
-                                             default=G0.get("use") or "validate", required=True, key=f"gw_use_{TK}",
-                                             format_func=GROWER_USE.get, disabled=not g_w,
-                                             help="Validate: the monitor's total against the grower's, L = grower / "
-                                                  "monitor and a verdict; nothing in the clean file changes, and the "
-                                                  "weight confirms no combine factor (the Combines tab says which one "
-                                                  "it would confirm). Adjust: also Yld_Level = the dry yield x the "
-                                                  "combine factor x L in the clean file (for a weight at the standard "
-                                                  "moisture the bu/ac then sum to it), and the weight may confirm a "
-                                                  "combine factor above the max; the monitor's columns stay as logged.")
-                ss.grower[ss.active] = {"weight": float(g_w) if g_w else None, "unit": g_unit or "lb",
-                                        "basis": g_basis or "wet", "moisture": g_m if g_basis == "wet" else None,
-                                        "test_weight": g_tw, "crop": g_crop, "std_moisture": g_sm,
-                                        "use": g_use or "validate", "area_ac": g_area or None,
-                                        "bushels": g_bush if (g_unit in ("bu", "bu/ac") and g_tw) else None,
-                                        "bushel_from": g_bf if g_bf != "file" else None}
-                T_ = grower_ticket(ss.grower[ss.active])
-                if T_ is not None:
-                    try:
-                        conv = er.ticket_conversion(T_, test_weight=settings_of(ss.active, sset).get("test_weight_lb_bu"),
-                                                    shp=D["shp"], crop=g_crop,
-                                                    area_ac=(B_c["area_ac"] if B_c else None),
-                                                    area_source="the field boundary")
-                    except ValueError as e:
-                        conv = {"error": str(e), "text": str(e)}
-                    if conv.get("error"):
-                        st.warning(f"{er.ticket_label(T_)}: {conv['error']}", icon=":material/warning:")
+            sset = a3_panel(ss.active, OPX, df0)
+        clip = bool(sset.get("clip", True))
+        # ---- the field boundary and the grower's data of the file on screen (each file keeps its own)
+        c_b, c_g = st.columns(2, gap="medium")
+        with c_b:
+            with st.container(key=f"field_box_b_{TK}"):
+                st.markdown("**Field boundary (S1)**")
+                B = ss.boundary.get(ss.active)
+                if B:
+                    if B["needs_choice"]:
+                        st.info(f"{B['name']} · {len(B.get('fields') or [])} fields in one file",
+                                icon=":material/crop_free:")
                     else:
-                        st.caption(f"{er.ticket_label(T_)} {conv['text']}"
-                                   + (f"; {T_['moisture_pct']:g} % grain moisture" if T_["moisture_pct"] is not None else "")
-                                   + ("; weighed as delivered." if T_["basis"] == "wet" else
-                                      "; at the standard moisture.")
-                                   + (f" The grower's bushel weight {float(g_tw):.2f} lb/bu is reported, not used: the "
-                                      "weight is compared as a mass." if (g_tw and g_unit in ("lb", "kg", "t")) else ""))
+                        st.success(f"{B['name']} · " + (f"{chosen_fields(B)} · " if B.get("feature")
+                                                         else f"{B['n_polygons']} polygon(s) · ")
+                                   + f"{B['area_ac']:,.2f} ac" + ("" if clip else " · S1 is off: not clipped"),
+                                   icon=":material/crop_free:")
+                    if B.get("fields") and (B["needs_choice"] or B.get("feature")):
+                        opts = [int(f["index"]) for f in B["fields"]]
+                        lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])} "
+                                                f"({float(f.get('area_ac') or 0):,.2f} ac)" for f in B["fields"]}
+                        sel = st.multiselect("This file holds several fields: which one is this field?", opts,
+                                             default=[v for v in (B.get("feature") or []) if v in opts],
+                                             key=f"bnd_feat_{TK}", format_func=lab.get,
+                                             placeholder="choose the field ...",
+                                             help="Several polygons together = one field drawn in parts (their union).")
+                        if sorted(sel) != sorted(B.get("feature") or []):
+                            try:
+                                if sel:
+                                    nb = load_boundary(ss.active, ("path", B["path"]), feature=sel)
+                                    nb["fields"] = nb["fields"] or B["fields"]
+                                else:
+                                    nb = dict(B, feature=None, needs_choice=True, outline=[])
+                                ss.boundary[ss.active] = nb
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e), icon=":material/error:")
+                        if B["needs_choice"]:
+                            st.warning("Choose the field: until then the file is cleaned without the clip.",
+                                       icon=":material/warning:")
+                    if B.get("is_plan"):
+                        st.caption(":orange[Looks like a trial plan]",
+                                   help="This file looks like a trial plan (plots): S1 clips to the plots, not to a "
+                                        "field boundary. Give the field boundary to keep the alleys and the border.")
+                    for w in B.get("warnings") or []:
+                        st.caption(w)
+                    if st.button("Remove the boundary", icon=":material/delete:", key=f"bnd_rm_{TK}"):
+                        ss.boundary.pop(ss.active, None)
+                        st.rerun()
                 else:
-                    st.caption("Optional. The total weight, the grain moisture and the bushel weight the grower measured "
-                               "validate the monitor's yields or adjust them.")
+                    bup = st.file_uploader("Boundary file", accept_multiple_files=True,
+                                           key=f"bnd_up_{TK}_{int(ss.get('up_nonce') or 0)}", type=BOUNDARY_TYPES,
+                                           help="A .zip (a shapefile or an SMS 'Boundaries' export), the .shp + .shx "
+                                                "+ .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz. "
+                                                "Without a boundary S1 is skipped and every reading of the file goes "
+                                                "into the cleaning.")
+                    with st.container(horizontal=True, vertical_alignment="bottom"):
+                        bpath = st.text_input("or a file on this computer", key=f"bnd_path_{TK}",
+                                              placeholder=r"C:\...\field boundary.zip")
+                        use_b = st.button("Use", type="primary", icon=":material/crop_free:", key=f"bnd_use_{TK}")
+                    if use_b:
+                        if not bup and not (bpath or "").strip():
+                            st.toast("Upload a boundary file or type its path first", icon=":material/info:")
+                        else:
+                            try:
+                                ss.boundary[ss.active] = load_boundary(ss.active, ("upload", bup) if bup
+                                                                       else ("path", bpath))
+                                st.rerun()
+                            except ValueError as e:
+                                st.error(str(e), icon=":material/error:")
+                            except Exception as e:                       # shown, never swallowed
+                                st.exception(e)
+        with c_g:
+            if not IS_Y:
+                with st.container(key=f"field_box_g_{TK}"):
+                    st.markdown("**What the file is**", help="Recognised from the column names. The grower's data "
+                                                             "(total weight, moisture, bushel weight) apply to harvest "
+                                                             "files.")
+                    rows_i = [("Operation", OPX["label"]),
+                              ("Applied rate", ", ".join(OPX["rates"]) or "none found (choose the attributes at the left)"),
+                              ("Target rate", ", ".join(OPX["targets"]) or "-"), ("Speed", OPX["speed"] or "-"),
+                              ("Machine", OPX["machine"] or "-"), ("Dataset", OPX["dataset"] or "-")]
+                    if OPX["product"]:
+                        pv = df0[OPX["product"]].astype(str).replace({"": np.nan, "nan": np.nan}).dropna().unique()
+                        rows_i.append(("Product", ", ".join(map(str, pv[:5])) + (f" … ({len(pv)})" if len(pv) > 5
+                                                                                 else "")))
+                    st.dataframe(pd.DataFrame(rows_i, columns=["", "in this file"]), hide_index=True)
+            else:
+                G0 = ss.grower.get(ss.active) or {}
+                with st.expander("Grower's weight · optional", key=f"gw_box_{TK}", expanded=bool(G0.get("weight"))):
+                    with st.container(horizontal=True, vertical_alignment="bottom"):
+                        g_unit_prev = ss.get(f"gw_u_{TK}", G0.get("unit") or "lb")
+                        per_ac = g_unit_prev == "bu/ac"
+                        g_w = st.number_input("Yield of the field" if per_ac else "Total weight of the field", 0.0,
+                                              1e12, value=G0.get("weight"), step=1.0 if per_ac else 100.0,
+                                              key=f"gw_w_{TK}",
+                                              format=("%.2f" if per_ac else "%.3f" if g_unit_prev == "t" else "%.0f"),
+                                              placeholder="optional",
+                                              help="What the grower got for this field (scale tickets or the grain "
+                                                   "cart), as written, in the unit at the right; bu/ac when the "
+                                                   "grower gives the yield per acre (it is made a total with the "
+                                                   "acres).")
+                        g_unit = st.segmented_control("Unit", list(er.TICKET_UNITS), default=G0.get("unit") or "lb",
+                                                      required=True, key=f"gw_u_{TK}",
+                                                      format_func=TICKET_UNIT_LABEL.get)
+                    B_g = boundary_of(ss.active)
+                    # the boundary's acres only when S1 clips to it: with the clip off the monitor total is the whole
+                    # file's, and the engine then takes the area harvested
+                    B_c = B_g if (B_g and clip) else None
+                    g_area = None
+                    if g_unit == "bu/ac":
+                        ph = (f"empty = the boundary, {B_c['area_ac']:,.2f} ac" if B_c else
+                              "empty = the area harvested (every strip once)"
+                              + (" - S1 is off: type the grower's acres" if B_g else ""))
+                        g_area = st.number_input("Acres the yield is over", 0.0, 1e7, value=G0.get("area_ac"),
+                                                 step=1.0, key=f"gw_a_{TK}", format="%.2f", placeholder=ph,
+                                                 help="The grower's acres for this yield. Empty: the field "
+                                                      "boundary's area; without a boundary or with the clip off, the "
+                                                      "area harvested, every strip once. bu/ac x acres = the "
+                                                      "grower's total in bushels.")
+                    with st.container(horizontal=True, vertical_alignment="bottom"):
+                        g_basis = st.segmented_control("Weighed", ["wet", "dry"], default=G0.get("basis") or "wet",
+                                                       required=True, key=f"gw_b_{TK}",
+                                                       format_func={"wet": "As delivered (wet)",
+                                                                    "dry": "At the standard moisture"}.get,
+                                                       help="As delivered: compared with the monitor's wet total (or, "
+                                                            "with the grain moisture, brought to the standard "
+                                                            "moisture, one-sided: grain drier than the standard stays "
+                                                            "as weighed). At the standard moisture: compared with the "
+                                                            "file's dry total.")
+                        g_m = st.number_input("Grain moisture (%)", 0.0, 60.0, value=G0.get("moisture"), step=0.1,
+                                              key=f"gw_m_{TK}", placeholder="optional", disabled=g_basis != "wet",
+                                              help="The moisture of the grain the grower weighed: the weight is "
+                                                   "brought to the standard moisture and compared with the "
+                                                   "monitor's dry total.")
+                        g_tw = st.number_input("Bushel weight (lb/bu)", 1.0, 100.0, value=G0.get("test_weight"),
+                                               step=0.1, key=f"gw_tw_{TK}", placeholder="optional",
+                                               help="The weight of the grower's bushel. A weight in lb, kg or t is "
+                                                    "compared as a mass, in the file's bushels: this value is then "
+                                                    "only reported. Bushels (bu, bu/ac) use it only when you say "
+                                                    "below that they are bushels of this weight.")
+                    g_bush = G0.get("bushels") or "given"
+                    if g_unit in ("bu", "bu/ac") and g_tw:
+                        g_bush = st.segmented_control("The grower's bushels are", list(GROWER_BUSHELS),
+                                                      default=G0.get("bushels") or "given", required=True,
+                                                      key=f"gw_bu_{TK}", format_func=GROWER_BUSHELS.get,
+                                                      help="As given: trade bushels (an elevator's weight / its "
+                                                           "standard bushel), compared as they are. Bushels of the "
+                                                           "bushel weight above: measured by volume, so converted "
+                                                           "through its mass (bu x that weight / the file's bushel "
+                                                           "weight).") or "given"
+                    g_use = st.segmented_control("Use it to", list(GROWER_USE),
+                                                 default=G0.get("use") or "validate", required=True,
+                                                 key=f"gw_use_{TK}", format_func=GROWER_USE.get, disabled=not g_w,
+                                                 help="Validate: the monitor's total against the grower's, L = "
+                                                      "grower / monitor and a verdict; the clean file does not "
+                                                      "change. Adjust: also Yld_Level = the dry yield x the combine "
+                                                      "factor x L in the clean file, and the weight may confirm a "
+                                                      "combine factor above the max; the monitor's columns stay as "
+                                                      "logged.")
+                    with st.expander("More", type="compact", key=f"gw_more_{TK}"):
+                        with st.container(horizontal=True, vertical_alignment="bottom"):
+                            crops = [None] + sorted(common.CROPS)
+                            g_crop = st.selectbox("Crop", crops, index=crops.index(G0.get("crop"))
+                                                  if G0.get("crop") in crops else 0, key=f"gw_c_{TK}",
+                                                  format_func=lambda c: "from the file" if c is None else c,
+                                                  help="For the standard moisture and the crop's bushel weight when "
+                                                       "the file does not give them.")
+                            g_sm = st.number_input("Standard moisture (%)", 0.0, 40.0, value=G0.get("std_moisture"),
+                                                   step=0.5, key=f"gw_sm_{TK}", placeholder="decoder / crop table")
+                            bf_opts = list(BUSHEL_FROM_LABEL)
+                            g_bf = st.selectbox("Bushel of the monitor's total", bf_opts,
+                                                index=bf_opts.index(G0.get("bushel_from") if G0.get("bushel_from")
+                                                                    in bf_opts else "file"),
+                                                key=f"gw_bf_{TK}", format_func=BUSHEL_FROM_LABEL.get,
+                                                help="The file's (the default): its own wet mass / wet volume, the "
+                                                     "bushel the monitor's volume columns are in. The declared one: "
+                                                     "the import's weight to volume, else the crop table, for a file "
+                                                     "whose mass column is not in lb/ac (the cleaning warns when the "
+                                                     "two differ by more than 0.5 %).")
+                    ss.grower[ss.active] = {"weight": float(g_w) if g_w else None, "unit": g_unit or "lb",
+                                            "basis": g_basis or "wet", "moisture": g_m if g_basis == "wet" else None,
+                                            "test_weight": g_tw, "crop": g_crop, "std_moisture": g_sm,
+                                            "use": g_use or "validate", "area_ac": g_area or None,
+                                            "bushels": g_bush if (g_unit in ("bu", "bu/ac") and g_tw) else None,
+                                            "bushel_from": g_bf if g_bf != "file" else None}
+                    T_ = grower_ticket(ss.grower[ss.active])
+                    if T_ is not None:
+                        try:
+                            conv = er.ticket_conversion(T_, test_weight=settings_of(ss.active, sset).get(
+                                "test_weight_lb_bu"), shp=D["shp"], crop=g_crop,
+                                area_ac=(B_c["area_ac"] if B_c else None), area_source="the field boundary")
+                        except ValueError as e:
+                            conv = {"error": str(e), "text": str(e)}
+                        if conv.get("error"):
+                            st.warning(f"{er.ticket_label(T_)}: {conv['error']}", icon=":material/warning:")
+                        else:
+                            # the totals in one line (a yield per acre: over its acres first), the rest behind "?"
+                            per_ac_ = (f"x {float(conv['area_ac']):,.2f} ac "
+                                       if T_.get("unit") == "bu/ac" and conv.get("area_ac") else "")
+                            short = (f"{per_ac_}= {conv['lb']:,.0f} lb · {conv['bu']:,.2f} bu at "
+                                     f"{float(conv['test_weight']):.2f} lb/bu"
+                                     if (conv.get("lb") is not None and conv.get("bu") is not None
+                                         and conv.get("test_weight")) else conv["text"])
+                            st.caption(short, help=f"{er.ticket_label(T_)} {conv['text']}"
+                                       + (f"; {T_['moisture_pct']:g} % grain moisture"
+                                          if T_["moisture_pct"] is not None else "")
+                                       + ("; weighed as delivered." if T_["basis"] == "wet" else
+                                          "; at the standard moisture.")
+                                       + (f" The grower's bushel weight {float(g_tw):.2f} lb/bu is reported, not "
+                                          "used: the weight is compared as a mass."
+                                          if (g_tw and g_unit in ("lb", "kg", "t")) else ""))
+        # ---- several combines: the combine factor, switched on by the user, beside the passes side by side
+        if IS_Y:
+            CF0 = combine_settings(ss.active)
+            if len(MCH) < 2:
+                st.caption("One combine: no combine factor.",
+                           help=(f"Read from {mbasis}." if mbasis.startswith("the ") else
+                                 mbasis[:1].upper() + mbasis[1:] + ".") + " A combine factor needs two combines or "
+                                                                          "more.")
+                cf_on, cf_m, cf_ref, cf_max, cf_tc = (False, CF0["method"], CF0["reference"], CF0["max_pct"],
+                                                      CF0["ticket_confirms"])
+            else:
+                with st.container(key=f"field_box_m_{TK}"):
+                    st.markdown(f"**Combine factor** · {len(MCH)} combines",
+                                help=f"The combines from {mbasis}, with their readings and mean dry yield in the table. "
+                                     "Off by default: you decide, from the passes side by side at the right.")
+                    c_l, c_r = st.columns([1, 1.15], gap="medium")
+                    with c_l:
+                        cf_on = st.toggle("Apply the combine factor", value=CF0["on"], key=f"cf_on_{TK}",
+                                          help="It runs after the 3-sigma steps on the kept readings and applies a "
+                                               "factor to a combine only where the passes side by side prove it "
+                                               "(Yld_Harm = the cleaned yield x the factor).")
+                        cf_m_now = ss.get(f"cf_m_{TK}") if ss.get(f"cf_m_{TK}") in CF_HELP else CF0["method"]
+                        cf_m = st.segmented_control("How to compute the factor", CF_METHODS, default=CF0["method"],
+                                                    required=True, key=f"cf_m_{TK}", format_func=CF_LABEL.get,
+                                                    disabled=not cf_on, help=CF_HELP[cf_m_now]) or "auto"
+                        names_m = [r["combine"] for r in MCH]
+                        with st.container(horizontal=True, vertical_alignment="bottom"):
+                            refs = ["auto"] + names_m
+                            cf_ref = st.selectbox("Reference combine", refs,
+                                                  index=refs.index(CF0["reference"]) if CF0["reference"] in refs else 0,
+                                                  key=f"cf_ref_{TK}", disabled=not cf_on,
+                                                  format_func=lambda m: "auto (the most kept readings)" if m == "auto"
+                                                  else m)
+                            cf_max = st.number_input("Max factor (%)", 1.0, 50.0, CF0["max_pct"], 1.0,
+                                                     key=f"cf_max_{TK}", disabled=not cf_on,
+                                                     help="A proven difference larger than this is reported but not "
+                                                          "applied, unless the grower's weight confirms it (with "
+                                                          "'Validate and adjust the yields' only).")
+                        # 'Validate only' changes nothing in the clean file: the weight then confirms no factor (the
+                        # engine reports the factor it would confirm)
+                        g_use_now = ss.get(f"gw_use_{TK}") or (ss.grower.get(ss.active) or {}).get("use") or "validate"
+                        cf_tc = st.toggle("The grower's weight may confirm a factor above the max",
+                                          value=CF0["ticket_confirms"], key=f"cf_tc_{TK}", disabled=not cf_on,
+                                          help="With 'Validate and adjust the yields': applied when the monitor total "
+                                               "with the factor closes with the grower's weight (within 1 %) and "
+                                               "without it does not (more than 3 %). With 'Validate only' the weight "
+                                               "confirms nothing; the Combines tab says which factor it would "
+                                               "confirm.")
+                        if cf_on and cf_tc and g_use_now != "adjust":
+                            st.caption("Validate only: the grower's weight confirms no factor (it is compared, never "
+                                       "applied).")
+                        st.dataframe(pd.DataFrame(MCH), hide_index=True,
+                                     column_config={"readings": st.column_config.NumberColumn(format="%d"),
+                                                    "mean dry yield (bu/ac)": st.column_config.NumberColumn(
+                                                        format="%.2f")})
+                    with c_r:
+                        seam_box = st.container()        # filled after the cleaning of this run (below)
+            ss.cfset[ss.active] = {"on": bool(cf_on) and len(MCH) >= 2, "method": cf_m, "reference": cf_ref,
+                                   "max_pct": float(cf_max), "ticket_confirms": bool(cf_tc)}
 
     save_requested()                     # Save: every setting of the file on screen is read in this run by now
     many = False
@@ -5475,16 +8957,36 @@ with st.container(border=True, key="oced_step_3"):
             one = st.button(f"Clean {ss.active}", type="primary", icon=":material/cleaning_services:", key="clean_one")
         if len(DS) > 1:
             many = st.button(f"Clean all {len(DS)} files", icon=":material/done_all:", key="clean_all",
-                             help="Each file with its own boundary and grower's data.")
+                             help="Each file with its own import, boundary and grower's data.")
     todo = [ss.active] if one else (list(DS) if many else [])
+    # every file's SMS default brought up to date first, as step 1 does for the file on screen (a raw file of an
+    # earlier version decoded again from its raw data, a default whose file changed made again; the same rules set a
+    # cleaning aside), so that no file is cleaned on an older import and that cleaning then set aside
+    pre_notes = {}
+    for t in todo:
+        if default_needs_build(t):
+            with st.spinner(f"Preparing SMS's default import of {t} ..."):
+                pre_notes[t] = ensure_default(t)
+    done = []
     for t in todo:
         with st.status(f"SMS 3-sigma on {t} ...", expanded=True) as status:
+            lines_ = []
+
+            def log_(m, _s=status, _l=lines_):
+                _l.append(str(m))
+                _s.text(m)
+            if pre_notes.get(t):
+                log_(f"{t}: {pre_notes[t]}")
             try:
-                ss.cleaned[t] = clean_one(t, sset if t == ss.active else sset_for(t), log=status.text)
+                ss.cleaned[t] = clean_one(t, sset if t == ss.active else sset_for(t), log=log_)
                 forget_work_msg(t)                                   # its 'clean it again' of the opened work
                 R = ss.cleaned[t]["R"]
-                status.update(label=f"{t}: {R['n_in']:,} in → {R['n_kept']:,} kept ({R['removed_pct']:.2f} % "
-                                    "removed)", state="complete", expanded=False)
+                n_rd = int(R.get("n_read") or R["n_in"])
+                inside = n_rd > R["n_in"] and bool(ss.cleaned[t].get("boundary"))
+                lab_ = (f"{t}: {n_rd:,} readings" + (f", {R['n_in']:,} inside the boundary" if inside else "")
+                        + f" → {R['n_kept']:,} kept ({R['removed_pct']:.2f} % removed)")
+                status.update(label=lab_, state="complete", expanded=False)
+                done.append({"label": lab_, "log": lines_[-400:]})
             except FileInUse as e:                                   # a file to close, or another tab: one line
                 status.update(label=f"{t}: not cleaned", state="error")
                 st.error(str(e), icon=":material/lock:")
@@ -5499,6 +9001,13 @@ with st.container(border=True, key="oced_step_3"):
                 st.exception(e)
     if todo and any(t in ss.cleaned for t in todo):
         save_current(quiet=True)
+    if todo and len(done) == len(todo):
+        # every file cleaned: the page again, its settings folded into one line, the status of each file under Clean
+        ss["clean_status"] = done
+        st.rerun()
+    for s_ in ss.pop("clean_status", None) or []:
+        with st.status(s_["label"], state="complete", expanded=False):
+            st.text("\n".join(s_["log"]) or " ")
     if seam_box is not None:
         with seam_box:
             seams_panel(ss.cleaned.get(ss.active))
@@ -5518,51 +9027,49 @@ with st.container(border=True, key="oced_step_3"):
         M3 = R.get("sms3sigma") or {}
         L = R.get("level") or {}
         CL = L.get("closure") or {}
-        with st.container(horizontal=True):
-            st.metric("Readings in", f"{R['n_read'] if R.get('n_read') else R['n_in']:,}", border=True)
-            st.metric("Kept", f"{R['n_kept']:,}", border=True)
-            st.metric("Removed", f"{R['removed_pct']:.2f} %", border=True,
-                      help="Of the readings inside the boundary" if C.get("boundary") else None)
-            if C.get("boundary"):
-                st.metric("Clipped (S1)", f"{clipped_of(C):,}",
-                          border=True, help="Readings outside the field boundary (a point on the edge is inside).")
-            if not A3:
-                sw = M3.get("swath") or {}
-                bias = {str(k): float(v) for k, v in (sw.get("lateral_bias_ft") or {}).items() if v is not None}
-                moved = {str(k): float(v) for k, v in (sw.get("lateral_bias_moved_ft") or {}).items() if v}
-                n_sp = int(sw.get("swath_passes") or 1)
-                st.metric("Narrowed by S2", f"{int(sw.get('n_narrowed') or 0):,}", border=True,
-                          delta=" · ".join(x for x in (f"over {sw['scope']}" if sw.get("scope") else "",
-                                                       f"{n_sp} passes" if n_sp > 1 else "") if x) or None,
-                          delta_color="off",
-                          delta_arrow="off",
-                          help="Readings whose strip overlapped ground already cut: narrowed to the new strip, their "
-                               "per-area values scaled (mass kept)."
-                               + (f" Optimize Swath Widths over {sw['scope']}." if sw.get("scope") else "")
-                               + (f" {int(sw['swath_passes'])} passes of Clip + Optimize Swath Widths."
-                                  if int(sw.get("swath_passes") or 1) > 1 else "")
-                               + (" Lateral offset of the logged points from the centre of the strip cut: "
-                                  + ", ".join(f"{k} {v:+.2f} ft" for k, v in bias.items()) + "." if bias else "")
-                               + (" Moved back before S2: " + ", ".join(f"{k} {v:+.2f} ft" for k, v in moved.items())
-                                  + "." if moved else ""))
-            else:
-                st.metric("Passes of " + str(R["main"]), f"{R.get('passes', 1)}", border=True)
-            if CL:
-                d_fin = float(CL.get("diff_final_pct", CL.get("diff_pct", 0)) or 0)
-                Lf_ = L.get("factor_final") if L.get("factor_final") is not None else L.get("factor")
-                st.metric("Monitor vs grower", f"{d_fin:+.2f} %", border=True,
-                          help="The monitor's total against the grower's weight on the same basis"
-                               + (", after the combine factor" if L.get("combine_factor_changed_total") else "")
-                               + ": + = the monitor read more than the grower weighed (L = grower / monitor = "
-                               + (f"{float(Lf_):.4f}" if Lf_ is not None else "per combine") + ")."
-                               + (f" Before the combine factor {float(CL.get('diff_pct') or 0):+.2f} % (L = "
-                                  f"{float(L['factor']):.4f})." if L.get("combine_factor_changed_total") else ""))
+        # ---- the strip of the result, the clean map right under it (its statistics at its side)
+        result_strip(ss.active, C)
+        cols_clean = read_points(C["shp"], mtime(C["shp"])).columns
+        ycol0 = (R.get("columns") or {}).get("yield") or "Yld_Vol_Dr"
+        ycol0 = ycol0 if ycol0 in cols_clean else ("Yld_Vol_Dr" if "Yld_Vol_Dr" in cols_clean else None)
+        corr = None if A3 else corrected_column(C, cols_clean, ycol0)
+        explorer(C["shp"], key=f"clean_{key_of(C['shp'])}", height=520, default=(R["main"] if A3 else ycol0),
+                 base_for={corr[0]: ycol0} if (corr and ycol0) else None,
+                 labels={corr[0]: f"Final yield ({corr[0]})"} if corr else None,
+                 col_help={corr[0]: corr[1]} if corr else None,
+                 outline=C["boundary"]["outline"] if C.get("boundary") else None, extras=False,
+                 data="clean (step 3)")
+        # ---- the details, in tabs
         RM = R.get("machines") if not A3 else None
-        tab_names = (["Steps", "Limits", "Clean map", "Removed points"] + (["Grower's data"] if L else [])
-                     + (["Combines"] if RM else []))
-        tabs_ = st.tabs(tab_names)
-        t_steps, t_lim, t_clean, t_rem = tabs_[:4]
-        with t_steps:
+        tab_names = ((["Yield path"] if not A3 else []) + ["Steps", "Limits", "Removed points"]
+                     + (["Grower's data"] if L else []) + (["Combines"] if RM else []))
+        tabs_ = dict(zip(tab_names, st.tabs(tab_names, key="res_tab")))
+        if not A3:
+            with tabs_["Yield path"]:
+                yield_path_box(ss.active, C)
+                eff_ = step_effects(ss.active, C)
+                if eff_:
+                    st.markdown("**How each step moved the dry yield** (bu/ac)",
+                                help="How much the mean (SMS Edit Legend) or the average (SMS summary, total / area) "
+                                     "moved when each step removed its readings; together they make the cleaning's "
+                                     "change. S2 also narrows the overlapping strips: their bu/ac rise, their area "
+                                     "falls.")
+                    st.dataframe(pd.DataFrame([{"step": e["label"], "readings removed": e["removed"],
+                                                "mean after": e["mean"], "change of the mean": e["d_mean"],
+                                                "average after (SMS)": e["avg"], "change of the average": e["d_avg"]}
+                                               for e in eff_]), hide_index=True,
+                                 column_config={"readings removed": st.column_config.NumberColumn(format="%d"),
+                                                "mean after": st.column_config.NumberColumn(format="%.2f"),
+                                                "change of the mean": st.column_config.NumberColumn(format="%+.2f"),
+                                                "average after (SMS)": st.column_config.NumberColumn(format="%.2f"),
+                                                "change of the average": st.column_config.NumberColumn(
+                                                    format="%+.2f")})
+        with tabs_["Steps"]:
+            st.markdown("**The steps of this cleaning**",
+                        help=("S1 runs first here: the readings outside the boundary are set aside before S0, so the "
+                              "monitor total that the grower's weight is compared with is the field's. SMS clips "
+                              "after its import check; the points kept are the same.")
+                        if (C.get("boundary") and not A3) else None)
             steps_df = pd.DataFrame(R["cascade"])[["filter", "name", "on", "criterion", "removed", "remaining"]]
             pre = R.get("pre_steps") or []
             if pre:
@@ -5575,41 +9082,45 @@ with st.container(border=True, key="oced_step_3"):
                                                      "removed": p["removed"], "remaining": p["remaining"]}
                                                     for p in pre]), steps_df], ignore_index=True)
             st.dataframe(steps_df, hide_index=True)
-            eff_ = step_effects(ss.active, C)
-            if eff_:
-                st.markdown("**How each step moved the dry yield** (bu/ac)")
-                st.dataframe(pd.DataFrame([{"step": e["label"], "readings removed": e["removed"],
-                                            "mean after": e["mean"], "change of the mean": e["d_mean"],
-                                            "average after (SMS)": e["avg"], "change of the average": e["d_avg"]}
-                                           for e in eff_]), hide_index=True,
-                             column_config={"readings removed": st.column_config.NumberColumn(format="%d"),
-                                            "mean after": st.column_config.NumberColumn(format="%.2f"),
-                                            "change of the mean": st.column_config.NumberColumn(format="%+.2f"),
-                                            "average after (SMS)": st.column_config.NumberColumn(format="%.2f"),
-                                            "change of the average": st.column_config.NumberColumn(format="%+.2f")})
-                st.caption("Mean = the plain mean of the readings still there (SMS Edit Legend); average = the SMS "
-                           "summary's, the total divided by the area. Each change is that step alone; together "
-                           "they make the cleaning's change from the raw data to the clean file. S2 removes the "
-                           "fully overlapped strips and narrows the others, so their bu/ac rise and their area "
-                           "falls.")
-            if C.get("boundary") and not A3:
-                st.caption("S1 runs first here: the readings outside the boundary are set aside before S0, so the "
-                           "monitor total that the grower's weight is compared with is the field's. SMS clips after "
-                           "its import check; the points kept are the same.")
+            if not A3:
+                sw = M3.get("swath") or {}
+                bias = {str(k): float(v) for k, v in (sw.get("lateral_bias_ft") or {}).items() if v is not None}
+                moved = {str(k): float(v) for k, v in (sw.get("lateral_bias_moved_ft") or {}).items() if v}
+                n_sp = int(sw.get("swath_passes") or 1)
+                st.caption(" · ".join(x for x in (
+                    f"S1 clipped {clipped_of(C):,}" if C.get("boundary") else "",
+                    f"S2 narrowed {int(sw.get('n_narrowed') or 0):,}" + (f" over {sw['scope']}" if sw.get("scope")
+                                                                          else ""),
+                    f"{n_sp} passes of Clip + Optimize Swath Widths" if n_sp > 1 else "") if x),
+                    help="S2 narrows the readings whose strip overlapped ground already cut to the new strip and "
+                         "scales their per-area values (mass kept)."
+                         + (f" Order of the readings: {sw['order']}." if sw.get("order") else "")
+                         + (" Lateral offset of the logged points from the centre of the strip cut: "
+                            + ", ".join(f"{k} {v:+.2f} ft" for k, v in bias.items()) + "." if bias else "")
+                         + (" Moved back before S2: " + ", ".join(f"{k} {v:+.2f} ft" for k, v in moved.items())
+                            + "." if moved else ""))
             # the other warnings of the cleaning (S2's lateral offset, readings without a value, a file too spread
             # out ...); the grower's weight and the limits tabs show theirs
             W_ = [w for w in R.get("warnings") or [] if str(w).startswith("input: ") or not (
                 "ticket" in w.lower() or "level" in w.lower() or "group" in w.lower() or "S5a" in w)]
-            # the decoder's own warnings are shown once, under 'What the decoder reported' of step 2
+            # the decoder's own warnings are shown once, under 'What the decoder reported' of step 1
             W_dec = [w for w in W_ if str(w).startswith("decoder: ")] if D.get("report") else []
             for w in W_:
                 if w not in W_dec:
                     st.warning(w, icon=":material/warning:")
             if W_dec:
-                st.caption(f"The decoder's {len(W_dec)} warning(s) are under 'What the decoder reported' (step 2).")
-        with t_lim:
+                st.caption(f"The decoder's {len(W_dec)} warning(s) are under 'What the decoder reported' (step 1).")
+        with tabs_["Limits"]:
             steps = R.get("steps") if A3 else ((R.get("sms3sigma") or {}).get("steps") or [])
             if steps:
+                st.markdown("**Limits per step**",
+                            help="Mean and SD of the points still alive before each step, and the limits typed into "
+                                 "Filter Data (mean ± k SD, rounded to 2 decimals); a reading without a value of the "
+                                 "attribute is not removed by that step.")
+                grp = str(((R if A3 else (R.get("sms3sigma") or {})).get("grouping") or {}).get("rule", ""))
+                st.caption(("Grouping: " + grp if grp else "")
+                           + (("; " if grp else "") + "order of the filters: "
+                              + str(sms.FILTER_ORDER_LABELS.get(step_order(R), step_order(R))) if not A3 else ""))
                 cols = [c for c in ["group", "step", "attribute", "n_before", "mean", "sd", "lo", "hi", "unit",
                                     "removed", "n_after", "sd_drop_pct", "no_value"] if c in pd.DataFrame(steps)]
                 st.dataframe(pd.DataFrame(steps)[cols], hide_index=True,
@@ -5620,19 +9131,17 @@ with st.container(border=True, key="oced_step_3"):
                                             "sd_drop_pct": st.column_config.NumberColumn("SD drop %", format="%.2f"),
                                             "no_value": st.column_config.NumberColumn(
                                                 "without a value (kept by this step)", format="%d")})
-                st.caption("Mean and SD of the points still alive before each step, and the limits typed into "
-                           "Filter Data (mean ± k SD, rounded to 2 decimals); a reading without a value of the "
-                           "attribute is not removed by that step. Grouping: "
-                           + str(((R if A3 else (R.get("sms3sigma") or {})).get("grouping") or {}).get("rule", ""))
-                           + (f"; order of the filters: {sms.FILTER_ORDER_LABELS.get(step_order(R), step_order(R))}"
-                              if not A3 else "") + ".")
                 IMX = None if A3 else (R.get("sms3sigma") or {}).get("import_max")
                 if IMX and IMX.get("groups"):
                     mx_txt = ("no maximum" if IMX.get("max_yield") is None else
                               f"{float(IMX['max_yield']):,.2f} bu/ac")
                     src_txt = SOURCE_LABEL.get(str(IMX.get("max_yield_source")), IMX.get("max_yield_source")) or ""
                     st.markdown(f"**Import maximum {mx_txt}**" + (f" ({src_txt})" if src_txt else "")
-                                + f"; left out at import: {int(IMX.get('left_out') or 0):,}")
+                                + f"; left out at import: {int(IMX.get('left_out') or 0):,}",
+                                help="Next to each group's S5a: the readings the import's maximum left out before the "
+                                     "cleaning. A maximum below the S5a high limit cut readings the 3-sigma step would "
+                                     "have kept; with the readings left out and one yield pass, the SD of S5a would be "
+                                     "larger. A warning is given only for a maximum you typed.")
                     st.dataframe(pd.DataFrame([{
                         "group": g["group"], "S5a high (bu/ac)": g.get("s5a_hi"),
                         "left out by the import maximum": g.get("left_out"), "yield passes": g.get("passes"),
@@ -5640,40 +9149,17 @@ with st.container(border=True, key="oced_step_3"):
                         "one pass after readings left out": bool(g.get("one_pass_after_left_out"))}
                         for g in IMX["groups"]]), hide_index=True,
                         column_config={"S5a high (bu/ac)": st.column_config.NumberColumn(format="%.2f")})
-                    st.caption("Next to each group's S5a: the readings the import's maximum left out before the cleaning "
-                               "(per combine when the groups are combines). The maximum below the S5a high limit cut "
-                               "readings the 3-sigma step would have kept; readings left out and one yield pass: with "
-                               "them the SD of S5a would be larger. A warning is given only for a maximum you typed.")
                 for w in [w for w in R.get("warnings") or [] if ("group" in w.lower() or "S5a" in w)
                           and "ticket" not in w.lower() and not str(w).startswith("input: ")]:
                     st.warning(w, icon=":material/warning:")
-        with t_clean:
-            result_cards(ss.active, C)
-            cols_clean = read_points(C["shp"], mtime(C["shp"])).columns
-            ycol0 = (R.get("columns") or {}).get("yield") or "Yld_Vol_Dr"
-            ycol0 = ycol0 if ycol0 in cols_clean else ("Yld_Vol_Dr" if "Yld_Vol_Dr" in cols_clean else None)
-            corr = None if A3 else corrected_column(C, cols_clean, ycol0)
-            if corr:
-                st.markdown("##### The clean map")
-                st.caption("The monitor's yield after the import as SMS and the cleaning, no correction factor.")
-            explorer(C["shp"], key=f"clean_{key_of(C['shp'])}", height=480,
-                     default=(R["main"] if A3 else ycol0),
-                     outline=C["boundary"]["outline"] if C.get("boundary") else None)
-            if not corr and not A3 and factor_outcome(R) is not None:
-                st.divider()
-                st.markdown("##### After the correction factors")
-                factor_outcome_box(R)
-                st.caption("No correction was applied, so there is no second map: it appears when the combine "
-                           "factor is applied or the yields are adjusted to the grower's weight.")
-            if corr:
-                st.divider()
-                st.markdown("##### After the correction factors")
-                st.caption(corr[1])
-                explorer(C["shp"], key=f"corr_{key_of(C['shp'])}", height=480, fixed=corr[0], base_col=ycol0,
-                         extras=False, outline=C["boundary"]["outline"] if C.get("boundary") else None)
-        with t_rem:
+        with tabs_["Removed points"]:
             fl = C.get("flagged_shp")
             if fl and os.path.exists(fl):
+                st.markdown("**Removed points**",
+                            help="Every reading of the file: kept in green (faint), the removed ones in the colour of "
+                                 "the step that removed them."
+                                 + (" The readings outside the boundary (S1) are not drawn; the cyan line is the "
+                                    "boundary." if C.get("boundary") else ""))
                 F_ = read_points(fl, mtime(fl))
                 rb = F_["Rem_By"].astype(str).str[:2]
                 grp = np.where(pd.to_numeric(F_["Keep"], errors="coerce").to_numpy(float) == 1, "kept", rb)
@@ -5706,12 +9192,8 @@ with st.container(border=True, key="oced_step_3"):
                     f'background:{colour.get(k, "#FF8F00")};border:1px solid #1F2937"></span><b>'
                     f'{html.escape("kept" if k == "kept" else k + " " + names.get(k, ""))}</b> {int(n):,} points</span>'
                     for k, n in vc.items()) + "</div>")
-                st.caption("Every reading of the file: kept in green (faint), the removed ones in the colour of the "
-                           "step that removed them." + (" The readings outside the boundary (S1) are not drawn; the "
-                                                        "cyan line is the boundary." if C.get("boundary") else ""))
         if L:
-            with tabs_[tab_names.index("Grower's data")]:
-                result_cards(ss.active, C, path_only=True)
+            with tabs_["Grower's data"]:
                 # one stated area for the per-acre rows: the area harvested (every strip once), else the swept one
                 area = float(L.get("monitor_area_ac") or L.get("export_area_ac") or 0)
                 area_src = L.get("monitor_area_source") or "the area the readings swept"
@@ -5742,9 +9224,6 @@ with st.container(border=True, key="oced_step_3"):
                     rows_v.append({"": "Total weight as delivered (lb)", "monitor": f"{lb_mon:,.0f}",
                                    "grower": f"{L['ticket_lb']:,.0f}", "monitor vs grower": pct(lb_mon, L["ticket_lb"])})
                 st.dataframe(pd.DataFrame(rows_v), hide_index=True)
-                if any(r[""].startswith("Total weight") for r in rows_v) and L.get("ticket_bu_at_standard") is not None:
-                    st.caption("The weights as delivered also differ by the moisture of the grain: the verdict "
-                               "compares both at the standard moisture.")
                 band = CL.get("band", "")
                 tone = ("#E8F7F0", "#00784D") if band in ("<= 1 %", "1-3 %") else (
                     ("#FFF5E5", "#9A5B00") if band == "3-10 %" else ("#FDECEC", "#B42318"))
@@ -5754,6 +9233,9 @@ with st.container(border=True, key="oced_step_3"):
                 facts = [f"Compared on the {L.get('comparison_basis') or L.get('basis')} basis, over the "
                          f"{area:,.2f} ac of {area_src}"
                          + (" inside the boundary" if C.get("boundary") else "") + "."]
+                if any(r[""].startswith("Total weight") for r in rows_v) and L.get("ticket_bu_at_standard") is not None:
+                    facts.append("The weights as delivered also differ by the moisture of the grain: the verdict "
+                                 "compares both at the standard moisture.")
                 if L.get("ticket_caption"):
                     facts.append("Grower's weight: " + str(L["ticket_caption"]) + ".")
                 if L.get("ticket_bu_at_standard") is not None:
@@ -5767,37 +9249,40 @@ with st.container(border=True, key="oced_step_3"):
                                  + (f" ({float(L['test_weight_used']):.2f} lb/bu)" if L.get("test_weight_used") else "")
                                  + (f"; in the grower's bushels the weight is {float(L['ticket_bu_grower']):,.0f} bu"
                                     if L.get("ticket_bu_grower") else "") + ".")
-                facts.append("Adjusted: Yld_Level = the dry yield x the combine factor x L is in the clean file (map it "
-                             "to use the grower's level); the monitor's columns stay as logged." if C.get("adjusted") else
-                             "Validation only: the clean file keeps the monitor's yields (no Yld_Level) and the weight "
-                             "confirmed no combine factor. Choose 'Validate and adjust the yields' and clean again to "
-                             "add the adjusted column.")
+                facts.append("Adjusted: Yld_Level = the dry yield x the combine factor x L is in the clean file (map "
+                             "it to use the grower's level); the monitor's columns stay as logged." if C.get("adjusted")
+                             else "Validation only: the clean file keeps the monitor's yields (no Yld_Level) and the "
+                                  "weight confirmed no combine factor. Choose 'Validate and adjust the yields' and "
+                                  "clean again to add the adjusted column.")
                 lcol = "Yld_Lvl_Sy" if R.get("yield_column_for_difm") == "Yld_Lvl_Sy" else "Yld_Level"
                 gap = L.get("yld_lvl_sy_vs_ticket_pct" if lcol == "Yld_Lvl_Sy" else "yld_level_vs_ticket_pct")
                 if C.get("adjusted") and gap is not None and abs(float(gap)) > 0.05:
                     facts.append(f"{lcol} of every processed reading sums to {float(gap):+.2f} % of the weight "
                                  "compared (a wet weight without its moisture is compared with the wet yield, while "
                                  "the dry yield is leveled).")
-                st.caption(" ".join(facts))
+                CSg = L.get("card_summary")
+                if isinstance(CSg, dict) and CSg.get("readings_wet_lb") and CSg.get("summary_wet_lb"):
+                    facts.append(f"Case IH / New Holland card: the readings hold {float(CSg['readings_wet_lb']):,.0f} "
+                                 f"lb wet against the card's own Summary {float(CSg['summary_wet_lb']):,.0f} lb (what "
+                                 "SMS shows for it): L against the Summary about "
+                                 f"{float(CSg.get('factor_against_summary') or 0):.4f} (an estimate: L x the card's "
+                                 "readings / its Summary, the gap taken as even over the card, whose Summary also "
+                                 "holds the readings outside the boundary). L above is against the readings, so "
+                                 "Yld_Level sums to the grower's weight.")
+                st.caption(facts[0])
+                if len(facts) > 1:
+                    with st.expander("How this works", type="compact"):
+                        for f_ in facts[1:]:
+                            st.caption(f_)
                 if C.get("adjusted") and gap is not None and abs(float(gap)) > 0.1:
                     st.warning(f"{lcol} does not sum to the grower's weight: {float(gap):+.2f} % (give the grain "
                                "moisture of a wet weight, or the weight at the standard moisture, to level the dry "
                                "yield to it).", icon=":material/warning:")
-                CSg = L.get("card_summary")
-                if isinstance(CSg, dict) and CSg.get("readings_wet_lb") and CSg.get("summary_wet_lb"):
-                    st.caption(f"Case IH / New Holland card: the readings hold {float(CSg['readings_wet_lb']):,.0f} lb "
-                               f"wet against the card's own Summary {float(CSg['summary_wet_lb']):,.0f} lb (what SMS "
-                               "shows for it): L against the Summary about "
-                               f"{float(CSg.get('factor_against_summary') or 0):.4f} (an estimate: L x the card's "
-                               "readings / its Summary, the gap taken as even over the card, whose Summary also holds "
-                               "the readings outside the boundary). L above is against the readings, so "
-                               "Yld_Level sums to the grower's weight.")
                 for w in [w for w in R.get("warnings") or [] if ("ticket" in w.lower() or "level" in w.lower())
                           and not str(w).startswith("input: ")]:
                     st.warning(w, icon=":material/warning:")
-
         if RM:
-            with tabs_[tab_names.index("Combines")]:
+            with tabs_["Combines"]:
                 fa = RM.get("factor_applied") or {}
                 means = RM.get("means") or {}
                 light = RM.get("light") or {}
@@ -5813,32 +9298,61 @@ with st.container(border=True, key="oced_step_3"):
                                    "layout": (lc.get("local") or "") if isinstance(lc, dict) else str(lc),
                                    "light": {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(light.get(m), ""),
                                    "decision": (RM.get("decision") or {}).get(m, "")})
+                on_ = bool(((R.get("settings") or {}).get("machines") or {}).get("harmonise"))
+                st.markdown("**The combine factor of this cleaning**: " + ("switched on" if on_ else
+                                                                           "switched off (every factor 1)"),
+                            help=f"Combines from {RM.get('basis') or 'the data'}; reference "
+                                 f"{RM.get('reference') or '-'}. Layout = how the combine shared the field with the "
+                                 "reference (interleaved, mixed, blocks); light = how far the method can be trusted "
+                                 "on that layout.")
                 st.dataframe(pd.DataFrame(rows_c), hide_index=True,
                              column_config={"readings": st.column_config.NumberColumn(format="%d"),
                                             "kept": st.column_config.NumberColumn(format="%d"),
                                             "mean cleaned (bu/ac)": st.column_config.NumberColumn(format="%.2f"),
                                             "factor": st.column_config.NumberColumn(format="%.4f"),
                                             "decision": st.column_config.TextColumn(width="large")})
-                st.caption("The combine factor of this cleaning: " + ("switched on" if (((R.get("settings") or {}).get(
-                    "machines") or {}).get("harmonise")) else "switched off (the factor of every combine is 1)") + ". Combines "
-                           f"from {RM.get('basis') or 'the data'}; reference {RM.get('reference') or '-'}. Layout = how "
-                           "the combine shared the field with the reference (interleaved, mixed, blocks); light = how "
-                           "far the method can be trusted on that layout.")
+                FO_ = factor_outcome(R)
+                if FO_ is not None and not FO_["applied"]:
+                    factor_outcome_box(R)
                 SMx = RM.get("seams") or {}
                 if SMx.get("text"):
                     st.caption(SMx["text"])
+        explorer_extras(C["shp"])
+    if ss.cleaned:
+        brand.next_step(4, "Clean files and reports")
 
-# ------------------------------------------------------------------------------------------------ 4 clean shapefiles
+# ------------------------------------------------------------------------------------------------ 4 clean files
 with st.container(border=True, key="oced_step_4"):
-    brand.step_header(4, "Clean shapefiles and reports", "The kept readings of each file, with every attribute")
+    brand.step_header(4, "Clean files and reports",
+                      "The clean shapefile, the file for DIFM and the report of each cleaned file")
     if not ss.cleaned:
         st.info("Clean a file in step 3: its clean shapefile appears here.", icon=":material/info:")
     else:
+        kinds = {"a3" if c.get("kind") == "a3" else "harvest" for c in ss.cleaned.values()}
+        flagged = "; ".join(
+            (["for a harvest file every reading inside the boundary (the readings S1 clipped are not in it: their "
+              "number is in step 3)"] if "harvest" in kinds else [])
+            + (["for a planter or sprayer file every reading, the clipped ones with Rem_By S1"] if "a3" in kinds
+               else []))
+        with st.expander("What each file is", type="compact", icon=":material/help:"):
+            st.caption("Clean shapefile = the kept readings with every attribute of the file, inside the field boundary "
+                       "when one was given. A harvest file is written as SMS exports it after Optimize Swath Widths (the "
+                       "narrowed readings carry their new width and scaled per-area values; Wdth_Raw and Swath_Scl "
+                       "added; with the yields adjusted, also Yld_Level, the dry yield leveled to the grower's weight). "
+                       "Removed % = of the readings inside the boundary. Flagged = the readings with Keep and the step "
+                       f"that removed each (Rem_By): {flagged}. "
+                       "Report = the steps, the limits, the statistics and the maps (PDF). Save the clean file "
+                       "as = the same clean readings in the raw format they were imported from (or ISOXML), to read "
+                       "into SMS as monitor data: not yet tested in SMS. The files are also in the work folder: "
+                       + os.path.join(ss.workdir or "", "clean_shapefiles") + " and "
+                       + os.path.join(ss.workdir or "", NATIVE_DIR) + ". A Case IH card written also adds its folder "
+                       "name to " + os.path.join(WORKSPACE, "cn1_card_names.json") + ", the list of the card names "
+                       "written in this workspace (outside the work folder, so that no name is given twice).")
         rows = []
         for t, c in ss.cleaned.items():
             R = c["R"]
             Lc = R.get("level") or {}
-            rows.append({"file": t, "readings in": R.get("n_read") or R["n_in"],
+            rows.append({"file": t, "import": cleaning_import_word(t), "readings in": R.get("n_read") or R["n_in"],
                          "clipped (S1)": clipped_of(c) if c.get("boundary") else None,
                          "kept": R["n_kept"], "removed (%)": R["removed_pct"],
                          "cleaned on": (", ".join(R["attributes"]) if c.get("kind") == "a3" else "SMS S0-S5"),
@@ -5857,7 +9371,10 @@ with st.container(border=True, key="oced_step_4"):
         st.dataframe(T4, hide_index=True,
                      column_config={"removed (%)": st.column_config.NumberColumn(format="%.2f"),
                                     "monitor vs grower (%)": st.column_config.NumberColumn(format="%+.2f"),
-                                    "clipped (S1)": st.column_config.NumberColumn(format="%d")})
+                                    "clipped (S1)": st.column_config.NumberColumn(format="%d"),
+                                    "import": st.column_config.TextColumn(
+                                        help="The import the cleaning started from (step 2): SMS's default, your "
+                                             "settings, the file as it is or as the monitor logged it.")})
         zp = all_clean_zip()
         if zp and len(ss.cleaned) > 1:
             download(f"All {len(ss.cleaned)} clean shapefiles (.zip)", zp, "application/zip", key="dl_all",
@@ -5880,23 +9397,34 @@ with st.container(border=True, key="oced_step_4"):
                          icon=":material/data_object:")
             if Wd and Wd.get("zip"):
                 if c.get("kind") == "a3":
-                    st.caption(f"Shapefile for DIFM ({os.path.basename(Wd['zip'])}): the same clean readings with "
-                               "its own columns and its dates as dBASE dates, as SMS's as-applied exports carry "
-                               "them, in WGS 84 (the rate's unit is chosen in DIFM's Define Features); not yet tried "
-                               "on DIFM. The clean shapefile keeps its columns as they are.")
+                    st.caption("For DIFM: its own columns and dates; the rate's unit is chosen in DIFM",
+                               help="The same clean readings with their own columns and their dates as dBASE dates, "
+                                    "as SMS's as-applied exports carry them, in WGS 84; the rate's unit is chosen in "
+                                    "DIFM's Define Features. Not yet tried on DIFM.")
+                    with st.expander("About the file for DIFM", type="compact"):
+                        st.caption(f"Shapefile for DIFM ({os.path.basename(Wd['zip'])}): the same clean readings with "
+                                   "its own columns and its dates as dBASE dates, as SMS's as-applied exports carry "
+                                   "them, in WGS 84 (the rate's unit is chosen in DIFM's Define Features); not yet "
+                                   "tried on DIFM. The clean shapefile keeps its columns as they are.")
                 else:
                     oth4 = ed.zip_path_for(c["shp"], Wd.get("yield") != "adjusted")
-                    st.caption(f"Shapefile for DIFM ({os.path.basename(Wd['zip'])}): "
-                               + (Wd.get("line") or ed.yield_line(Wd.get("yield") or "monitor", adj4)) + ". The same "
-                               "clean readings in the layout of an SMS shapefile export, the layout DIFM reads "
-                               "(Yld_Mass_D, Yld_Vol_Dr, Track_deg_, Distance_f, Elevation_, Moisture__, Y_Offset_f, "
-                               "Speed_mph_, Time = the date of each reading, Swth_Wdth_), its numbers with 6 "
-                               "decimals; a field the clean file does not hold is filled only with what follows "
-                               "exactly from it and from the file's import (mass = volume x the import's lb/bu), "
-                               "else left empty; the clean shapefile keeps every column."
-                               + (f" The file of the other choice, {os.path.basename(oth4)}, was written too and "
-                                  "stays in the folder." if (adj4 and os.path.isfile(oth4)
-                                                             and mtime(oth4) >= mtime(c["shp"])) else ""))
+                    st.caption("For DIFM: Yld_Vol_Dr as the yield; swath and moisture mapped · "
+                               + ed.yield_label(Wd.get("yield") or "monitor", adj4),
+                               help="In DIFM's Define Features map Yld_Vol_Dr (or Yld_Mass_D, the same yield by mass) "
+                                    "as the yield, Swth_Wdth_ as the swath width and Moisture__ as the moisture. What "
+                                    "the file holds: About the file for DIFM.")
+                    with st.expander("About the file for DIFM", type="compact"):
+                        st.caption(f"Shapefile for DIFM ({os.path.basename(Wd['zip'])}): "
+                                   + (Wd.get("line") or ed.yield_line(Wd.get("yield") or "monitor", adj4)) + ". The "
+                                   "same clean readings in the layout of an SMS shapefile export, the layout DIFM "
+                                   "reads (Yld_Mass_D, Yld_Vol_Dr, Track_deg_, Distance_f, Elevation_, Moisture__, "
+                                   "Y_Offset_f, Speed_mph_, Time = the date of each reading, Swth_Wdth_), its numbers "
+                                   "with 6 decimals; a field the clean file does not hold is filled only with what "
+                                   "follows exactly from it and from the file's import (mass = volume x the import's "
+                                   "lb/bu), else left empty; the clean shapefile keeps every column."
+                                   + (f" The file of the other choice, {os.path.basename(oth4)}, was written too and "
+                                      "stays in the folder." if (adj4 and os.path.isfile(oth4)
+                                                                 and mtime(oth4) >= mtime(c["shp"])) else ""))
                 for w in Wd.get("warnings") or []:
                     st.warning(f"Shapefile for DIFM: {w}.", icon=":material/warning:")
             elif Wd and Wd.get("blocked"):
@@ -5917,25 +9445,6 @@ with st.container(border=True, key="oced_step_4"):
                 st.button("Write it again", key=f"difm_retry_{t}", on_click=retry_difm, args=(t,),
                           icon=":material/refresh:", help="Once the file is no longer held open by another program.")
             native_block(t, c)
-        kinds = {"a3" if c.get("kind") == "a3" else "harvest" for c in ss.cleaned.values()}
-        flagged = "; ".join(
-            (["for a harvest file every reading inside the boundary (the readings S1 clipped are not in it: their "
-              "number is in step 3)"] if "harvest" in kinds else [])
-            + (["for a planter or sprayer file every reading, the clipped ones with Rem_By S1"] if "a3" in kinds
-               else []))
-        st.caption("Clean shapefile = the kept readings with every attribute of the file, inside the field boundary "
-                   "when one was given. A harvest file is written as SMS exports it after Optimize Swath Widths (the "
-                   "narrowed readings carry their new width and scaled per-area values; Wdth_Raw and Swath_Scl added; "
-                   "with the yields adjusted, also Yld_Level, the dry yield leveled to the grower's weight). Removed % "
-                   "= of the readings inside the boundary. Flagged = the readings with Keep and the step that removed "
-                   f"each (Rem_By): {flagged}. "
-                   "Report = the steps, the limits, the statistics and the maps (PDF). Save the clean file "
-                   "as = the same clean readings in the raw format they were imported from (or ISOXML), to read into "
-                   "SMS as monitor data: not yet tested in SMS. The files are also in the work folder: "
-                   + os.path.join(ss.workdir or "", "clean_shapefiles") + " and "
-                   + os.path.join(ss.workdir or "", NATIVE_DIR) + ". A Case IH card written also adds its folder "
-                   "name to " + os.path.join(WORKSPACE, "cn1_card_names.json") + ", the list of the card names "
-                   "written in this workspace (outside the work folder, so that no name is given twice).")
 
 # ------------------------------------------------------------------------------------------------ action tree
 end_of_page()

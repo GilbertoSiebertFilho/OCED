@@ -23,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from engine import run as er  # noqa: E402
+from tests.app_steps import _apply_import, _switch_off  # noqa: E402
 from tests.synthetic import make_applied, make_field  # noqa: E402
 from engine.clean import applied3s as a3  # noqa: E402
 
@@ -137,14 +138,14 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     at.text_input(key="path_in").input(field["shp"])
     at.button(key="open_btn").click().run()
     assert not at.exception, at.exception
-    # import as SMS: the readings with no dry yield or one below 5 bu/ac are left out as the data comes in
+    # import as SMS: a point export as SMS's generic import holds it, every reading kept (the near-zero ones too)
     y = pyogrio.read_dataframe(field["shp"], read_geometry=False)["Yld_Vol_Dr"].astype(float)
-    low = int((~np.isfinite(y) | (y < 5)).sum())
-    assert low > 0
+    assert int((y < 5).sum()) > 0 and np.isfinite(y).all()
     rd = next(m for m in at.metric if m.label == "Readings")
-    assert rd.value == f"{field['n'] - low:,}" and rd.delta == f"{low:,} left out at import"
-    assert "below the min. yield volume" in rd.help and "weight to volume" in rd.help
-    # step 2: the attribute buttons, one per attribute, dry yield first
+    assert rd.value == f"{field['n']:,}" and not rd.delta and "none left out" in rd.help
+    det = " ".join(c.value for c in at.caption)                       # step 1's Import details
+    assert "Settings: " in det and "weight to volume" in det and "SMS's generic import of a point file" in det
+    # step 1: the attribute pills, dry yield first
     pills = _by_key(at.button_group, "attr_raw_")
     assert pills.value == "Yld_Vol_Dr"
     pills.set_value("Moisture__").run()
@@ -164,27 +165,33 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     assert list(steps["filter"]).count("S1") == 1
     assert steps.iloc[0]["filter"] == "S1" and steps.iloc[0]["removed"] == field["n"] - field["n_inside"]
     tabs = [t.label for t in at.tabs]
-    assert "Grower's data" in tabs
-    assert any(m.label == "Clipped (S1)" and m.value == f"{field['n'] - field['n_inside']:,}" for m in at.metric)
-    # above the clean map: the key numbers and what the grower's data did to the final yield
+    assert tabs[0] == "Yield path" and "Grower's data" in tabs and "Clean map" not in tabs
+    kept = next(m for m in at.metric if m.label == "Readings kept")
+    assert f"S1 clipped {field['n'] - field['n_inside']:,}" in kept.help
+    # the strip above the clean map: the key numbers and what the grower's data did to the final yield
     labels = [m.label for m in at.metric]
-    assert "Mean dry yield, cleaned" in labels and any(x.startswith("Grower's yield") for x in labels)
-    assert "Average dry yield, cleaned (SMS)" in labels and "Average dry yield (SMS)" in labels
-    # the combine factor: off by default; with one combine it cannot be switched on
-    cf = _by_key(at.toggle, "cf_on_")
-    assert cf.value is False and cf.disabled
+    assert "Mean dry yield, cleaned" in labels and "Average dry yield, cleaned (SMS)" in labels
+    assert "Average dry yield (SMS)" in labels                        # step 1's card
+    # the combine factor: one combine, one line, no switch (E2)
+    assert not [t for t in at.toggle if str(t.key or "").startswith("cf_on_")]
+    assert any(c.value == "One combine: no combine factor." for c in at.caption)
     stats = [d.value for d in at.dataframe if "statistic" in d.value.columns]
     assert stats and any("average (SMS, area-weighted)" in list(t["statistic"]) for t in stats)
-    final = next(m for m in at.metric if m.label.startswith("Final yield"))
-    changes = [d.value for d in at.dataframe if "change vs the clean map" in d.value.columns]
+    pills = _by_key(at.button_group, "attr_clean_")
     if use == "adjust":
-        assert final.label.startswith("Final yield, mean (Yld_") and "by the grower's data" in final.delta
-        # the map after the correction factors, its statistics compared with the clean map
+        final = next(m for m in at.metric if m.label == "Final yield (Yld_Level)")
+        assert "monitor vs grower" in final.delta and "Monitor vs grower" not in labels
+        # the corrected yield is one pill away on the clean map, its statistics compared with the clean map
+        assert "Final yield (Yld_Level)" in pills.options
+        pills.set_value("Yld_Level").run()
+        assert not at.exception, at.exception
+        changes = [d.value for d in at.dataframe if "change vs the clean map" in d.value.columns]
         assert changes and changes[0].loc[changes[0]["statistic"] == "mean", "change vs the clean map"].iloc[0]
-        assert "Final yield, average (SMS)" in labels
     else:
-        assert final.label == "Final yield (clean file)" and final.delta == "grower's data: validate only"
-        assert not changes                                   # nothing applied: no second map
+        assert not any(m.label.startswith("Final yield") for m in at.metric)
+        mv = next(m for m in at.metric if m.label == "Monitor vs grower")
+        assert "Validate only" in mv.help and not any("Yld_Level" in o for o in pills.options)
+        assert not [d for d in at.dataframe if "change vs the clean map" in d.value.columns]
     clean = glob.glob(str(tmp_path / "ws" / "*" / "clean_shapefiles" / "*_clean.shp"))
     assert len(clean) == 1
     cols = list(pyogrio.read_info(clean[0])["fields"])
@@ -300,7 +307,7 @@ def test_app_grower_yield_per_acre(field, tmp_path, monkeypatch):
     _by_key(at.number_input, "gw_w_").set_value(55.0).run()
     _by_key(at.button_group, "gw_b_").set_value("dry").run()
     assert not at.exception, at.exception
-    assert any("bu/ac x" in c.value and "(the field boundary)" in c.value for c in at.caption)
+    assert any("bu/ac x" in str(c.help) and "(the field boundary)" in str(c.help) for c in at.caption)   # its "?"
     at.button(key="clean_one").click().run()
     assert not at.exception, at.exception
     v = next(d.value for d in at.dataframe if "grower" in d.value.columns)
@@ -366,11 +373,12 @@ def test_app_save_and_open_a_work(field, tmp_path, monkeypatch):
     # start over, then open the saved work: the cleaning comes back without running again
     at.button(key="start_over").click().run()
     assert not at.exception, at.exception
-    assert not any(m.label == "Clipped (S1)" for m in at.metric)
+    assert not any(m.label == "Readings kept" for m in at.metric)
     assert "Synthetic work" in at.selectbox(key="work_pick").format_func(at.selectbox(key="work_pick").value)
     at.button(key="work_open").click().run()
     assert not at.exception, at.exception
-    assert any(m.label == "Clipped (S1)" and m.value == f"{field['n'] - field['n_inside']:,}" for m in at.metric)
+    assert any(m.label == "Readings kept" and f"S1 clipped {field['n'] - field['n_inside']:,}" in m.help
+               for m in at.metric)
     assert any("Synthetic_boundary.geojson" in s.value for s in at.success)
     assert _by_key(at.number_input, "gw_w_").value == 110_000.0
     assert not any("settings, the boundary or the grower's data changed" in w.value for w in at.warning)
@@ -476,12 +484,11 @@ def test_app_file_import_settings_and_width(field, tmp_path, monkeypatch):
     assert not at.exception, at.exception
     wa = next(d.value for d in at.dataframe if "logged width (ft)" in d.value.columns)   # the width audit
     assert float(wa["logged width (ft)"].iloc[0]) > 0
+    _switch_off(at)                                             # step 2: the switch off opens the fields
     tw = _by_key(at.number_input, "fi_tw_")
     assert tw.value and not tw.disabled                         # a real value, editable
     new_tw = round(float(tw.value) + 4.0, 2)
-    tw.set_value(new_tw).run()
-    _by_key(at.button, "fi_go_").click().run()
-    assert not at.exception, at.exception
+    _apply_import(at, tw=new_tw)
     assert any("imported again" in x.value for x in at.success)
     at.button(key="clean_one").click().run()
     assert not at.exception, at.exception

@@ -28,7 +28,8 @@ compat_settings() translates the dict to scale_ticket_bu for a cleaning engine t
 
 Import as SMS (engine/sms_import.py) is part of the route, as in the app: import_as_sms() writes the file as SMS
 would hold it after its import (Processing Settings of the product: weight to volume, dry moisture, min / max yield
-volume, expand dry moisture off) and returns the import record; sms_clean_defaults() then gives the cleaning the
+volume, expand dry moisture off; a point export as SMS's generic import holds it, every reading kept: min 0, no max)
+and returns the import record; sms_clean_defaults() then gives the cleaning the
 import's weight to volume, dry moisture and minimum (settings['sms_import'], so S0 takes the import's minimum) and,
 with a field of interest, the S1 clip of the SMS 3-sigma method (records outside the boundary by more than the 1 cm
 edge tolerance set aside, the clean file clipped). The command line does both by default (--no-sms-import to clean
@@ -91,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.0"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.3.1"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -821,14 +822,18 @@ def advice(R: dict) -> list[str]:
 def import_format(source=None, candidate: dict | None = None) -> str | None:
     """The source format engine/sms_import.resolve takes (fmt): a decoded raw dataset's decoder (report / source
     'format': cnh_cn1, jd_jdl, jd_gs3_rcd, isoxml); 'jd_ops_center' for an Operations Center export (a candidate with
-    the
-    Deere metadata's monitor_product or crop, or collapsed from section elements); None for any other point export."""
+    the Deere metadata's monitor_product or crop, or collapsed from section elements); 'point_export' for any other
+    point export (a shapefile, a .kml / .kmz converted to one, an SMS export); both are imported as SMS's generic
+    import of a point file (engine/sms_import.py). None when neither says what the source is."""
+    from engine import sms_import as si
     for x in (source, candidate):
         if isinstance(x, dict) and x.get("format") in detect.DECODERS:
             return x["format"]
     c = candidate if isinstance(candidate, dict) else {}
     if c.get("kind") == "export" and (c.get("monitor_product") or c.get("crop") or c.get("sections")):
-        return "jd_ops_center"
+        return si.OPS_CENTER
+    if c.get("kind") == "export":
+        return si.POINT_EXPORT
     return None
 
 
@@ -839,12 +844,13 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
     <folder>/<tag>_imported.shp. import_settings: any subset of sms_import.DEFAULTS (None = SMS's defaults; empty
     values = the source's); crop: the crop of the data (a Case IH card's SMS product, e.g. report['crop_name']);
     monitor: the crop definition the file carries (the decode report's or the Operations Center candidate's
-    'monitor_product'); fmt: the source format (import_format: the decoder id, 'jd_ops_center', None); R: settings
-    already resolved (sms_import.resolve) instead of resolving them here. The file itself when the import is off. The
-    record is the one the app keeps per file and the one clean() takes as settings['sms_import'] (S0 then takes its
-    minimum): {resolved, settings (the line of sms_import.describe), sources, defaults, sms_product, family,
-    sources_text, monitor, fmt, crop, left_out, left_out_by_group, applied, n_all, n_in, all_readings, changed,
-    notes}."""
+    'monitor_product'); fmt: the source format (import_format: the decoder id, 'jd_ops_center', 'point_export',
+    None); R: settings already resolved (sms_import.resolve) instead of resolving them here. The file itself when the
+    import is off. The record is the one the app keeps per file and the one clean() takes as settings['sms_import']
+    (S0 then takes its minimum): {resolved, settings (the line of sms_import.describe), sources, defaults,
+    sms_product, family, sources_text, monitor, fmt, crop, left_out, left_out_by_group, applied, n_all, n_in,
+    all_readings, changed, notes, own_yields (a point export of an unknown product that keeps its own dry yields),
+    revision (sms_import.IMPORT_REVISION)}. A product not known is said on the log too (note / WARNING)."""
     from engine import sms_import as si
     S = si.settings(import_settings or {})
     if not S["on"]:
@@ -860,12 +866,19 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
            "left_out": dict(rep["left_out"]),
            "left_out_by_group": {k: dict(v) for k, v in (rep.get("left_out_by_group") or {}).items()},
            "applied": dict(rep.get("applied") or {}), "n_all": int(rep["n_in"]), "n_in": int(rep["n_out"]),
-           "all_readings": shp, "changed": list(rep["changed"]), "notes": list(rep["notes"])}
+           "all_readings": shp, "changed": list(rep["changed"]), "notes": list(rep["notes"]),
+           "own_yields": bool(rep.get("own_yields")), "revision": si.IMPORT_REVISION}
     if rec["left_out"]:
         log(f"import as SMS: {rec['n_all'] - rec['n_in']:,} of {rec['n_all']:,} readings left out ("
             + ", ".join(f"{k} {v:,}" for k, v in rec["left_out"].items()) + f"); {rec['settings']}")
     else:
         log(f"import as SMS: {rec['n_in']:,} readings; {rec['settings']}")
+    # the product not known: a point export's own yields said plainly (choose it with --product), else a warning
+    for n in rec["notes"]:
+        if n == si.OWN_YIELDS_NOTE:
+            log("note: " + n + " (on the command line: --product)")
+        elif n.startswith(si.UNKNOWN_PRODUCT_NOTE):
+            log("WARNING: " + n + " (on the command line: --product)")
     return rep["path"], int(rep["n_out"]), rec
 
 
@@ -1647,9 +1660,11 @@ def machine_summary(shp: str, machine_col: str | None, yield_col: str | None,
 
 def export_crop_guess(shp: str, product_col: str = "Product", crop_col: str = "Crop") -> str | None:
     """The crop key of common.CROPS carried by an export: the 'Crop' column a decoded file holds (the crop the decoder
-    used, written by engine.run.decode), else the key that the most frequent product name contains; None when
-    unknown (a variety name says nothing about the crop)."""
+    used, written by engine.run.decode), else the crop of the most frequent product name, by the crop key of the
+    import (sms_import.crop_key: 'Wheat - Durum' -> durum, as the app reads it); None when unknown (a variety name
+    says nothing about the crop)."""
     import pyogrio
+    from engine import sms_import as si
     try:
         info = pyogrio.read_info(shp)
         fields = list(info["fields"])
@@ -1657,9 +1672,9 @@ def export_crop_guess(shp: str, product_col: str = "Product", crop_col: str = "C
             c = pyogrio.read_dataframe(shp, columns=[crop_col], read_geometry=False)[crop_col].astype(str)
             c = c[c.str.strip() != ""]
             if len(c):
-                top = str(c.mode().iloc[0]).strip().lower()
-                if top in common.CROPS:
-                    return top
+                k = si.crop_key(str(c.mode().iloc[0]).strip())
+                if k:
+                    return k
         if product_col not in fields:
             return None
         v = pyogrio.read_dataframe(shp, columns=[product_col], read_geometry=False)[product_col].astype(str)
@@ -1667,11 +1682,8 @@ def export_crop_guess(shp: str, product_col: str = "Product", crop_col: str = "C
         return None
     if not len(v):
         return None
-    top = str(v.mode().iloc[0]).strip().lower()
-    for k in common.CROPS:
-        if k in top or (k == "soybeans" and "soy" in top):
-            return k
-    return None
+    top = str(v.mode().iloc[0]).strip()
+    return si.crop_key(top) or ("soybeans" if "soy" in top.lower() else None)
 
 
 # ================================================================================================ CLI
@@ -1780,9 +1792,12 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-moisture", type=float, default=None, metavar="PCT",
                     help="import as SMS: Dry Moisture (%%; default: the product's)")
     ap.add_argument("--min-yield", type=float, default=None, metavar="BU",
-                    help="import as SMS: Min. Yield Volume (bu/ac; default 5; 0 = none). S0 of the cleaning takes it")
+                    help="import as SMS: Min. Yield Volume (bu/ac; default: John Deere files and ISOXML task data 5, "
+                         "Case IH / New Holland cards the product's (5; canola and flax 10; rye 0), a point export 0, "
+                         "as SMS's generic import keeps every reading; 0 = none). S0 of the cleaning takes it")
     ap.add_argument("--max-yield", type=float, default=None, metavar="BU",
-                    help="import as SMS: Max. Yield Volume (bu/ac; default: the product's)")
+                    help="import as SMS: Max. Yield Volume (bu/ac; default: John Deere files and ISOXML 10,000, Case "
+                         "IH / New Holland cards the product's, a point export none)")
     ap.add_argument("--expand-dry-moisture", action="store_true",
                     help="import as SMS: Expand Dry Moisture on (grain drier than the dry moisture is raised to it; "
                          "SMS's default and the app's is off)")
@@ -1936,7 +1951,9 @@ def _cli(a) -> int:
         imp_crop = a.product or rep.get("crop_name") or imp_crop
     else:
         shp = cand["path"]
-        imp_crop = a.product or a.crop or export_crop_guess(shp)
+        # the crop of the export as the app takes it: an Operations Center export's crop name (its metadata), else
+        # the file's Crop / Product column
+        imp_crop = a.product or a.crop or cand.get("crop") or export_crop_guess(shp)
         imp_mon, imp_fmt = cand.get("monitor_product"), import_format(None, cand)
     if not a.no_sms_import:
         _print("\nImport as SMS:")

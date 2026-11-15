@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The command line cleans as the app does (synthetic data only): the import as SMS by default, the S1 clip of the
 field of interest (not the 50 m buffer of the OCCD cascade), the same readings in and kept and the same L as the app's
-route (engine.run.import_as_sms + the settings the app builds), and a planter file cleaned as an as-applied file.
+route (engine.run.import_as_sms + the settings the app builds), the crop of a point export decided as the app does
+(durum), and a planter file cleaned as an as-applied file.
 Also the two run.py details the native writers and the AOI cache rely on.
 
     python -m pytest -q tests/test_clean_cli.py
@@ -44,7 +45,7 @@ def test_cli_imports_as_sms_and_clips_like_the_app(field, tmp_path):
     R = _record(work, "cli")
     # the app's route: Import as SMS of the file, then the settings app/oced.py settings_of builds
     shp_i, n_i, rec = er.import_as_sms(field["shp"], "app", str(tmp_path / "app_dec"), {}, crop="wheat",
-                                       log=lambda m: None)
+                                       log=lambda m: None, fmt=er.import_format(None, {"kind": "export"}))
     RS = rec["resolved"]
     S_app = {"method": "sms3sigma", "tag": "app", "sms3sigma": {}, "machines": {"harmonise": False},
              "aoi": {"file": field["boundary"], "buffer_m": float(sms.DEFAULTS["clip_tolerance_m"]),
@@ -58,17 +59,44 @@ def test_cli_imports_as_sms_and_clips_like_the_app(field, tmp_path):
     assert R["level"]["factor"] == pytest.approx(A["level"]["factor"], rel=1e-12)
     assert R["aoi"]["buffer_m"] == pytest.approx(sms.DEFAULTS["clip_tolerance_m"])      # the clip, not 50 m
     assert R["n_read"] == n_i                                                         # the imported file is cleaned
+    # a point export: SMS's generic import keeps every reading, and S0 takes its minimum (none above 0)
+    assert R["sms_import"]["fmt"] == "point_export" and n_i == field["n"]
+    S0 = next(r for r in R["cascade"] if r["filter"] == "S0")
+    assert R["sms_import"]["resolved"]["min_yield"] == 0.0 and S0["removed"] == 0
     # without the import: the file as it is (the readings the import left out come back)
     work2 = str(tmp_path / "cli_raw")
     assert er.main([field["shp"], "--out", work2, "--aoi", field["boundary"], "--tag", "raw", "--no-sms-import"]) == 0
     R2 = _record(work2, "raw")
     assert "sms_import" not in R2 and R2["n_read"] == field["n"]
-    # the import's minimum is S0's: --min-yield 0 keeps the low readings through S0 (only negatives would go)
-    work3 = str(tmp_path / "cli_min0")
-    assert er.main([field["shp"], "--out", work3, "--tag", "min0", "--min-yield", "0"]) == 0
-    R3 = _record(work3, "min0")
+    # the import's minimum is S0's: --min-yield 5 leaves the low readings out at import, S0 finds none
+    work3 = str(tmp_path / "cli_min5")
+    assert er.main([field["shp"], "--out", work3, "--tag", "min5", "--min-yield", "5"]) == 0
+    R3 = _record(work3, "min5")
     assert R3["sms3sigma"]["min_yield"]["source"] == "the file's Import as SMS"
-    assert R3["cascade"][0]["removed"] == 0 and R3["sms_import"]["resolved"]["min_yield"] == 0
+    assert R3["cascade"][0]["removed"] == 0 and R3["sms_import"]["resolved"]["min_yield"] == 5
+    assert R3["sms_import"]["left_out"]["below the min. yield volume"] > 0
+    assert R3["sms_import"]["sources"]["min_yield"] == "you"
+
+
+def test_cli_takes_the_crop_of_a_durum_export_as_the_app(field, tmp_path):
+    """The command line decides the crop of a point export as the app does (the import's crop key): a product naming
+    durum is SMS's Wheat - Durum (60 lb/bu, 13.0 %), not Wheat - Spring; so is an Operations Center export whose
+    metadata names durum while its Product column holds a variety."""
+    import pyogrio
+    g = pyogrio.read_dataframe(field["shp"])
+    p1 = str(tmp_path / "d" / "Synthetic_durum.shp")
+    p2 = str(tmp_path / "o" / "Synthetic_ops.shp")
+    for p, prod in ((p1, "Wheat - Durum"), (p2, "Variety 7")):
+        os.makedirs(os.path.dirname(p))
+        g.assign(Product=prod).to_file(p, engine="pyogrio")
+    with open(os.path.splitext(p2)[0] + "-Deere-Metadata.json", "w", encoding="utf-8") as fh:
+        json.dump({"CropName": "Wheat (Durum)", "CropId": 24}, fh)
+    for p, tag, fmt in ((p1, "durum", "point_export"), (p2, "ops", "jd_ops_center")):
+        work = str(tmp_path / f"cli_{tag}")
+        assert er.main([p, "--out", work, "--tag", tag]) == 0
+        IM = _record(work, tag)["sms_import"]
+        assert IM["fmt"] == fmt and IM["sms_product"] == "Wheat - Durum", (IM["fmt"], IM["sms_product"])
+        assert (IM["resolved"]["test_weight_lb_bu"], IM["resolved"]["dry_moisture_pct"]) == (60.0, 13.0)
 
 
 def test_cli_cleans_a_planter_file_as_applied(tmp_path):

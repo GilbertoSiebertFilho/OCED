@@ -5,9 +5,111 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.0** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.1** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.1:* a point export (a shapefile, a `.kml` / `.kmz`, an Operations Center or SMS export) is imported
+as SMS's generic import of a point file holds it: every reading is kept (min. yield volume 0, no maximum, where 0.3.0
+left out the readings below 5 bu/ac and above a maximum: the product's, or 10,000 bu/ac for an Operations Center
+export), with the weight to volume and dry moisture of SMS's product table (an Operations Center barley export: 14.5 %,
+no longer the 15.0 % SMS gives the machine's own logs). An Operations Center export of a harvest therefore holds more
+readings than the import of the same machines' own card or logs, which leaves out the readings below 5 bu/ac (SMS
+imports each of them the same way). The cleaning's S0 takes the import's minimum, so the readings at 0 of a point
+export reach the 3-sigma filters, as in SMS; S2 (Optimize Swath Widths) now removes a reading logged with a swath
+width of 0 (a rectangle of no area), which such files bring; a cleaning saved by 0.3.0 whose S2 met such readings
+says "clean it again" when its work is opened (its flagged file tells). S2 takes the readings of a point file that
+has no time per reading (a yield `.kml` exported from SMS, for one) in the file's own row order, as one block, as SMS
+holds such a file (one dataset, in the order of its import); 0.3.0 sorted them by the dates in the dataset names,
+names without a date last. A point file with a time per reading (an Operations Center export) stays in time order,
+and raw monitor data and SMS's exports of GreenStar 4 data keep the order they had. The setting swath_order "file"
+now means the file's own row order for any file. The cleaning record and report say the order S2 took and why; a
+cleaning saved earlier whose S2 order this changes says "clean it again" when its work is opened (its flagged file
+tells). Raw monitor data keeps its import defaults.
+The cleaning report's "Import as SMS" row now says, for every file, the settings, where each value came from and the
+readings in the data and imported. A point export whose product names durum (e.g. "Wheat - Durum") takes SMS's Wheat -
+Durum values (60 lb/bu, 13.0 %) on the command line too, as in the app. A point export whose crop OCED cannot name
+keeps the file's own yields: when it carries its own dry yield (bu/ac) and dry mass, as SMS's exports do (one of John
+Deere data names the variety as its product), the import note, step 2 and the command line say so plainly and that
+choosing the product converts them; any other gets a warning (SMS needs a product: choose it). A work saved by 0.3.0
+opens as it was saved and says how this version would import its point exports, and how to import them again.
+Every harvest file now opens with SMS's default import, with no setting in step 1: the panel of import defaults for
+the files opened next is gone, and that default import is kept as the file's own, beside the import in use. The import
+settings of a file (step 2) apply other values to it, or to every harvest file of the work (each on its own SMS
+default; the product, weight to volume and dry moisture only to files of the same product), go back to SMS's default,
+or use the file with no import as SMS (an export as it is written; raw data decoded again as the monitor logged it).
+Values equal to SMS's default go back to the default import. The new import is written beside the old one and takes
+its place only once it is complete, so a failed import leaves the file as it was; the file's cleaning is set aside
+(`superseded/`), as before. A file extracted again from the same input gets its own import settings again. A Case IH /
+New Holland unit whose crop has no weight on the card is decoded with SMS's values for data without a product
+(56 lb/bu, 13.0 %, said in a warning) and its product can be chosen in step 2; a file whose import as SMS fails opens
+with its readings as they are, and step 2 can import it again. A work saved by 0.3.0 opens with its imports as saved:
+a file imported there with its own values keeps them (SMS's default import is made again from its readings), and an
+import made under an older rule is marked as such. Steps 1 and 2 are laid out again, to be read step by step: step 1
+(*Raw data*) shows only the raw data with SMS's default import — a line naming the import (a badge: *SMS default*,
+*Older rule*, *Import failed* ...; a decoding option that is not SMS's is named on it), the strip of cards and the
+map, the details folded in small expanders — and step 2 (*Import settings*) starts with the switch *Use SMS's
+default settings*: on, the data is step 1's; off, the settings of the file can be changed and applied, and step 2
+then shows the changed data in its own strip of cards (with the difference to step 1) and its own map, on step 1's
+colour scale. Switching back to the default asks first when the file has a cleaning (it is set aside; the switch
+stays off until the answer). A field of step 2 emptied stays empty (no maximum, the weight or moisture the file
+gives). A product chosen in step 2 for raw data also names the readings (their Product and Crop), as 0.3.0's decoder
+did for a product chosen before extracting. *Apply to all* names, before the click, what it changes in each file,
+and a file it could not import is a warning of its own. The longer
+explanations moved into the "?" of the control or card they explain. Step 3 (*Cleaning*) is laid out the same way: a
+line with the import it starts from (its badge, its readings and S0's minimum) and a line with the sequence; the
+settings, drawn open until the file is cleaned and then folded into one line that names them (the grower's weight
+folded while it is empty, the less used settings under *More settings*, one line instead of the combine-factor box
+with one combine); then the strip of the result (readings kept, area, mean and average dry yield against the import
+the cleaning started from, the final yield when a correction was applied, the monitor against the grower's weight
+when it is only compared), the clean map right under it with its legend, its statistics and histogram at its side,
+and the details in tabs (yield path, steps, limits, removed points, grower's data, combines), where the yield path and
+the steps name the import the cleaning started from by its step (*SMS default (step 1)*, *your settings (step 2)*
+...). Every map shows six
+attributes on small pills and the others under *More*; a corrected yield is one pill away on the clean map, its
+statistics compared with the clean yield, instead of a second map. The maps of steps 1 and 2 fold once the file is
+cleaned, so that working in step 3 stays as quick as before (a click opens them again). Step 4 is now *Clean files
+and reports*: its table names the import each cleaning started from (*SMS default*, *your settings* and what they
+change, *as it is*, *as logged*, *older rule*), the cleaning report's import line says *Your settings* for a file
+imported with them, and each file shows one line on its file for DIFM (the yield column, with the swath width and the
+moisture to map) and the *Not yet tested in SMS* line of the monitor's format, the longer texts folded (*What each file
+is*, *About the file for DIFM*, *How to read it into SMS*). The sidebar's action tree is named after the steps (the
+files and their readings under *1 · Raw data*, each file's import under *2 · Import settings*), and the page's style
+block is in `app/brand.py`, its colours light / dark pairs (the badges, the accent edges of the boxes, a chosen pill
+or tab, the legend chips and the verdict boxes keep fixed colours that read on both). A work copied or unzipped without its files' times keeps its imports (an import is
+known by its content, not by its time on disk), and SMS's default import made again is written beside the one in use
+too. In step 2 an import made under an older rule says what *Apply* changes in it (steps 1 and 2 then show the new
+import), *None* gives the S0 minimum step 3 holds, own settings that leave no reading open their fields, and a file
+held open by another program is a warning of its own; step 1 says what to do next while nothing is extracted, and its
+line of the dataset opened is short (the rest is in the *Unpacking log*). Step 3's yield path names only what moved the
+yield, and a kept cleaning whose own import is gone is named, there and in step 4, by the settings it was made with;
+the cleaning's status says how many readings were inside the boundary. A product chosen in step 2 for raw data puts
+the cleaning record's totals and the decoder's note on that product. *Apply to all* merges the fields typed on the
+file into the own settings of every other file, field by field: each keeps its other settings, the weight to volume
+and dry moisture go only to files whose import in use is of the same product, a field set back to SMS's default is
+taken back from each, and a file the change brings nothing (or whose import it already has) keeps its import, its own
+settings and its cleaning. A product chosen goes to the files that had the file's product (the same choice of it, or
+each on its data's; *not known* counts as one product), each with that product's own weight to volume, dry moisture
+and limits (a limit of a file's own stays where the product does not change it on that file); a file of another
+product, or one whose product was chosen on it for other data, keeps its own (a product *Apply to all* or 0.3.0's
+step 1 gave counts as the choice of the file it came from), and *unknown* takes the product back. The
+orange line before the click and the line after it name what changes in each file (*Max. yield volume none → 150.00*) and the files left as they are; an older rule's import is reached
+only by a field that applies to it (it is then imported with today's rule plus the change), a file on *None* keeps
+it, and with nothing typed only *Apply* to the file is offered. *Clean all* first brings each file's SMS default up
+to date, so that no file is cleaned on an older decode and then set aside. A point export 0.3.0 opened with a
+product chosen in step 1 gets its SMS default from its data's crop, as a fresh open does. A raw file a work of
+0.3.0 decoded with a product chosen before extracting gets its SMS default decoded again from its raw data, as a fresh
+open (*Older rule* while the raw data is not at hand: step 2 then says to put the raw data back, and *Apply* with SMS's
+values imports nothing again); when the raw data is back and the file was cleaned on that older import, the cleaning
+is set aside (step 1 and the work message say so); own settings that give the same import from the new decode,
+reading for reading, keep the import and its cleaning (an import is compared by its content, not by the day its file
+was written). The import a file had before *Apply* or *Back to SMS's default* (0.3.0's own, the readings 0.3.0
+decoded with a product, with their zip and decode report) is removed once nothing references it, the report and step
+1 name an older version's decode by the weight and moisture its yields carry, and *None* on an export whose import
+failed keeps its cleaning. Each map names its
+data (*SMS default (step 1)*, *your settings (step 2)*, *clean (step 3)*), step 1 leads to step 2 when its import leaves
+no reading, values typed in step 2 stay through *None* and back, and a default import that cannot be made is said once
+(the reason without a path, kept on step 1's import line) and not tried on every click.
 
 Installation in Portuguese, step by step: [INSTALAR.txt](INSTALAR.txt).
 
@@ -35,7 +137,7 @@ deeper.
 
 ## The four steps
 
-1. **Machine data.** Upload the files, or type a file or folder on this computer. A folder is read in place; a
+1. **Raw data.** Upload the files, or type a file or folder on this computer. A folder is read in place; a
    `.zip` (and every zip inside a folder) is unpacked into the work folder (`input/`), all of it, also the datasets
    you do not pick, and each Open makes a new work folder with its own copy.
    - *Combines, raw:* a Case IH / New Holland AFS Pro 700 card (`.cn1` folder, zipped or not), John Deere Gen4 / G5 /
@@ -51,12 +153,11 @@ deeper.
      any other file (its own `VRYIELDVOL` is the Operations Center's dry yield, at its own standard moisture).
    - *Import as SMS:* the data comes in as SMS Advanced imports a harvest (its Processing Settings,
      `engine/sms_import.py`), with the values SMS gives each source:
-     - **John Deere** files (GreenStar 3 cards, Gen4 `.jdl` logs) and **Operations Center** exports: the weight to
-       volume and the dry moisture of the file's crop — a GreenStar 3 card's own crop definition; for Gen4 logs and
-       Operations Center exports the values SMS gives that crop (wheat 60 lb/bu, 13.5 %; barley 48 lb/bu, 15.0 %),
-       not the file's own, shown as "SMS's value for this John Deere crop" — min. yield volume 5 bu/ac and max.
-       10,000 bu/ac (SMS's values for these files; type the max when SMS holds another one for the product);
-       SMS's product table below
+     - **John Deere** files (GreenStar 3 cards, Gen4 `.jdl` logs): the weight to volume and the dry moisture of the
+       file's crop — a GreenStar 3 card's own crop definition; for Gen4 logs the values SMS gives that crop (wheat
+       60 lb/bu, 13.5 %; barley 48 lb/bu, 15.0 %), not the file's own, shown as "SMS's value for this John Deere
+       crop" — min. yield volume 5 bu/ac and max. 10,000 bu/ac (SMS's values for these files; type the max when SMS
+       holds another one for the product); SMS's product table below
        only when the file carries no crop definition.
      - **ISOXML** task data (`engine/formats/isoxml.py`): read as SMS reads it, every time log on its own (a
        reading = a record with header sections on and grain flow; its grain is the flow logged one latency later,
@@ -70,31 +171,66 @@ deeper.
        offsets, sideways to the centre of the sections the display logs. Section positions that do not lie side
        by side (a display that logged them while laying its header out) are passed over, with a warning: the
        sections are then taken side by side, centred on the header.
-     - **Case IH / New Holland** cards and the other point exports: SMS's product table — Wheat - Spring 60 lb/bu,
+     - **Case IH / New Holland** cards: SMS's product table — Wheat - Spring 60 lb/bu,
        13.5 %, 5–300 bu/ac; Wheat - Durum 60, 13.0 %, 5–300; Barley (Fall or Spring) 48, 14.5 %, 5–200; Canola 50,
        8.5 %, 10–400; Field Peas and Chick Peas 60, 13.0 %, 5–200; Lentils 60, 14.0 %, 5–200; Oats - Spring 32,
        14.0 %, 5–200; Flax 60, 10.0 %, 10–400; Rye - Annual 56, 14.0 %, 0–500. The crop names cards and exports
        carry (`DURUM`, `Durum Wheat`, `CANOLA`, `HRS wheat`, `Barley - Fall` ...) are mapped to these products; a
        crop outside the table takes its weight and moisture from the crop table and 5–300 bu/ac.
+     - **Point exports** (a point shapefile, a `.kml` / `.kmz`, an **Operations Center** export, an SMS export): as
+       SMS's generic import of a point file holds them, which keeps every reading of the file — min. yield volume 0
+       and no maximum (only a reading with no dry yield, or a negative one, is left out; readings at 0 and far above
+       the product's maximum stay, as in SMS), shown as "SMS's generic import of a point file" — and the weight to
+       volume and dry moisture of SMS's product table above by the crop name (the crop table for a crop outside it),
+       also for an Operations Center export (barley 48 lb/bu, 14.5 %), not the values SMS gives the machine's own
+       logs. Type a minimum or a maximum to leave readings out. An Operations Center export of a harvest therefore
+       holds more readings than the import of the same machines' own card or logs (which leaves out the readings
+       below 5 bu/ac). A product naming durum is SMS's Wheat - Durum (60 lb/bu, 13.0 %). A crop OCED cannot name
+       keeps the file's own yields: an export that carries its own dry yield and dry mass (SMS's exports; one of
+       John Deere data names the variety as its product) says so in its import note and in step 2, without a
+       warning; any other gets a warning, as SMS's generic import needs a product. Choosing the product in step 2
+       (the import settings of the file) converts the yields.
      - Everywhere: expand dry moisture off (one-sided: grain drier than the dry moisture is not raised to it),
        manual swath and moisture off, start / stop delay and flow shift 0 s. The flow shift and the delays work
        within each run of continuous logging (a hole in the log — header up, a stop, the night — starts a new run).
-     Every value stays editable: step 1 holds the defaults for the files opened next (empty = the source's value),
+     Every file opens with these values; each one stays editable per file in step 2 (empty = the source's value),
      and each value the user types wins; the import records where each value came from (the file, SMS's product
-     table, SMS's values for John Deere files, or you). The dry yield of every file is computed again from its wet mass
+     table, SMS's values for John Deere files, SMS's generic import of a point file, or you). The dry yield of every
+     file is computed again from its wet mass
      with these values (SMS ignores the dry yield a point file carries); a file without a moisture column keeps the
      dry / wet ratio of each of its readings.
-2. **Map and attributes.** One button per attribute colours the map over the satellite image (the strips the header
-   swept, or the points), with the legend, the statistics, the histogram, the table of every attribute and the first
-   records. The field boundary, once given, is drawn on the map. For each open harvest file: the **header width as
-   logged** per combine (an initial audit: the most common width should be the header's), and the **import settings
-   of this file** — the values it was imported with, every one editable, with *Import this file again* (the map,
-   the statistics and the cleaning then start from the new import; its earlier cleaning is dropped).
+   - *On screen:* the raw data only, as SMS's default import gives it (no import setting in step 1): a line naming
+     the import (a badge — *SMS default*; *Older rule* for an import a work saved by 0.3.0 made under an older
+     rule; *Import failed*; *As it is* for a planter or sprayer file — and its product, weight to volume, dry
+     moisture and yield volume limits; a decoding option that is not SMS's is named on it), a strip of cards
+     (operation, readings, area, mean and average dry yield, date, machines) and the map: one button per attribute
+     colours it over the satellite image (the strips the header swept, or the points), with the legend, the
+     statistics and the histogram beside it; the field boundary, once given, is drawn on it. The details are folded
+     in small expanders: the **header width as logged** per combine (an initial audit: the most common width should
+     be the header's), the import record (the readings in the data and left out, what was recomputed, where each
+     value came from), the decoder's report, the table of every attribute, the first records and the extracted
+     points. With several files, the file picker sits above the import line and steps 1 to 4 follow the file picked.
+2. **Import settings.** The switch *Use SMS's default settings* is on: the data is as in step 1. Switched off, the
+   import settings of the file open, every one editable and saying where its value came from (product, weight to
+   volume, dry moisture, expand dry moisture; manual swath and moisture; min. and max. yield volume; start / stop
+   delay and flow shift), and *Apply to* the file imports it again from all its readings with them (*Apply to all
+   harvest files*: the fields changed, merged into each file's own settings; the weight to volume and dry moisture go
+   only to files of the same product, a product chosen only to the files that had this file's product, with its own
+   values for each, and a file the change brings nothing is left as it is). *Import: None* uses the file with no
+   import as SMS (an export as it is written; raw data decoded again as the monitor logged it). Values equal to SMS's default go back to the
+   default import. Once applied, step 2 shows the changed data: its import line (*Your settings* and what changed),
+   four cards (readings, area, mean and average dry yield) with the difference to step 1, and its map on step 1's
+   colour scale (the same colour is the same value); step 3 cleans it, and the file's earlier cleaning is set aside
+   (`superseded/`). Switched back on, the file goes back to SMS's default; when it has a cleaning, a dialog asks
+   first. A work saved by 0.3.0 whose import was made under an older rule keeps it, and step 2 says that one Apply
+   imports it with today's rule. Planter and sprayer files have no import settings.
 3. **Cleaning: 3-sigma.** Each file keeps its own field boundary and settings; one file or all of them at once.
    - *Harvest:* the SMS 3-sigma sequence as SMS Advanced runs it. With a boundary the readings outside it are set
      aside first (**S1 Clip To Field Boundary**, shown first in the steps), then S0 import check (no position, no
      yield, dry yield below the import's minimum: after an import as SMS it normally finds nothing), S2 Optimize Swath
-     Widths (overlapping strips removed or narrowed, per-area values scaled), **S3 moisture, S4 speed** and S5 dry
+     Widths (overlapping strips removed or narrowed, per-area values scaled; a reading logged with a swath width of
+     0 removed; the readings in time order, or in the file's own row order for a point file without a time per
+     reading), **S3 moisture, S4 speed** and S5 dry
      yield within mean ± 3 SD of the points still alive, another yield pass while the SD falls by more than 25 %.
      The mean and SD (the setting *Mean and SD per*) are taken **per combine** over all its tasks and days, one
      group for the field when one combine cut it; "task" and "field" are explicit choices, and the earlier order
@@ -112,8 +248,7 @@ deeper.
      field) is off until the user switches it on; beside the switch, the median difference between neighbouring
      passes of different combines and of the same combine (from the last cleaning), to decide. The factor is
      estimated on the yield of the map, after Optimize Swath Widths, and `Yld_Harm` is in the clean file only when a
-     factor was applied. The cards above the clean map and the Steps tab show how each step moved the mean and the
-     SMS Average.
+     factor was applied. The Yield path tab shows how each step moved the mean and the SMS Average.
      **The grower's data** of the field (total weight with its unit — lb, kg, bu or t — or the yield per acre in
      bu/ac with the acres it is over; the basis, the grain moisture on the ticket, the bushel weight) **validate**
      the yields: the monitor's total against the grower's on the same basis, `L = grower / monitor` and a verdict
@@ -139,9 +274,16 @@ deeper.
      (polygons that all carry one field name, none overlapping another and each within 100 m of another, are taken
      together as that field without asking; a drawing tool's default name such as "Untitled Polygon" is no field
      name). A point on the edge is inside (1 cm tolerance, as SMS).
-   - The result: the steps (what each removed), the limits of each 3-sigma step, the clean map, the map of the removed
-     points by step, and for a harvest with the grower's data the validation.
-4. **Clean data and reports.** For each file: the clean shapefile (the kept readings with every attribute of the
+   - On screen: a line with the import the cleaning starts from (step 1's default or step 2's settings, its
+     readings and S0's minimum: the import's, or *S0 minimum* in the settings for a file not imported as SMS), then
+     the settings, folded into one line once the file is cleaned. The result: a strip of cards (readings kept, area,
+     mean and average dry yield, the final yield of a correction, the monitor against the grower's weight), the clean
+     map under it (the corrected yield one pill away) and the tabs: the yield path, the steps (what each removed),
+     the limits of each 3-sigma step, the map of the removed points by step, and for a harvest with the grower's data
+     the validation, with several combines the combine factor.
+4. **Clean files and reports.** On screen: *What each file is* (folded), the table of the cleaned files with the
+   import each cleaning started from, then per file its downloads, one line on its file for DIFM (*About the file for
+   DIFM* folded under it) and the box of the monitor's format. For each file: the clean shapefile (the kept readings with every attribute of the
    file, in one zip), the flagged points (the readings with `Keep` and `Rem_By`, the step that removed it: for a
    harvest file every reading inside the boundary, the readings clipped by S1 counted in step 3, not listed; for a
    planter or sprayer file every reading, the clipped ones with `Rem_By` S1), the
@@ -224,10 +366,14 @@ boundaries, the grower's data, the settings and the cleanings come back without 
 automatically after each extraction and cleaning, in `oced_work.json` inside its work folder; older work folders are
 listed too, rebuilt from their files). Opening a work saved by an older version of OCED says which files that version
 extracted (raw data: open it again for the current decode) or imported with other settings than this version would
-(a point export, e.g. an Operations Center export whose crop was not read then: open the export again for the
-current import as SMS, or import it again in step 2, whose import settings then hold this version's values); a new
-cleaning does not change either. *Action tree*: the four steps and, file by file, the boundary, the grower's data, the
-cleaning (kept, removed %, L) and the outputs; a file name shows that file in steps 2 to 4.
+(a point export, e.g. an Operations Center export whose crop was not read then, or one that 0.3.0 cut at the
+product's yield volume limits: open the export again for the current import as SMS, or import it again in step 2,
+whose import settings then hold this version's values); a new cleaning does not change either. *What OCED reads*:
+the formats, SMS's default import of each source and the SMS 3-sigma sequence in full. *Action tree*: the four steps
+by their names, file by file: *1 · Raw data* the input and each file with its readings (a file name shows that file in
+steps 1 to 4), *2 · Import settings* the import of each file (SMS default, your settings and what they change, as it
+is, as logged, older rule, import failed), *3 · Cleaning* the boundary, the grower's data and the cleaning (kept,
+removed %, L), *4 · Clean files and reports* the outputs.
 
 ## Files
 
@@ -250,8 +396,10 @@ cleaning (kept, removed %, L) and the outputs; a file name shows that file in st
 
 **Command line.** `python -m engine.run <file|folder|zip> --out <folder>` takes the same route as the app: a raw
 dataset is decoded, a harvest file is **imported as SMS by default** with the values SMS gives its source (a
-GreenStar 3 card's crop definition, SMS's values for the crop of Gen4 logs or an Operations Center export, a Case IH
-card's product; `--no-sms-import` cleans the file as it is; `--product`,
+GreenStar 3 card's crop definition, SMS's values for the crop of Gen4 logs, a Case IH card's product, each with its
+yield volume limits; a point export, an Operations Center export included, as SMS's generic import of a point file:
+SMS's product table for the weight to volume and dry moisture, min. yield volume 0 and no maximum, every reading
+kept); `--no-sms-import` cleans the file as it is; `--product`,
 `--weight-to-volume`, `--dry-moisture`, `--min-yield`, `--max-yield`, `--expand-dry-moisture` set the import's
 values, and S0 then takes the import's minimum), then cleaned with the SMS 3-sigma method (the default `--method
 sms3sigma`; `--sms-order`, `--sms-group`). `--aoi FILE` is the field boundary: for the SMS method the S1 clip (1 cm edge

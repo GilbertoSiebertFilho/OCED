@@ -3,7 +3,8 @@
 follows the method (the order of the filters, the mean and SD groups, the scope of Optimize Swath Widths, the
 lateral offset check) and names every step by what it filtered; the grower's weight is compared as a mass in the
 file's bushels, validates without changing the clean file (not even a combine factor) or adjusts it, and every L on
-the page is the one in the file (after the combine factor); a cleaning of an older method asks to be made again.
+the page is the one in the file (after the combine factor); a cleaning of an older method asks to be made again
+(also one whose S2 kept readings logged with a swath width of 0).
 
     python -m pytest -q tests/test_app_cleaning.py
 """
@@ -133,6 +134,46 @@ def test_app_old_method_cleaning_asks_to_clean_again(field, tmp_path, monkeypatc
     assert any("older version of the SMS 3-sigma method" in w.value for w in at2.warning)
 
 
+def test_app_cleaning_whose_s2_kept_readings_of_no_width_asks_to_clean_again(field, tmp_path, monkeypatch):
+    """A point export with readings logged with a swath width of 0 (yield 0: a point export keeps them, its import
+    has no minimum): S2 removes them (method revision 3). Saved as the method's revision 2 had it (whose S2 kept
+    them), the work opens with 'clean it again' and the number; the same file without them opens without it."""
+    from engine.clean import sms3sigma as sms
+    g = pyogrio.read_dataframe(field["shp"])
+    zw = np.flatnonzero(g["Yld_Vol_Dr"].between(40, 90).to_numpy() & (field["df"]["x"].to_numpy() < 400))[::150][:25]
+    g.loc[zw, "Swth_Wdth_"] = 0.0
+    for c in ("Yld_Vol_Dr", "Yld_Vol_We", "Yld_Mass_W", "Yld_Mass_D"):
+        g.loc[zw, c] = 0.0
+    shp = str(tmp_path / "zw" / "Synthetic_no_width.shp")
+    os.makedirs(os.path.dirname(shp))
+    g.to_file(shp, engine="pyogrio")
+    for path, ws, n0 in ((shp, "ws", len(zw)), (field["shp"], "ws_plain", 0)):
+        at = _app(tmp_path / ws, monkeypatch)
+        _open(at, path)
+        C = _clean(at)
+        assert C["R"]["sms3sigma"]["method_revision"] == sms.METHOD_REVISION and not C.get("clean_again")
+        fl = pyogrio.read_dataframe(C["flagged_shp"], columns=["Swth_Wdth_", "Rem_By"], read_geometry=False)
+        assert int(((fl["Swth_Wdth_"].astype(float) <= 0) & (fl["Rem_By"] == "S2")).sum()) == n0
+        assert int(C["R"]["sms3sigma"]["swath"].get("n_no_width") or 0) == n0
+        at.button(key="work_save").click().run()
+        assert not at.exception, at.exception
+        with open(C["json"], encoding="utf-8") as fh:
+            R = json.load(fh)
+        R["sms3sigma"]["method_revision"] = 2
+        with open(C["json"], "w", encoding="utf-8") as fh:
+            json.dump(R, fh)
+        at2 = _app(tmp_path / ws, monkeypatch)
+        at2.button(key="work_open").click().run()
+        assert not at2.exception, at2.exception
+        t = at2.session_state["active"]
+        lines = [w.value for w in at2.warning if "logged with a swath width of 0" in w.value]
+        if n0:
+            assert lines and f"S2 kept the {n0:,} reading(s) logged with a swath width of 0" in lines[0]
+            assert "clean it again" in at2.session_state["cleaned"][t]["clean_again"]
+        else:
+            assert not lines and not at2.session_state["cleaned"][t].get("clean_again")
+
+
 # ------------------------------------------------------------------------------------------------ the grower's data
 def test_app_weight_in_lb_is_a_mass_comparison(field, tmp_path, monkeypatch):
     """A weight in lb equal to the monitor's wet mass, with a grower's bushel weight other than the file's: L = 1,
@@ -146,7 +187,7 @@ def test_app_weight_in_lb_is_a_mass_comparison(field, tmp_path, monkeypatch):
     tw_file = float(np.median(d["Yld_Mass_W"] / d["Yld_Vol_We"]))
     _by_key(at.number_input, "gw_w_").set_value(round(lb, 3)).run()
     _by_key(at.number_input, "gw_tw_").set_value(round(tw_file + 4.0, 1)).run()
-    assert any("is reported, not used" in c.value for c in at.caption)
+    assert any("is reported, not used" in str(c.help) for c in at.caption)          # the conversion line's "?"
     C = _clean(at)
     L = C["R"]["level"]
     assert L["factor"] == pytest.approx(1.0, abs=1e-5) and L["test_weight_grower"] == pytest.approx(tw_file + 4.0, abs=0.06)
@@ -207,8 +248,9 @@ def test_app_validate_only_confirms_no_factor_and_adjust_does(two, tmp_path, mon
     M = C["R"]["machines"]
     assert all(abs(float(v) - 1) < 1e-12 for v in M["factor_applied"].values())
     assert M["ticket_test"]["validate_only"] and M["ticket_test"]["would_apply"] == ["COMBINE-B"]
-    fin = _metric(at, "Final yield (clean file)")
-    assert "it would confirm the combine factor of COMBINE-B" in str(fin.proto.delta)
+    assert not any(m.label.startswith("Final yield") for m in at.metric)            # nothing applied
+    mv = _metric(at, "Monitor vs grower")
+    assert "it would confirm the combine factor of COMBINE-B" in mv.help
     shp = pyogrio.read_dataframe(C["shp"], read_geometry=False)
     assert "Yld_Level" not in shp.columns
     _by_key(at.button_group, "gw_use_").set_value("adjust").run()
@@ -219,7 +261,7 @@ def test_app_validate_only_confirms_no_factor_and_adjust_does(two, tmp_path, mon
     assert L["combine_factor_changed_total"] and abs(L["factor_final"] - L["factor"]) > 0.01
     box = " ".join(_html(at, "oced-verdict"))
     assert f"L = {L['factor_final']:.4f} (before the combine harmonisation {L['factor']:.4f}) · band {html.escape(CL['band'])}" in box
-    assert _metric(at, "Monitor vs grower").value == f"{CL['diff_final_pct']:+.2f} %"
+    assert f"monitor vs grower {CL['diff_final_pct']:+.2f} %" in str(_metric(at, "Final yield (Yld_Level)").proto.delta)
     assert any(f"L = {L['factor_final']:.4f}" in c.value and "adjusted" in c.value for c in at.caption)
     tbl = next(dd.value for dd in at.dataframe if "monitor vs grower" in dd.value.columns)
     assert any("before the combine factor" in str(x) for x in tbl[""])
@@ -230,9 +272,13 @@ def test_app_validate_only_confirms_no_factor_and_adjust_does(two, tmp_path, mon
     _by_key(at2.number_input, "cf_max_").set_value(20.0).run()
     C2 = _clean(at2)
     assert abs(float(C2["R"]["machines"]["factor_applied"]["COMBINE-B"]) - 1) > 0.05
+    pills = _by_key(at2.button_group, "attr_clean_")                 # the corrected yield, one pill away
+    assert "Final yield (Yld_Harm)" in pills.options
+    pills.set_value("Yld_Harm").run()
+    assert not at2.exception, at2.exception
     stats = [d.value for d in at2.dataframe if "change vs the clean map" in d.value.columns]
     assert stats and "average (SMS, area-weighted)" in list(stats[0]["statistic"])
-    assert any(m.value.startswith("**Dry yield x the combine factor** · bu/ac") for m in at2.markdown)
+    assert any(m.value.startswith("**Final yield (Yld_Harm)** · bu/ac") for m in at2.markdown)
     # step 4: the combine factor applied in step 3 goes into the written grain by default
     apply = _by_key(at2.checkbox, "nw_f_")
     assert apply.value is True and not apply.disabled

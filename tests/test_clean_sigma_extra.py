@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The SMS 3-sigma sequence, second set (synthetic data only): the filter order of a plain settings dict, S0 with no
-minimum still removes negative yields, S0 takes the minimum of the file's own import record, the lateral-bias
+minimum still removes negative yields, S0 takes the minimum of the file's own import record, S2 removes the readings
+logged with no swath width, the order S2 takes (a point file without a time per reading in its own row order; time
+order; raw data and GreenStar 4 exports as before; swath_order 'file'), the lateral-bias
 measurement has bounded memory, far-apart readings without a boundary are reported, the SD drop has two decimals.
 
     python -m pytest -q tests/test_clean_sigma_extra.py
@@ -138,6 +140,140 @@ def test_far_apart_readings_without_a_boundary_are_reported(field, tmp_path):
     Rb, _ = _clean(field["shp"], {"swath": False},
                    aoi={"file": field["boundary"], "buffer_m": 0.01, "clip_output": True})
     assert not any("groups more than 500 m apart" in x for x in Rb["warnings"])
+
+
+def test_s2_removes_the_readings_logged_with_no_swath_width(field, tmp_path):
+    """A point file imported with no minimum brings readings logged with a swath width of 0 (no cut: header up,
+    sections off) and no yield. S0 keeps them (no minimum); S2 removes them (a rectangle of no area), whatever their
+    yield, and removes the same other readings as without them; with S2 off they stay."""
+    df = pyogrio.read_dataframe(field["shp"])
+    zero = np.arange(200, 260)
+    df.loc[zero, "Swth_Wdth_"] = 0.0
+    df.loc[zero[:50], ["Yld_Vol_Dr", "Yld_Vol_We", "Yld_Mass_W", "Yld_Mass_D"]] = 0.0
+    shp = str(tmp_path / "no_width.shp")
+    df.to_file(shp, engine="pyogrio")
+    point_import = {"resolved": {"min_yield": 0.0, "max_yield": None}}
+    R0, _ = _clean(field["shp"], sms_import=point_import)
+    R, g = _clean(shp, sms_import=point_import)
+    s0 = next(r for r in R["cascade"] if r["filter"] == "S0")
+    s2 = next(r for r in R["cascade"] if r["filter"] == "S2")
+    s2_0 = next(r for r in R0["cascade"] if r["filter"] == "S2")
+    assert s0["removed"] == 0
+    assert (g.loc[g["Swth_Wdth_"] == 0, "Rem_By"] == "S2").all() and int((g["Swth_Wdth_"] == 0).sum()) == len(zero)
+    assert s2["removed"] == s2_0["removed"] + len(zero) and "no swath width (0) - removed" in s2["criterion"]
+    sw = R["sms3sigma"]["swath"]
+    assert sw["n_no_width"] == len(zero) and sw["removed_by_reason"][sms.NO_WIDTH_REASON] == len(zero)
+    assert "no swath width" not in s2_0["criterion"] and "n_no_width" not in R0["sms3sigma"]["swath"]
+    Roff, goff = _clean(shp, {"swath": False}, sms_import=point_import)
+    assert next(r for r in Roff["cascade"] if r["filter"] == "S2")["removed"] == 0
+    assert not (goff.loc[goff["Swth_Wdth_"] == 0, "Rem_By"] == "S2").any()
+
+
+POINT_IMPORT = {"family": "point", "fmt": "point_export", "resolved": {"min_yield": 0.0, "max_yield": None}}
+RAW_IMPORT = {"family": "cnh", "fmt": "cnh_cn1", "resolved": {"min_yield": 0.0, "max_yield": None}}
+
+
+@pytest.fixture(scope="module")
+def strips(tmp_path_factory):
+    """Two blocks over the same ground: an undated dataset first in the file, a dated one after it; the same with a
+    time per reading (the first block an hour later than the second); an SMS export of GreenStar 4 data (two dated
+    datasets, the later date first in the file, Pass_Num, no time per reading)."""
+    from tests.synthetic_strips import make_strips
+    d = tmp_path_factory.mktemp("strips")
+    return {"untimed": make_strips(str(d / "u"), "Strip U", "Strip D 9/14/2026"),
+            "timed": make_strips(str(d / "t"), "Strip U", "Strip D 9/14/2026",
+                                 times=("2026-09-14 14:00:00", "2026-09-14 13:00:00")),
+            "gs4": make_strips(str(d / "g"), "TaskName 9/15/2026 (GreenStar 4 Monitor)",
+                               "TaskName 9/14/2026 (GreenStar 4 Monitor)", pass_num=True, machine=False)}
+
+
+def _s2_by_block(g, F):
+    """Readings S2 removed in the first and the second block of the file (the block S2 took first keeps its own)."""
+    b = F["block"][g["_row"].to_numpy()]
+    s2 = g["Rem_By"].to_numpy() == "S2"
+    return int((s2 & (b == 0)).sum()), int((s2 & (b == 1)).sum())
+
+
+def test_point_import_is_the_family_or_the_format_of_the_import_record():
+    assert sms.point_import(POINT_IMPORT) and sms.point_import({"fmt": "point_export"})
+    assert sms.point_import({"family": "john_deere", "fmt": "jd_ops_center"})       # an Ops Center export
+    assert not sms.point_import(RAW_IMPORT) and not sms.point_import({"fmt": "jd_jdl"})
+    assert not sms.point_import(None) and not sms.point_import({"resolved": {"min_yield": 0.0}})
+
+
+def test_s2_takes_an_untimed_point_file_in_its_row_order(strips):
+    """A point file without a time per reading (its import record says family 'point'): S2 takes the readings in the
+    file's own row order, as one block, so the undated dataset first in the file is cut first and the dated one after
+    it is removed as fully overlapped. The table keeps the dataset order (the dated dataset first), only S2 changes;
+    the record says the order and why, and the warning about several combines names the file's row order."""
+    F = strips["untimed"]
+    n_b = F["n"] // 2
+    R, g = _clean(F["shp"], sms_import=POINT_IMPORT)
+    assert _s2_by_block(g, F) == (0, n_b)
+    sw = R["sms3sigma"]["swath"]
+    assert sw["order_basis"] == sms.ORDER_FILE and sw["order_setting"] == "auto"
+    assert "point file without a time per reading" in sw["order_reason"] and "swath_order auto" in sw["order_reason"]
+    assert sw["order"].startswith("the file's own row order, as one block")
+    assert R["order"]["basis"] == "dataset+order" and g["Dataset"].iloc[0] == "Strip D 9/14/2026"
+    assert yc.SEVERAL_FILE_ORDER in R["warnings"] and yc.SEVERAL_NO_TIME not in R["warnings"]
+    assert R["sms3sigma"]["method_revision"] == sms.METHOD_REVISION >= sms.FILE_ORDER_REVISION == 4
+    # the same file without a point import record: the datasets in the order of the dates in their names (unchanged)
+    R0, g0 = _clean(F["shp"])
+    assert _s2_by_block(g0, F) == (n_b, 0) and R0["sms3sigma"]["swath"]["order_basis"] == sms.ORDER_EXPORT
+    assert yc.SEVERAL_NO_TIME in R0["warnings"] and yc.SEVERAL_FILE_ORDER not in R0["warnings"]
+
+
+def test_s2_keeps_time_order_for_a_timed_point_file(strips):
+    """A point file with a time per reading (an Operations Center export): S2 stays in time order, whatever the order
+    of the rows: the block logged an hour earlier is cut first although it is second in the file."""
+    F = strips["timed"]
+    R, g = _clean(F["shp"], sms_import=POINT_IMPORT)
+    assert _s2_by_block(g, F) == (F["n"] // 2, 0)
+    sw = R["sms3sigma"]["swath"]
+    assert sw["order_basis"] == sms.ORDER_TIME and sw["order"] == "time order across combines"
+    assert sw["order_reason"] == "the file has a time per reading"
+    assert not any("replaces the per-record time order" in w for w in R["warnings"])
+
+
+def test_s2_order_of_raw_data_and_greenstar_4_exports_is_unchanged(strips):
+    """Raw data (an import record of a card) and a file without an import record keep the order of 0.3.1: the
+    datasets by the dates in their names; an SMS export of GreenStar 4 data imported as a point file keeps its logged
+    files re-chained and in the order of their dates, exactly as without the point record."""
+    F = strips["untimed"]
+    R0, g0 = _clean(F["shp"])
+    Rr, gr = _clean(F["shp"], sms_import=RAW_IMPORT)
+    assert _s2_by_block(gr, F) == (F["n"] // 2, 0) and Rr["sms3sigma"]["swath"]["order_basis"] == sms.ORDER_EXPORT
+    assert "not a point file" in Rr["sms3sigma"]["swath"]["order_reason"]
+    for c in ("Keep", "Rem_By", "Wdth_Opt", "Swath_Scl", "Dist_Opt"):
+        assert (gr[c].to_numpy() == g0[c].to_numpy()).all(), c
+    G = strips["gs4"]
+    Rp, gp = _clean(G["shp"], sms_import=POINT_IMPORT)
+    Rn, gn = _clean(G["shp"])
+    assert _s2_by_block(gp, G) == (G["n"] // 2, 0)               # 9/14 (second in the file) cut first
+    sw = Rp["sms3sigma"]["swath"]
+    assert sw["order_basis"] == sms.ORDER_CHAIN and "GreenStar 4" in sw["order_reason"]
+    assert sw["order"] == Rn["sms3sigma"]["swath"]["order"]
+    for c in ("Keep", "Rem_By", "Wdth_Opt", "Swath_Scl", "Dist_Opt"):
+        assert (gp[c].to_numpy() == gn[c].to_numpy()).all(), c
+
+
+def test_swath_order_file_is_the_files_row_order(strips):
+    """swath_order 'file' set by the user wins: S2 takes the file's own row order for any file, over the dataset dates
+    of a file without an import record, over a time per reading (with a warning) and over the re-chaining of a
+    GreenStar 4 export."""
+    F, T, G = strips["untimed"], strips["timed"], strips["gs4"]
+    for D, kw in ((F, {}), (F, {"sms_import": RAW_IMPORT}), (T, {"sms_import": POINT_IMPORT}),
+                  (G, {"sms_import": POINT_IMPORT}), (G, {})):
+        R, g = _clean(D["shp"], {"swath_order": "file"}, **kw)
+        assert _s2_by_block(g, D) == (0, D["n"] // 2)
+        sw = R["sms3sigma"]["swath"]
+        assert sw["order_basis"] == sms.ORDER_FILE and sw["order_reason"] == "set by swath_order 'file'"
+        assert sw["order_setting"] == "file"
+        replaced = [w for w in R["warnings"] if "swath_order 'file' replaces the per-record time order" in w]
+        assert len(replaced) == (1 if D is T else 0)
+    # 'chain' stays what it was: the file blocks re-chained, then the datasets in the order of their dates
+    Rc, gc = _clean(G["shp"], {"swath_order": "chain"}, sms_import=POINT_IMPORT)
+    assert _s2_by_block(gc, G) == (G["n"] // 2, 0) and Rc["sms3sigma"]["swath"]["order_basis"] == sms.ORDER_CHAIN
 
 
 def test_sd_drop_has_two_decimals(field):
