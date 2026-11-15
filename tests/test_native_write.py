@@ -40,7 +40,7 @@ def test_options_for_a_raw_card(decoded):
     o = NW.options(decoded["dec"]["source"])
     assert [x["id"] for x in o] == ["cnh_cn1", "isoxml"]
     assert o[0]["native"] and o[0]["available"] and o[0]["reason"] == ""
-    assert not o[1]["native"] and not o[1]["available"] and "exports" in o[1]["reason"]
+    assert not o[1]["native"] and not o[1]["available"] and "point export" in o[1]["reason"]
     assert "not the source's format" in o[1]["label"]
 
 
@@ -50,7 +50,7 @@ def test_isoxml_stays_off_for_a_raw_card_with_the_fallback_the_app_passes(decode
     o = NW.options(decoded["dec"]["source"], isoxml_fallback=True)
     assert [x["id"] for x in o] == ["cnh_cn1", "isoxml"]
     assert o[0]["native"] and o[0]["available"] and o[0]["reason"] == ""
-    assert not o[-1]["native"] and not o[-1]["available"] and "exports" in o[-1]["reason"]
+    assert not o[-1]["native"] and not o[-1]["available"] and "point export" in o[-1]["reason"]
 
 
 def test_options_for_an_export():
@@ -118,7 +118,7 @@ def test_write_native_and_isoxml(decoded, tmp_path):
     assert res["native"] and res["format_id"] == "cnh_cn1" and res["sms_tested"] is False
     assert os.path.isfile(res["zip"]) and res["n_removed"] == 0
     assert any("lead_in" in w for w in res["warnings"])            # an option of another writer: named, not used
-    with pytest.raises(ValueError, match="not available|exports"):
+    with pytest.raises(ValueError, match="not available|point export"):
         NW.write("isoxml", src, decoded["dec"]["shp"], str(tmp_path / "iso"), log=QUIET)
     shp = _clean_file(str(tmp_path))
     r2 = NW.write("isoxml", None, shp, str(tmp_path / "iso"), log=QUIET, lead_in="always")

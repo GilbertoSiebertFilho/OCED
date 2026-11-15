@@ -1,7 +1,7 @@
 OCED - Olds College Extract Data - instalação num computador novo
 ================================================================
 
-Versão 0.3.1 (a versão aparece na barra de título e no painel lateral do app).
+Versão 0.3.2 (a versão aparece na barra de título e no painel lateral do app).
 
 O OCED abre os arquivos que vêm das máquinas (colheitadeiras, plantadeiras e pulverizadores: cartões e logs brutos,
 dados ISOXML e exportações de pontos), importa-os como o Ag Leader SMS, mostra o mapa de cada atributo, limpa os

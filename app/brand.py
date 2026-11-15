@@ -40,7 +40,7 @@ NAME = "OCED"
 LONG_NAME = "OCED — Olds College Extract Data"
 TAGLINE = "Olds College Extract Data · raw yield data to clean shapefiles with the SMS 3-sigma sequence"
 ORG = "Olds College Smart Farm (OFPE)"
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 # ---- palette (hex strings; BRAND.md)
 NAVY = "#00358E"            # primary: buttons, headings, tree group titles, active states, lines and fits in figures
@@ -298,6 +298,12 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 .stApp [class*="st-key-strip_"] [data-testid="stMetricLabel"] p {{ white-space: normal; overflow: visible;
   text-overflow: clip; }}
 .stApp [class*="st-key-strip_"] [data-testid="stMetricValue"] {{ font-size: 1.5rem; }}
+/* a value longer than its card (a date range) wraps inside it, never cut */
+.stApp [class*="st-key-strip_"] [data-testid="stMetricValue"] div,
+.stApp [class*="st-key-strip_"] [data-testid="stMetricValue"] p,
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricValue"] div,
+.stApp [class*="st-key-res_cards"] [data-testid="stMetricValue"] p {{ white-space: normal; overflow: visible;
+  text-overflow: clip; overflow-wrap: break-word; }}
 
 /* ---- the toolbar of a map (pills, More and the way the readings are drawn, in a keyed box): small pills on no
    box, navy when chosen */
@@ -413,5 +419,5 @@ def rule():
 
 
 def footer_caption() -> str:
-    """The sidebar footer: 'OCED 0.3.1 · Olds College Smart Farm (OFPE)'."""
+    """The sidebar footer: 'OCED 0.3.2 · Olds College Smart Farm (OFPE)'."""
     return f"{NAME} {VERSION} · {ORG}"

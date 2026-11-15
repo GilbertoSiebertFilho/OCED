@@ -185,6 +185,7 @@ UNKNOWN_PRODUCT_NOTE = ("weight to volume or dry moisture unknown (product not r
 UNKNOWN_POINT_SUFFIX = ("; SMS's generic import of a point file needs a product, so choose one to import it as SMS "
                         "would")
 OTHER_YIELD_NAMES = ("vryieldmas",)   # per-area yields with no known basis: scaled with the manual swath only
+LABEL_CROP_COLUMN = "Crop_Name"   # the text column of the crop used when a point export's Crop column holds numbers
 
 
 def sms_product(text) -> str | None:
@@ -219,6 +220,67 @@ def crop_key(text) -> str | None:
         if k not in CROP_PRODUCT and k in s:
             return k
     return None
+
+
+def export_labels(shp: str, R: dict, crop=None) -> dict | None:
+    """The Product and Crop a point export's import writes when it converted the yields with another crop than the one
+    its data names (the product chosen in the settings R: its crop key R['product']), for apply(labels=...,
+    keep_crop=that key): {its Product column: the SMS product name of the crop used (common.product_name), its Crop
+    column: the crop key}; only {Crop: the key} when no reading names a crop OCED knows and the file has a Product
+    column (of varieties: it stays). Only text columns take a label: a Product column the file lacks is added (also
+    when the data's crop is not known: the yields were converted with the crop used, and the file says so), and
+    the crop key goes into a Crop column added after the file's own ones when the file has none, or into an added
+    Crop_Name column (LABEL_CROP_COLUMN) when its Crop column holds numbers (an Operations Center export's crop code,
+    left as it is). crop: the data's crop as the import read it (None: the file names no crop, or several). None when
+    the import used the data's own crop (nothing changes: the file keeps its text byte for byte) or no product."""
+    P = crop_key(R.get("product")) if isinstance(R, dict) and R.get("product") else None
+    if not P or (crop is not None and crop_key(crop) == P):
+        return None
+    import pyogrio
+    info = pyogrio.read_info(shp)
+    fields = [str(c) for c in info["fields"]]
+    text = {c for c, t in zip(fields, info["dtypes"]) if str(t) == "object"}
+    pcol = next((c for c in fields if c.lower() == "product" and c in text), None)
+    ccol = next((c for c in fields if c.lower() == "crop" and c in text), None)
+    named = crop is not None and crop_key(crop) is not None
+    if not named:
+        # the data's crop not given (several crops, or none read): the crop each reading names decides
+        cols = [c for c in (ccol, pcol) if c]
+        k = reading_crops(pyogrio.read_dataframe(shp, columns=cols, read_geometry=False), cols) if cols else []
+        if len(k) and all(x == P for x in k):
+            return None                                  # every reading already names the crop used
+        named = any(x is not None for x in k)            # several crops: the readings of the others are relabelled
+    taken = {c.lower() for c in fields}
+    if pcol:
+        out = {pcol: common.product_name(P)} if named else {}
+    elif "product" not in taken:
+        # added: the file has no Product column, so the yields converted with the crop used name it there, whether or
+        # not the data's own crop is known (a crop code only, no metadata)
+        out = {"Product": common.product_name(P)}
+    else:
+        out = {}
+    if ccol:
+        out[ccol] = P
+    else:
+        name = next((c for c in ("Crop", LABEL_CROP_COLUMN, "Crop_Used")
+                     if c.lower() not in taken or next(f for f in fields if f.lower() == c.lower()) in text), None)
+        if name is not None:
+            out[next((f for f in fields if f.lower() == name.lower()), name)] = P
+    return out or None
+
+
+def reading_crops(g, cols) -> np.ndarray:
+    """The crop key each record names (object array, None where none): its first column of `cols` that names a crop
+    OCED knows (crop_key)."""
+    k = np.full(len(g), None, dtype=object)
+    for c in cols:
+        if not c or c not in g.columns:
+            continue
+        txt = g[c].astype(object).where(g[c].notna(), "").astype(str).str.strip()
+        m = {x: crop_key(x) for x in txt.unique()}
+        kc = txt.map(m).to_numpy(dtype=object)
+        k = np.where(pd.isna(k), kc, k)
+    return k
 
 
 def format_family(fmt) -> str | None:
@@ -540,7 +602,8 @@ def _group_counts(df, C, mask) -> dict:
     return {str(a): int(b) for a, b in zip(u, k)}
 
 
-def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | None = None) -> dict:
+def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | None = None,
+          keep_crop: str | None = None) -> dict:
     """Import a standard harvest point file as SMS would: manual swath / moisture, flow shift, the weight to volume
     and dry moisture (wet volume, dry mass and dry volume computed again from the wet mass), the start / stop delays
     and the yield volume limits. Writes out_shp with the kept records byte for byte and the changed cells patched
@@ -549,7 +612,8 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | No
     left out the file is not copied.
     labels: {text column: value} written in every kept record (a decoded file whose yields are converted with another
     crop than the one it is labelled with: {"Product": ..., "Crop": ...}); a column the file lacks is added after its
-    own ones.
+    own ones. keep_crop: a crop key: a record that already names that crop (reading_crops over the label columns,
+    its Crop column first) keeps its text (a point export's own names of the crop the import used).
     Returns {path, n_in, n_out, left_out: {step: n}, left_out_by_group: {step: {machine: n}}, changed: [columns],
     relabelled: [columns], applied: {setting: True / False}, settings, notes, own_yields}. own_yields: True for a
     point export whose product is not known and which carries its own dry yield (bu/ac) and dry mass: its yields are
@@ -737,13 +801,19 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | No
             rep["changed"].append(c)
     # the text labels of the crop (a decoded file converted with another crop): the cells that differ, or a column added
     extra = []
+    same = (reading_crops(g, sorted((c for c in (labels or {}) if c in g.columns), key=lambda c: c.lower() != "crop"))
+            == keep_crop) if (keep_crop and labels) else np.zeros(n, bool)
     for c, v in (labels or {}).items():
         if v is None:
             continue
         v = str(v)[:40]
+        if c in g.columns and not (g[c].dtype == object or pd.api.types.is_string_dtype(g[c])):
+            # a column of numbers (a crop code): a text label never goes into it
+            raise ValueError(f"the column {c} of this file holds numbers, so the name of the crop used ({v}) cannot "
+                             "be written in it")
         if c in g.columns:
             cur = g[c].astype(object).where(g[c].notna(), "").astype(str).str.strip().to_numpy()
-            diff = cur[rows] != v
+            diff = (cur[rows] != v) & ~same[rows]
             if diff.any():
                 patch[c] = (np.full(len(rows), v, dtype=object), diff)
                 rep["relabelled"].append(c)

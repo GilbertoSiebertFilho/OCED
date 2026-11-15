@@ -212,7 +212,7 @@ def test_s2_takes_an_untimed_point_file_in_its_row_order(strips):
     assert _s2_by_block(g, F) == (0, n_b)
     sw = R["sms3sigma"]["swath"]
     assert sw["order_basis"] == sms.ORDER_FILE and sw["order_setting"] == "auto"
-    assert "point file without a time per reading" in sw["order_reason"] and "swath_order auto" in sw["order_reason"]
+    assert "point file without a time per reading" in sw["order_reason"] and "swath_order" not in sw["order_reason"]
     assert sw["order"].startswith("the file's own row order, as one block")
     assert R["order"]["basis"] == "dataset+order" and g["Dataset"].iloc[0] == "Strip D 9/14/2026"
     assert yc.SEVERAL_FILE_ORDER in R["warnings"] and yc.SEVERAL_NO_TIME not in R["warnings"]

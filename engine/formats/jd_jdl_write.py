@@ -1689,9 +1689,10 @@ def _reference_of_written(all_logs, root, out_root, unit_ids, opts, mode, kept0)
     """drop_logs: the kept readings as jd_jdl reads the ORIGINAL logs of the files written (hard links, else copies,
     in a folder next to the written one, removed after), and how far they are from the decode of every log."""
     ref = out_root + "_reference"
+    roots = record_roots(root)
     try:
         for _, _, lg in all_logs:
-            dst = os.path.join(ref, os.path.relpath(lg.meta.path, root))
+            dst = os.path.join(ref, out_relpath(lg.meta.path, roots))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             try:
                 os.link(lg.meta.path, dst)
@@ -1854,11 +1855,12 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
             lg.new_guid = new_guid[lg.meta.guid]
             lg.link_guids = dict(new_guid)
     files_changed, versions = [], {}
+    roots = record_roots(root)
     total = {"bytes_in": 0, "bytes_out": 0, "logs_unchanged": 0, "records_changed": 0, "records_added": 0,
              "durations_extended": 0}
     try:
         for u, li, lg in all_logs:
-            rel = os.path.relpath(lg.meta.path, root)
+            rel = out_relpath(lg.meta.path, roots)
             base = (lg.new_guid + ".jdl") if lg.new_guid else os.path.basename(rel)
             dst = os.path.join(out_root, os.path.dirname(rel), base)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -1889,7 +1891,7 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
                 g = ln.split(b",")[0].decode("ascii", "replace").strip()
                 if g in keep:
                     outl.append(keep[g].encode() + ln[len(g):])
-            dst = os.path.join(out_root, os.path.relpath(src, root))
+            dst = os.path.join(out_root, out_relpath(src, roots))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             data = nl.join(outl) + (nl if raw.endswith(nl) else b"")
             with open(dst, "wb") as fh:
@@ -1988,3 +1990,29 @@ def _record_root(path):
     parts = os.path.normpath(path).split(os.sep)
     low = [x.lower() for x in parts]
     return os.sep.join(parts[:low.index("jd-data")]) if "jd-data" in low else os.path.dirname(path)
+
+
+def record_roots(root: str) -> list:
+    """The record roots (the folders that hold a JD-Data folder, else the folder of a log) of every .jdl log under the
+    input folder, in a fixed order: out_relpath numbers them."""
+    seen = {}
+    for d, _, fs in os.walk(root):
+        for f in fs:
+            if f.lower().endswith(".jdl"):
+                rr = _record_root(os.path.join(d, f))
+                seen.setdefault(os.path.normcase(os.path.abspath(rr)), rr)
+    return [seen[k] for k in sorted(seen)]
+
+
+def out_relpath(path: str, roots: list) -> str:
+    """Where a file of the input (a log, a version.txt) goes inside the written folder: its path below its record
+    root (JD-Data/log/...), under a number (1, 2 ...) when the input holds more than one record root (roots:
+    record_roots of the input). The folders above JD-Data (often the long names of the zips the logs came in) are not
+    written again, so the written paths stay short."""
+    rr = _record_root(path)
+    rel = os.path.relpath(path, rr)
+    if len(roots) > 1:
+        keys = [os.path.normcase(os.path.abspath(r)) for r in roots]
+        k = os.path.normcase(os.path.abspath(rr))
+        rel = os.path.join(str(keys.index(k) + 1) if k in keys else "0", rel)
+    return rel

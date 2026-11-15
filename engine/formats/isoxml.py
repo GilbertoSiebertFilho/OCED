@@ -1489,7 +1489,7 @@ def decode(root: str, unit_ids=None, opts: C.DecodeOptions | None = None, log=pr
             long_n += int((P.dur_s > LONG_DURATION_S).sum())
             frames.append(pd.DataFrame({
                 "Field": L.field, "Dataset": C.dataset_name(f"{L.field} {L.machine[-6:]}".strip(), start),
-                "Product": crop if override else (L.product or L.crop_label), "Obj__Id": np.arange(1, len(P) + 1),
+                "Product": C.product_name(crop) if override else (L.product or L.crop_label), "Obj__Id": np.arange(1, len(P) + 1),
                 "Time": pd.Series(tt).dt.strftime("%Y-%m-%d %H:%M:%S.%f").str.slice(0, 23).to_numpy(),
                 "Duration_s": P.dur_s.to_numpy(float), "Elevation_": P.alt_m.to_numpy(float) * C.FT_PER_M,
                 "Speed_mph_": (P.dist_m / P.dur_s).to_numpy(float) * C.MPH_PER_MS,

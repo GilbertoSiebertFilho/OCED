@@ -131,3 +131,67 @@ def test_decode_source_and_aoi_cache_key():
     assert k1 != er.aoi_cache_key({"decoder": "jd_jdl"}, "u1", o)
     assert k1 != er.aoi_cache_key({"decoder": "cnh_cn1"}, "u2", o)
     assert k1 != er.aoi_cache_key({"decoder": "cnh_cn1"}, "u1", dataclasses.replace(o, shrink="symmetric"))
+
+
+def test_cli_names_a_product_chosen_for_a_point_export_as_the_app(field, tmp_path):
+    """0.3.2 (O3): --product on a point export of another crop names the crop used in the imported and the clean file
+    as the app does (Product: the SMS product name, Crop: the crop key); the export's own crop changes nothing."""
+    import glob
+    import pyogrio
+    work = str(tmp_path / "cli_b")
+    assert er.main([field["shp"], "--out", work, "--tag", "barley", "--product", "barley"]) == 0
+    for pat in ("**/barley_imported.shp", "**/*barley*clean*.shp"):
+        shp = [p for p in glob.glob(os.path.join(work, pat), recursive=True) if "flag" not in os.path.basename(p)]
+        assert shp, pat
+        g = pyogrio.read_dataframe(shp[0], read_geometry=False)
+        assert set(g["Product"]) == {"Barley - Fall"} and set(g["Crop"]) == {"barley"}, pat
+    work = str(tmp_path / "cli_w")
+    assert er.main([field["shp"], "--out", work, "--tag", "wheat", "--product", "wheat"]) == 0
+    shp = glob.glob(os.path.join(work, "**", "wheat_imported.shp"), recursive=True)
+    g = pyogrio.read_dataframe(shp[0] if shp else field["shp"], read_geometry=False)
+    assert set(g["Product"]) == {"Wheat"} and "Crop" not in g.columns
+
+
+def test_isoxml_of_a_crop_code_export_names_the_crop_its_import_used(field, tmp_path):
+    """0.3.2 (R1): a point export whose Crop column holds a crop code (a number), with no Product column and no
+    metadata naming its crop, imported with --product barley and cleaned: the imported and the clean file name barley
+    (Product and Crop_Name, the code left as it is), and the ISOXML written from the clean file names barley as its
+    crop type (CTP) and product (PDT), which OCED's own decoder reads back as barley. Imported with the default, the
+    crop is not known: the set keeps the code as its crop type, and names the crop the import used when the source
+    gives one."""
+    import re
+    import numpy as np
+    import pyogrio
+    from engine.formats import native_write as nw
+    g = pyogrio.read_dataframe(field["shp"]).drop(columns=["Product"])
+    g["Crop"] = np.int64(7)
+    os.makedirs(tmp_path / "in")
+    shp = str(tmp_path / "in" / "export.shp")
+    pyogrio.write_dataframe(g, shp)
+
+    def run(name, *extra):
+        work = str(tmp_path / name)
+        assert er.main([shp, "--out", work, "--tag", name] + list(extra)) == 0
+        imp = glob.glob(os.path.join(work, "**", f"{name}_imported.shp"), recursive=True)
+        cl = [p for p in glob.glob(os.path.join(work, "**", f"{name}*clean*.shp"), recursive=True)
+              if "flag" not in os.path.basename(p)]
+        return imp[0] if imp else None, cl[0]
+
+    def iso(clean, out, source):
+        nw.write(nw.ISOXML, source, clean, out, log=lambda m: None)
+        x = open(glob.glob(os.path.join(out, "**", "TASKDATA.XML"), recursive=True)[0], encoding="utf-8").read()
+        return re.findall(r'<CTP A="CTP-1" B="([^"]*)"', x), re.findall(r'<PDT A="PDT-\d+" B="([^"]*)"', x)
+
+    imp, cl = run("barley", "--product", "barley")
+    for p in (imp, cl):
+        e = pyogrio.read_dataframe(p, read_geometry=False)
+        assert set(e["Crop"]) == {7} and set(e["Product"]) == {"Barley - Fall"} and set(e["Crop_Name"]) == {"barley"}
+    out = str(tmp_path / "iso_b")
+    assert iso(cl, out, {"kind": "export"}) == (["barley"], ["Barley - Fall"])
+    cand = [c for c in er.open_input([out], str(tmp_path / "rb"), log=lambda m: None) if c.get("kind") == "raw"][0]
+    assert {u.crop for u in er.list_units(cand)} == {"barley"}
+    dec = er.decode(cand, None, None, str(tmp_path / "rb"), log=lambda m: None, tag="RB")
+    assert dec["report"]["crop_name"] == "barley"
+    _, cl0 = run("plain")
+    assert iso(cl0, str(tmp_path / "iso_0"), {"kind": "export"}) == (["7"], ["Harvest"])
+    assert iso(cl0, str(tmp_path / "iso_w"), {"kind": "export", "options": {"crop": "wheat"}})[0] == ["wheat"]

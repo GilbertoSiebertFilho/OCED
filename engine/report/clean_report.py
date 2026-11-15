@@ -584,6 +584,21 @@ def _source_text(R) -> str:
         s += f"; {len(u)} unit(s): " + "; ".join(_e(x) for x in u[:6]) + (" ..." if len(u) > 6 else "")
     cal = src.get("calibration_summary")
     if cal:
+        cal = str(cal)
+        # the test weight the monitor holds, beside the import's when they differ (a monitor's 59.987654321 lb/bu
+        # imported at 60.00 lb/bu)
+        imp = R.get("sms_import") if isinstance(R.get("sms_import"), dict) else {}
+        tw_imp = (imp.get("resolved") or {}).get("test_weight_lb_bu") if isinstance(imp.get("resolved"), dict) else None
+        m = re.search(r"test weight (\d+(?:\.\d+)?) lb/bu", cal)
+        if m and tw_imp and abs(float(m.group(1)) - float(tw_imp)) > 0.005:
+            cal = (cal[:m.end()] + f" (as the monitor holds it; the import used {float(tw_imp):.2f} lb/bu)"
+                   + cal[m.end():])
+        # a value the decoder wrote with all its digits (a test weight of 59.987654321 lb/bu): 2 decimals, as the
+        # import's values are given; a test weight always with 2 decimals (60.0098 -> 60.01, 48.0 -> 48.00), the rule
+        # of the Import as SMS row
+        cal = re.sub(r"(?<![\w.])(\d+\.\d{5,})(?![\w.])", lambda m: f"{float(m.group(1)):.2f}", cal)
+        cal = re.sub(r"(test weight )(\d+(?:\.\d+)?)( lb/bu)",
+                     lambda m: f"{m.group(1)}{float(m.group(2)):.2f}{m.group(3)}", cal)
         s += "; " + _e(cal)
     if src.get("decode_report"):
         s += f". Decode report: {_e(os.path.basename(src['decode_report']))}"
@@ -664,10 +679,12 @@ def _sessions_brief(R) -> str | None:
     if not Se or not Se.get("table"):
         return None
     T = Se["table"]
-    days = sorted({str(r.get("day")) for r in T})
+    days = sorted({str(r.get("day")) for r in T if str(r.get("day") or "").strip()})
+    undated = sum(1 for r in T if not str(r.get("day") or "").strip())
     machines = sorted({str(r.get("machine")) for r in T})
-    s = (f"<b>{len(T)} session(s)</b> (machine x day): {len(machines)} machine(s) over {len(days)} day(s) "
-         f"({', '.join(_e(d) for d in days[:6])}{' ...' if len(days) > 6 else ''})")
+    s = (f"<b>{len(T)} session(s)</b> (machine x day): {len(machines)} machine(s) over {len(days)} day(s)"
+         + (f" ({', '.join(_e(d) for d in days[:6])}{' ...' if len(days) > 6 else ''})" if days else "")
+         + (f"; {undated} session(s) with no date" if undated else ""))
     rec = Se.get("recommendation")
     if isinstance(rec, dict):
         rec = rec.get("text")
@@ -875,11 +892,59 @@ def _import_max_text(X) -> str:
     return s + "."
 
 
+def _on(v) -> str:
+    return "on" if v else "off"
+
+
+def _sms_setting(k, v) -> tuple[str, str]:
+    """(name, value) of one SMS 3-sigma setting (engine/clean/sms3sigma.py DEFAULTS) as the app and the rest of the
+    report name it; a key not listed here keeps its own name, with spaces."""
+    def num(unit=""):
+        return "-" if v is None else f"{float(v):g}{unit}"
+    order = {"auto": "automatic", "file": "the file's own row order", "chain": "file blocks re-chained"}
+    group = {"auto": "automatic (one mean and SD per combine; one for the field with one combine)",
+             "task": "each dataset / combine-day", "machine": "combine", "field": "field (all readings)"}
+    scope = {"operation": "all combines (one SMS instance)", "machine": "each combine alone (one SMS instance per "
+             "combine)"}
+    bias = {"warn": "warn", "auto": "automatic (move back before the swath step)", "off": "off"}
+    names = {
+        "min_yield": lambda: ("S0 minimum dry yield", "no check" if not v else num(" bu/ac")),
+        "clip": lambda: ("S1 Clip To Field Boundary", _on(v)),
+        "clip_tolerance_m": lambda: ("S1 edge tolerance", "-" if v is None else f"{100 * float(v):g} cm"),
+        "swath": lambda: ("S2 Optimize Swath Widths", _on(v)),
+        "scale_per_area": lambda: ("S2 per-area values scaled to the new area", _on(v)),
+        "swath_passes": lambda: ("Optimize Swath Widths passes", num()),
+        "swath_order": lambda: ("Swath order", order.get(str(v), str(v))),
+        "swath_scope": lambda: ("Optimize Swath Widths over", scope.get(str(v), str(v))),
+        "swath_bias": lambda: ("Lateral offset check", bias.get(str(v), str(v))),
+        "swath_params": lambda: ("Swath step parameters", "the defaults" if not v else str(v)),
+        "moisture": lambda: ("Moisture filter", _on(v)),
+        "speed": lambda: ("Speed filter", _on(v)),
+        "filter_order": lambda: ("Order of the filters",
+                                 yield_clean.sms_mod.FILTER_ORDER_LABELS.get(str(v), str(v))),
+        "yield": lambda: ("S5 dry yield filter", _on(v)),
+        "k_sd": lambda: ("Limits", "-" if v is None else f"mean ± {float(v):g} SD"),
+        "group_by": lambda: ("Mean and SD per", group.get(str(v), str(v))),
+        "max_yield_passes": lambda: ("Yield passes (max)", num()),
+        "sd_drop_pct": lambda: ("Another yield pass while the SD falls by more than", num(" %")),
+        "round_decimals": lambda: ("Limits rounded",
+                                   "at full precision" if v is None else f"half up to {int(v)} decimal(s)"),
+        "yield_floor": lambda: ("Dry-yield floor", "none" if v is None else num(" bu/ac")),
+    }
+    if k in names:
+        try:
+            return names[k]()                            # only the setting asked for is formatted
+        except (TypeError, ValueError):                  # a value of another kind: as it is
+            pass
+    return str(k).replace("_", " ").capitalize(), ("-" if v is None else str(v))
+
+
 def _sms_settings_rows(S):
     P = S.get("sms3sigma") or {}
     rows = [["SMS 3-sigma setting", "Value"]]
     for k, v in P.items():
-        rows.append([_e(k), _e("-" if v is None else v)])
+        name, val = _sms_setting(k, v)
+        rows.append([_e(name), _e(val)])
     return rows
 
 
@@ -930,6 +995,18 @@ def _session_label(r) -> str:
     return _e(r.get("session") or f"{r.get('machine', '')} {r.get('day', '')}".strip())
 
 
+def _clock(x) -> str:
+    """The time of day of a session's start or end as HH:MM:SS (a start with fractional seconds, 03:06:35.1, is
+    03:06:35); the text's last 8 characters when it is not a time."""
+    s = str(x)
+    for parse in (datetime.datetime.fromisoformat, datetime.time.fromisoformat):   # a date and time, or a time only
+        try:
+            return parse(s.strip().replace("Z", "+00:00")).strftime("%H:%M:%S")
+        except ValueError:
+            pass
+    return s[-8:]
+
+
 def _section_sessions(story, R, num):
     Se = R["sessions"]
     T = Se.get("table") or []
@@ -953,7 +1030,7 @@ def _section_sessions(story, R, num):
             if isinstance(ds, (list, tuple)):                       # a GreenStar session may hold 20+ loads
                 ds = (", ".join(str(x) for x in ds[:2]) + (f" + {len(ds) - 2} more" if len(ds) > 2 else "")) or "-"
             ds = str(ds)[:60]
-            se = (f"{_e(str(r['start'])[-8:])} - {_e(str(r['end'])[-8:])}" if r.get("start") and r.get("end")
+            se = (f"{_e(_clock(r['start']))} - {_e(_clock(r['end']))}" if r.get("start") and r.get("end")
                   else "-")
             rows.append([_session_label(r), _e(ds), se, _n(r.get("n_readings")), _n(r.get("n_kept")),
                          _n(r.get("area_ac"), 2), _n(r.get("wet_bu")),

@@ -64,6 +64,13 @@ OLD_DECODE = ("extracted by an older version of OCED, whose decode of these file
               "then write the monitor's format")
 
 
+def manual_moisture_note(pct) -> str:
+    """The note of a monitor-format write of a cleaning whose import used Use Manual Moisture."""
+    return (f"the clean file was imported with Use Manual Moisture ({float(pct):g} %): the written file keeps the "
+            "moisture the monitor logged on every reading, so SMS reads that moisture unless Use Manual Moisture is "
+            f"ticked with {float(pct):g} % in its Processing Settings")
+
+
 class NativeWriteError(ValueError):
     """The chosen format cannot be written for this clean file (a plain message for the user)."""
 
@@ -200,8 +207,9 @@ def options(source, isoxml_fallback: bool = False) -> list:
     elif isoxml_fallback and not native_ok:
         ok, why = True, f"offered because the source's own format cannot be written: {native_why}"
     else:
-        ok, why = False, ("the clean data came from raw monitor data and is saved in that format (above); ISOXML is "
-                          "offered for exports without a raw source")
+        ok, why = False, ("the clean data came from raw monitor data, so it is written in the monitor's own format "
+                          "(its button beside this one); ISOXML task data is written for a point export, which has "
+                          "no raw monitor data")
     out.append({"id": ISOXML, "label": iso.LABEL, "available": bool(ok), "reason": why, "native": False})
     return out
 
@@ -210,7 +218,10 @@ def write(fmt_id: str, source, clean_shp: str, out_dir: str, *, widths: bool = T
           new_ids: bool = True, log=print, isoxml_fallback: bool = False, **advanced) -> dict:
     """Write the clean file in the format fmt_id (an "id" of options(source)) into out_dir. advanced = the writer's
     own options (cnh_cn1: mode, totals, verify, card_names, registry; isoxml: lead_in, max_sections; ...): those the
-    writer does not take are left out and named in a warning. Returns the writer's result plus "format_id", "label",
+    writer does not take are left out and named in a warning. advanced manual_moisture_pct: the moisture of an import
+    made with Use Manual Moisture: a monitor-format writer keeps the moisture the monitor logged (the Case IH writer
+    matches the clean rows with it on the card's) and its notes say so (manual_moisture_note); the ISOXML writer
+    writes the clean file's moisture. Returns the writer's result plus "format_id", "label",
     "native" and "sms_tested". Raises ValueError (NativeWriteError or the writer's own) with a plain message."""
     opts = {o["id"]: o for o in options(source, isoxml_fallback=isoxml_fallback)}
     if fmt_id not in opts:
@@ -225,6 +236,9 @@ def write(fmt_id: str, source, clean_shp: str, out_dir: str, *, widths: bool = T
         raise NativeWriteError(why)
     sig = inspect.signature(mod.write_clean)
     takes_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    mm = advanced.pop("manual_moisture_pct", None)
+    if mm is not None and fmt_id != ISOXML and (takes_any or "manual_moisture_pct" in sig.parameters):
+        advanced["manual_moisture_pct"] = mm
     passed = {k: v for k, v in advanced.items() if takes_any or k in sig.parameters}
     ignored = sorted(set(advanced) - set(passed))
     res = mod.write_clean(source, clean_shp, out_dir, widths=widths, factors=factors, new_ids=new_ids, log=log,
@@ -236,6 +250,8 @@ def write(fmt_id: str, source, clean_shp: str, out_dir: str, *, widths: bool = T
     res["notes"] = list(res["notes"])
     if ignored:
         res["warnings"].append(f"options {ignored} are not options of the {fmt_id} writer: not used")
+    if mm is not None and fmt_id != ISOXML and manual_moisture_note(mm) not in res["notes"]:
+        res["notes"].append(manual_moisture_note(mm))
     for k in REQUIRED_KEYS:
         if k not in res:
             res[k] = None

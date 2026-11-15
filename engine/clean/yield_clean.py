@@ -941,6 +941,8 @@ def _patch_cells(recs, dbf, patch):
             vals, mask = patch[name]
             for k in np.nonzero(np.asarray(mask, bool))[0]:
                 v = vals[k]
+                if v is not None and not isinstance(v, (int, float, np.integer, np.floating)):
+                    raise ValueError(f"the column {name} holds numbers: {str(v)[:40]!r} cannot be written in it")
                 if v is None or not np.isfinite(v):
                     s = ""
                 else:
@@ -1804,13 +1806,11 @@ IMPORT_MAX_STEP = "above the max. yield volume"          # engine/sms_import.app
 # file's own row order, sms3sigma.ORDER_FILE)
 SEVERAL_NO_TIME = ("several combines but no per-record time column: the overlap order is dataset start then record id, "
                    "so for combines working at the same time every pass of the later-started dataset is treated as "
-                   "harvested after all passes of the other; export the file with a time of day per record (on the "
-                   "command line, settings cols['time'] names such a column)")
+                   "harvested after all passes of the other; export the file with a time of day on every reading")
 SEVERAL_FILE_ORDER = ("several combines but no per-record time column: the swath step (S2) takes the readings in the "
                       "file's own row order (SMS holds a point file without a time per reading as one dataset, in the "
                       "order of its import), so a pass further down the file is treated as harvested after the passes "
-                      "above it; export the file with a time of day per record (on the command line, settings "
-                      "cols['time'] names such a column)")
+                      "above it; export the file with a time of day on every reading")
 
 
 def import_max_check(imp, steps, passes, mode) -> tuple[dict | None, list]:

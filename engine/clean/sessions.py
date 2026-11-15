@@ -268,7 +268,8 @@ def session_keys(g, C: dict, time_ok: bool, t: pd.Series | None, machine: pd.Ser
     """(harv_day, session, info) per record. With a time of day: day = the record's calendar day (local: UTC records
     are shifted by local_day_offset_h), session = machine + day. Without one: session = the dataset (its key), day
     from the dataset name's date, else the date column (`date_col`, or C['time']: clean() nulls C['time'] when the
-    column has no time of day, so it passes the detected column as date_col), else "". One dataset and no date: day
+    column has no time of day, so it passes the detected column as date_col: for a dataset whose name holds no date
+    while others do, the first day of its readings there), else "". One dataset and no date: day
     "" and session "all". A session key longer than SESSION_WIDTH keeps the day and the tail of the machine id (the
     VIN's serial end), never a truncated day."""
     n = len(g)
@@ -293,6 +294,14 @@ def session_keys(g, C: dict, time_ok: bool, t: pd.Series | None, machine: pd.Ser
             day = _day_from_column(g[dcol])
         else:
             day = np.array([dates.get(k) or "" for k in ds], dtype=object)
+            if dcol and any(v is None for v in dates.values()):
+                # a dataset whose name holds no date: the first day its date column gives (one day per dataset)
+                col = _day_from_column(g[dcol])
+                for k in [k for k, v in dates.items() if v is None]:
+                    m = ds == k
+                    got = sorted(d for d in set(col[m]) if d)
+                    if got:
+                        day[m] = got[0]
         basis = "dataset (no time of day in the records); day from the dataset name's date" + \
             ("" if any(dates.values()) else (f" / the date column {dcol!r}" if dcol else " (none found)"))
     else:

@@ -20,6 +20,8 @@ import os
 import shutil
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -622,3 +624,160 @@ def test_the_product_help_says_from_you_for_a_product_chosen_on_data_that_names_
     _set_import(at)
     h = str(by_key(at.selectbox, "fi_prod_").help)
     assert h.startswith("From: you. Another product fills in"), h
+
+
+def test_none_as_logged_offers_no_apply_while_the_raw_data_folder_is_empty(tmp_path, monkeypatch):
+    """0.3.2 (M8): the raw data folder of a Case IH card is there but no longer holds its raw data (its content moved
+    away while the session runs): 'None: as the monitor logged it' gets the same orange line as a folder away and no
+    Apply; the content back, 'None' is offered again."""
+    from tests import synthetic_cn1 as SC
+    cd = SC.make_card(str(tmp_path / "cnh"))
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, cd["card"])
+    _extract(at)
+    t = at.session_state["active"]
+    _clean(at)
+    before = (_p(at, t), _D(at, t)["shp"])
+    root = _D(at, t)["source"]["input_root"]
+    hold = tmp_path / "content_away"
+    hold.mkdir()
+    for x in os.listdir(root):
+        shutil.move(os.path.join(root, x), str(hold / x))
+    assert os.path.isdir(root) and not os.listdir(root)
+    at.run()
+    _set_import(at, how="none")
+    line = _orange(at)
+    assert (f"The raw data of {t} is not at hand (the folder {os.path.basename(os.path.normpath(root))}): reconnect "
+            "the drive or open it again (step 1) to decode it as the monitor logged it.") in line, line
+    assert "Applying sets aside" not in line and by_key(at.button, "fi_go_").disabled
+    assert (_p(at, t), _D(at, t)["shp"]) == before
+    for x in os.listdir(hold):
+        shutil.move(str(hold / x), os.path.join(root, x))
+    at.run()
+    assert "The raw data of" not in _orange(at) and not by_key(at.button, "fi_go_").disabled
+
+
+def _raw_source(kind, folder):
+    """The input to open of a synthetic raw source: Gen4 logs, ISOXML task data or a Case IH card."""
+    if kind == "jd_jdl":
+        from tests.synthetic_jdl import make_card
+        make_card(folder)
+        return folder
+    if kind == "isoxml":
+        from tests import synthetic_isoxml as SI
+        SI.write_set(os.path.join(folder, "TASKDATA"), SI.harvest())
+        return folder
+    from tests import synthetic_cn1 as SC
+    return SC.make_card(folder)["card"]
+
+
+@pytest.mark.parametrize("kind", ["jd_jdl", "isoxml", "cnh_cn1"])
+def test_none_as_logged_offers_no_apply_once_the_raw_files_below_its_folders_are_gone(kind, tmp_path, monkeypatch):
+    """0.3.2 (M8): 'None' chosen once while the raw data is there (Apply offered), then every raw file deleted below
+    the input folder with every folder and the files at its top kept (its own modification time unchanged; a Case IH
+    card's skeleton still looks like a card): 'None' again gets the orange line and no Apply, nothing of the file changed."""
+    src = _raw_source(kind, str(tmp_path / "in"))
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, src)
+    _extract(at)
+    t = at.session_state["active"]
+    if kind == "jd_jdl":                                 # the synthetic logs drive at one speed: no SD to filter on
+        at.toggle(key="t_speed").set_value(False).run()
+        at.toggle(key="t_moist").set_value(False).run()
+    _clean(at)
+    before = (_p(at, t), _D(at, t)["shp"])
+    root = _D(at, t)["source"]["input_root"]
+    _set_import(at, how="none")
+    assert "The raw data of" not in _orange(at) and not by_key(at.button, "fi_go_").disabled
+    assert "Applying sets aside the cleaning" in _orange(at)
+    _set_import(at, how="sms")
+    m0 = os.stat(root).st_mtime_ns
+    gone = 0
+    for d, _, fs in os.walk(root):
+        if os.path.normcase(d) == os.path.normcase(root):
+            continue                                    # the files at its top stay (the deletion is below)
+        for f in fs:
+            os.remove(os.path.join(d, f))
+            gone += 1
+    assert gone and os.stat(root).st_mtime_ns == m0
+    at.run()
+    _set_import(at, how="none")
+    line = _orange(at)
+    assert f"The raw data of {t} is not at hand (the folder {os.path.basename(os.path.normpath(root))})" in line, line
+    assert "Applying sets aside" not in line and by_key(at.button, "fi_go_").disabled
+    assert (_p(at, t), _D(at, t)["shp"]) == before
+
+
+def test_two_files_of_one_card_each_get_their_own_answer_whether_their_raw_data_is_at_hand(tmp_path):
+    """0.3.2 (R3): two files decoded from one synthetic Case IH card (one task each), the raw files of the second
+    file's task then deleted: the app's check that the raw data is at hand (raw_at_hand, kept for the session) answers
+    each file on its own, whichever is checked first: the first's raw data is there, the second's is not."""
+    from engine import run as er
+    from engine import works as ew
+    from engine.formats import detect
+    from tests import synthetic_cn1 as SC
+    from tests.test_app_fixes import _app_function
+
+    cd = SC.make_card(str(tmp_path / "in"))
+    wd = str(tmp_path / "w")
+    cand = [c for c in er.open_input([cd["card"]], wd, log=lambda m: None) if c.get("kind") == "raw"][0]
+    ids = sorted(u.id for u in er.list_units(cand))
+    assert len(ids) == 2
+    D = {t: {"source": dict(er.decode(cand, [u], None, wd, log=lambda m: None, tag=t)["source"])}
+         for t, u in zip(("A", "B"), ids)}
+    task_b = ids[1].rsplit("/", 1)[-1]
+    gone = [f for f in os.listdir(cd["field_dir"]) if f.startswith(task_b + ".")]
+    assert gone
+    for f in gone:
+        os.remove(os.path.join(cd["field_dir"], f))
+
+    class SS(dict):
+        __getattr__ = dict.__getitem__
+
+    ns = dict(os=os, ss=SS(workdir=wd), detect=detect, er=er, ew=ew)
+    raw_at_hand = _app_function("raw_at_hand", "_raw_candidate", "_tree_sig", "default_of", "_raw_root",
+                                "_folder_name", **ns)[0]
+    root = raw_at_hand.__globals__["_raw_root"](D["A"])
+    for order in (("A", "B"), ("B", "A")):
+        ns["ss"].clear()
+        ns["ss"]["workdir"] = wd
+        got = {t: raw_at_hand(t, D[t], root) for t in order}
+        assert got == {"A": True, "B": False}, (order, got)
+
+
+def test_a_raw_file_already_on_none_says_nothing_of_its_raw_data_away(tmp_path, monkeypatch):
+    """0.3.2 (M9, rule P1d of 0.3.1): a card already on 'None' (decoded as the monitor logged it) whose raw data then
+    goes away: with no change pending step 2 draws no line about the raw data and no Apply; choosing 'As SMS' needs
+    only its readings."""
+    from tests import synthetic_cn1 as SC
+    cd = SC.make_card(str(tmp_path / "cnh"))
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, cd["card"])
+    _extract(at)
+    t = at.session_state["active"]
+    _apply_import(at, how="none")
+    assert _D(at, t)["import_mode"] == "as_is"
+    os.replace(tmp_path / "cnh", tmp_path / "cnh_away")
+    at.run()
+    _set_import(at)
+    assert "The raw data of" not in _orange(at), _orange(at)
+    assert by_key(at.button, "fi_go_").disabled
+
+
+@pytest.mark.parametrize("why, held", [
+    ("PermissionError: [Errno 13] Permission denied: 'x.dbf'", True),
+    ("x.dbf could not be read: permissionerror", True),
+    ("OSError: [WinError 5] Access is denied", True),
+    ("The process cannot access the file because it is being used by another process", True),
+    ("a sharing violation on x.dbf", True),
+    ("OSError: Input/output error", False),
+    ("x.shx is missing", False),
+    (None, False)])
+def test_held_reason_knows_each_word_of_a_file_held(why, held):
+    """0.3.2 (M9, rules P2f, P2g and N9 of 0.3.1): each of the five words of a file held open or an access denied
+    makes the advice 'close the program that holds it'; any other reason the advice to check the export."""
+    from tests.test_app_fixes import _app_function
+    held_reason, unread_advice = _app_function("held_reason", "unread_advice",
+                                               UNREAD_ADVICE="check that the export is complete")
+    assert held_reason(why) is held
+    assert unread_advice(why) == ("close the program that holds it" if held else "check that the export is complete")

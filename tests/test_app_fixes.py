@@ -724,7 +724,7 @@ def test_reimport_reaches_the_writer_options(tmp_path, monkeypatch):
     # RA-5: the report's source paragraph (the calibration summary) gives the new weight and moisture too
     cs = D["source"]["calibration_summary"]
     dm1 = float(D["sms_import"]["resolved"]["dry_moisture_pct"])
-    assert f"test weight {round(tw1, 4):g} lb/bu" in cs and cs.count("test weight") == 1, cs
+    assert f"test weight {tw1:.2f} lb/bu" in cs and cs.count("test weight") == 1, cs
     assert f"standard moisture {round(dm1, 4):g} %" in cs and cs.count("standard moisture") == 1, cs
     _clean(at)
     _by_key(at.button, "nw_go_cnh_cn1_").click().run()
@@ -974,20 +974,26 @@ def test_native_output_depth_is_what_the_app_checks(tmp_path):
     out_dir = str(tmp_path / "work" / "native" / "TAG")
     _, depth = _app_function("_input_tree_depth", "native_depth", **ns)
     ns = depth.__globals__                                      # the functions' own globals: native_dir set below
+    # 0.3.2 (O6): the Gen4 logs below a long extra folder (the zip they came in), their input folder the one above
+    # it: the writer writes below the folder that holds JD-Data, and the app's check follows the same paths
+    long_ = "a_long_folder_name_of_the_zip_the_logs_came_in"
     cases = (("cnh_cn1", lambda d: cn1_card(d)["card"]), ("jd_gs3_rcd", lambda d: gs3_card(d)["root"]),
-             ("jd_jdl", lambda d: SJ.make_card(d)["root"]))
+             ("jd_jdl", lambda d: SJ.make_card(os.path.join(d, long_))["root"]))
     for fid, mk in cases:
         d = str(tmp_path / fid)
         card = mk(os.path.join(d, "in"))
         wd = os.path.join(d, "work")
         cand = [c for c in er.open_input([card], wd, log=lambda m: None) if c.get("kind") == "raw"][0]
         dec = er.decode(cand, [u.id for u in er.list_units(cand)], None, wd, log=lambda m: None, tag="TAG")
+        src = dict(dec["source"])
+        if fid == "jd_jdl":
+            src["input_root"] = os.path.join(d, "in")
         out = os.path.join(out_dir, fid)
         kw = {ns["NATIVE_OUT_KEY"].get(fid, "out_name"): ns["NATIVE_OUT_NAME"][fid]}
-        res = nw.write(fid, dec["source"], dec["shp"], out, log=lambda m: None, **kw)
+        res = nw.write(fid, src, dec["shp"], out, log=lambda m: None, **kw)
         assert os.path.basename(res["path"]) == ns["NATIVE_OUT_NAME"][fid]
         ns["native_dir"] = lambda t, o=out: o
-        est = depth("TAG", fid, dec["source"]) - len(os.path.abspath(out)) - 1
+        est = depth("TAG", fid, src) - len(os.path.abspath(out)) - 1
         real = _longest(out)
         assert real <= est <= real + (16 if fid == "jd_jdl" else 0), (fid, real, est)
     # ISOXML of a point export: isoxml_<stamp>/TASKDATA/LINKLIST.XML
@@ -1340,7 +1346,8 @@ def _write_ns(ws, wd, tag, rest):
     ns = {"os": os, "WORKSPACE": ws, "ss": types.SimpleNamespace(datasets={tag: {}}, workdir=wd),
           "writer_source": lambda D: None, "native_factors": lambda C: (None, ""), "native_set_aside": stop,
           "native_dir": lambda t: os.path.join(wd, "native", t), "NATIVE_OUT_KEY": {}, "NATIVE_OUT_NAME": {},
-          "native_depth": lambda t, f, s: len(os.path.abspath(wd)) + len(t) + rest}
+          "native_depth": lambda t, f, s: len(os.path.abspath(wd)) + len(t) + rest,
+          "_cleaning_import": lambda t, C: {}}
     ns = _app_defs(ns, "PATH_LIMIT", "WIN_PATH_MAX", "LONGEST_OUTPUT", "TAG_FLOOR", "WORK_FOLDER_CHARS",
                    "_new_work_len", "workspace_room", "workspace_advice", "tag_budget_for", "native_room",
                    "native_too_deep_msg", "write_native")

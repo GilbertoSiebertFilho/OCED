@@ -294,3 +294,63 @@ def test_report_texts_follow_the_run(f5):
     assert fm["average_area_weighted"] == pytest.approx(float((cl[fm["column"]] * a).sum() / a.sum()), rel=1e-9)
     off = dict(R, cascade=[dict(c, on=False) if c["filter"] == "S2" else c for c in R["cascade"]])
     assert "Optimize Swath Widths" not in cr._sms_method_text(off)
+
+
+def test_the_source_paragraph_rounds_a_value_written_with_all_its_digits():
+    """0.3.2 (O7): the report's Source paragraph gives a test weight the decoder wrote with all its digits (a Gen4
+    file's default) with 2 decimals, as the import's values are given, and says beside it which weight the import used
+    when that is another; a value with 4 decimals or fewer is unchanged."""
+    cal = ("crop wheat; test weight 60.009827766757 lb/bu; standard moisture 13.5 %; shrink one-sided; decoder "
+           "options points = sms")
+    s = cr._source_text({"source": {"label": "Synthetic logs", "calibration_summary": cal}})
+    assert "test weight 60.01 lb/bu; standard moisture 13.5 %" in s and "60.0098" not in s
+    R = {"source": {"label": "Synthetic logs", "calibration_summary": cal},
+         "sms_import": {"resolved": {"test_weight_lb_bu": 60.0, "dry_moisture_pct": 13.5}}}
+    s = cr._source_text(R)
+    assert ("test weight 60.01 lb/bu (as the monitor holds it; the import used 60.00 lb/bu); standard moisture "
+            "13.5 %") in s and "60.0098" not in s
+    R["sms_import"]["resolved"]["test_weight_lb_bu"] = 60.009827766757
+    assert "test weight 60.01 lb/bu; standard moisture 13.5 %" in cr._source_text(R)
+
+
+def test_the_sessions_table_gives_start_and_end_as_a_time_of_day():
+    """0.3.2 (R6): the Harvest sessions table gives each session's start and end as HH:MM:SS, also for a start with
+    fractional seconds (invented times); a text that is no time keeps its last 8 characters."""
+    from reportlab.platypus import Table
+    T = [{"session": "m 2030-01-07", "machine": "m", "day": "2030-01-07", "start": "2030-01-07 03:06:35.1",
+          "end": "2030-01-07T05:47:25.600000", "n_readings": 10, "n_kept": 9}]
+    story = []
+    cr._section_sessions(story, {"sessions": {"table": T}, "moisture": {}}, 1)
+    [t] = [x for x in story if isinstance(x, Table)]
+    assert t._cellvalues[1][2].text == "03:06:35 - 05:47:25"
+    assert cr._clock("03:06:35.1") == "03:06:35" and cr._clock("pending") == "pending"
+
+
+def test_the_settings_appendix_names_each_sms_setting_as_the_report_does():
+    """0.3.2 (R9): the settings appendix lists each SMS 3-sigma setting by its name and value as the app and the
+    report give them (Swath order: automatic), never a raw key."""
+    from engine.clean import sms3sigma as sms
+    rows = cr._sms_settings_rows({"sms3sigma": dict(sms.DEFAULTS)})
+    got = dict(tuple(r) for r in rows[1:])
+    assert rows[0] == ["SMS 3-sigma setting", "Value"] and len(got) == len(sms.DEFAULTS)
+    assert not set(got) & set(sms.DEFAULTS) and not any("_" in k for k in got)
+    assert got["Swath order"] == "automatic" and got["S1 edge tolerance"] == "1 cm"
+    assert got["Limits"] == "mean \u00b1 3 SD"
+    assert got["Another yield pass while the SD falls by more than"] == "25 %"
+    assert got["Order of the filters"] == sms.FILTER_ORDER_LABELS["moisture_speed"]
+
+
+def test_every_session_day_is_named_or_counted():
+    """0.3.2 (M11): a point file without a time of day whose dataset names give a date for some datasets only: the
+    others take the first day of their readings' date column; the report's sessions row names the days and counts
+    the sessions that still have none, never an empty day in its list (invented names and dates)."""
+    import pandas as pd
+    from engine.clean import sessions as se
+    n = 8
+    g = pd.DataFrame({"_ds_key": ["30/01/05-10:00:00 (M1)"] * 2 + ["Run (Builder)"] * 3 + ["Plain"] * 3,
+                      "Date": ["2030-01-07"] * 2 + ["2030-01-08", "2030-01-07", "2030-01-08"] + [""] * 3})
+    day, key, info = se.session_keys(g, {"time": "Date"}, False, None, pd.Series(["m"] * n))
+    assert list(day) == ["2030-01-05"] * 2 + ["2030-01-07"] * 3 + [""] * 3
+    T = [{"session": k, "machine": "m", "day": d} for k, d in dict(zip(key, day)).items()]
+    s = cr._sessions_brief({"sessions": {"table": T}})
+    assert "over 2 day(s) (2030-01-05, 2030-01-07); 1 session(s) with no date" in s and "(, " not in s

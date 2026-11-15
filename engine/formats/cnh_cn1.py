@@ -135,7 +135,8 @@ import numpy as np
 import pandas as pd
 
 from engine.formats.common import (DecodeOptions, Probe, Unit, FT_PER_M, MPH_PER_MS, SQFT_PER_AC, LB_PER_KG,
-                                   dataset_name, summarize, yield_columns, check_standard, shrink_factor)
+                                   dataset_name, summarize, yield_columns, check_standard, shrink_factor,
+                                   product_name)
 
 FORMAT_ID = "cnh_cn1"
 LABEL = "Case IH / New Holland AFS Pro 700 card (.cn1)"
@@ -898,7 +899,7 @@ def decode(root, unit_ids, opts: DecodeOptions | None = None, log=print, calibra
             else:
                 tloc = tloc + pd.to_timedelta(opts.tz_offset_h - off, unit="h")
         frames.append(pd.DataFrame({
-            "Field": r["field"], "Product": crop if override else r["product"],
+            "Field": r["field"], "Product": product_name(crop) if override else r["product"],
             "Dataset": dataset_name(r["task"], r["start"] if not pd.isna(r["start"]) else g.disp_time.min()),
             "Obj__Id": np.arange(1, len(g) + 1), "Time": tloc.dt.strftime("%Y-%m-%d %H:%M:%S.0").values,
             "Duration_s": dur, "Elevation_": g.alt_m.values * FT_PER_M, "Speed_mph_": speed * MPH_PER_MS,

@@ -350,3 +350,28 @@ def test_jdl_writer_can_write(decoded):
     assert not ok and "cnh_cn1" in why
     ok, why = W.can_write(dict(dec["source"], decode_report=None, input_root="/no/such/folder"))
     assert not ok and "not on disk" in why
+
+
+def test_jdl_writer_writes_below_the_record_root_not_the_input_tree(tmp_path):
+    """0.3.2 (O6): logs whose input holds long folders above JD-Data (the zips they came in) are written below the
+    folder that holds JD-Data, not below those folders again, and decode back; with several record roots each gets
+    a number (1, 2 ...) in a fixed order."""
+    import shutil
+    card, dec = _decode(tmp_path)
+    top = tmp_path / "input"
+    long_ = top / ("a_long_folder_name_of_a_zip_the_logs_came_in_" * 2)
+    long_.mkdir(parents=True)
+    moved = shutil.move(card["root"], str(long_))
+    src = dict(dec["source"])
+    src["input_root"] = str(top)
+    c = str(tmp_path / "clean.shp")
+    _write_subset(dec, c, _subset)
+    res = W.write_clean(src, c, str(tmp_path / "out"), log=lambda m: None, out_name="jdl")
+    files = [os.path.relpath(os.path.join(d, f), res["path"]) for d, _, fs in os.walk(res["path"]) for f in fs]
+    assert files and all(p.split(os.sep)[0] in ("JD-Data", "version.txt") for p in files), files
+    assert res["round_trip"]["ok"]
+    rr = W.record_roots(str(top))
+    assert len(rr) == 1 and os.path.isdir(os.path.join(rr[0], "JD-Data")) and str(long_) in rr[0] and moved
+    roots = [str(tmp_path / "b"), str(tmp_path / "a")]
+    rel = W.out_relpath(os.path.join(roots[0], "JD-Data", "log", "x.jdl"), sorted(roots))
+    assert rel == os.path.join("2", "JD-Data", "log", "x.jdl")

@@ -649,9 +649,8 @@ def test_step_3_names_the_import_it_starts_from_and_the_dialog_keeps_the_switch_
 
 def test_a_product_chosen_in_step_2_labels_the_readings(tmp_path, monkeypatch):
     """A raw card whose yields are converted with another product in step 2: every reading of the import (and of the
-    clean file) says that product (Product and Crop, as 0.3.0's decoder wrote them for a product chosen before
-    extracting), the manual moisture follows the product's dry moisture and the source summary names the crop; back
-    to SMS's default, the card's own labels again."""
+    clean file) says that product (Product: its SMS name since 0.3.2, Crop: its key), the manual moisture follows the
+    product's dry moisture and the source summary names the crop; back to SMS's default, the card's own labels again."""
     from tests import synthetic_cn1 as SC
     at = _app(tmp_path / "ws", monkeypatch)
     _open(at, SC.make_card(str(tmp_path / "cnh"))["card"])
@@ -662,13 +661,13 @@ def test_a_product_chosen_in_step_2_labels_the_readings(tmp_path, monkeypatch):
     _apply_import(at, prod="barley")
     D = _D(at)
     g1 = pyogrio.read_dataframe(D["shp"], read_geometry=False)
-    assert set(g1["Product"]) == {"barley"} and set(g1["Crop"]) == {"barley"}
+    assert set(g1["Product"]) == {"Barley - Fall"} and set(g1["Crop"]) == {"barley"}     # 0.3.2: SMS's name
     RS = D["sms_import"]["resolved"]
     assert RS["product"] == "barley" and RS["manual_moisture_pct"] == RS["dry_moisture_pct"]
-    assert str(D["source"]["calibration_summary"]).startswith("crop barley;")
+    assert str(D["source"]["calibration_summary"]).startswith("crop Barley - Fall;")
     C = _clean(at)
     g2 = pyogrio.read_dataframe(C["shp"], read_geometry=False)
-    assert set(g2["Product"]) == {"barley"} and set(g2["Crop"]) == {"barley"}
+    assert set(g2["Product"]) == {"Barley - Fall"} and set(g2["Crop"]) == {"barley"}
     _back_to_default(at, confirm=True)
     g3 = pyogrio.read_dataframe(_D(at)["shp"], read_geometry=False)
     assert set(g3["Product"]) == p0 and set(g3["Crop"]) == c0
@@ -1612,7 +1611,8 @@ def _sig(shp):
 def _as_0_3_0_with_step_1s_product(at, wd, tags):
     """The saved work as 0.3.0 left point exports opened with a product chosen in step 1 (one product for every
     file): each file's import under the default's name, no default block, and a record that names no crop, monitor
-    product, format, revision nor mode (0.3.0 never read the data's crop when step 1 had a product)."""
+    product, format, revision nor mode (0.3.0 never read the data's crop when step 1 had a product), its import without
+    the crop labels this version writes."""
     at.button(key="work_save").click().run()
     p = os.path.join(wd, "oced_work.json")
     rec = json.load(open(p, encoding="utf-8"))
@@ -1623,6 +1623,13 @@ def _as_0_3_0_with_step_1s_product(at, wd, tags):
             os.remove(q)
         for q in glob.glob(own + ".*"):
             os.replace(q, dflt + q[len(own):])
+        # 0.3.0 wrote no crop labels in a point export's import: the ones this version writes (Product, Crop) go
+        g = pyogrio.read_dataframe(dflt + ".shp")
+        if "Crop" in g.columns:
+            g0 = pyogrio.read_dataframe(D["import_default"]["basis"]["all_readings"], read_geometry=False)
+            assert len(g0) == len(g)
+            g = g.drop(columns=["Crop"]).assign(Product=g0["Product"].to_numpy())
+            pyogrio.write_dataframe(g, dflt + ".shp")
         Dr = rec["datasets"][t]
         for k in ("import_default", "import_mode"):
             Dr.pop(k, None)
@@ -1993,9 +2000,35 @@ def test_the_decoders_own_words_stay_for_the_same_weight_and_moisture():
     s = ns["source_with_import"](src, R, {"weight_and_moisture": True})
     assert s["calibration_summary"] == cs and s is not src
     s = ns["source_with_import"](src, {**R, "test_weight_lb_bu": 60.0}, {"weight_and_moisture": True})
-    assert "test weight 60 lb/bu" in s["calibration_summary"] and "48.0" not in s["calibration_summary"]
+    assert "test weight 60.00 lb/bu" in s["calibration_summary"] and "48.0" not in s["calibration_summary"]
     assert "standard moisture 14.50 % (the monitor's profile)" in s["calibration_summary"]
     assert s["options"]["test_weight_lb_bu"] == 60.0 and src["options"]["test_weight_lb_bu"] == 48.0
+
+
+def test_a_custom_import_names_a_four_decimal_test_weight_as_its_import_row_does():
+    """0.3.2 (R2): a custom import of a card whose test weight has 4 decimals (60.0098 lb/bu): with another dry
+    moisture the decoder's own words stay for the weight and the report's Source paragraph gives it with 2 decimals;
+    with Use Manual Moisture and another weight, the app writes it with 2 decimals; either way the Source paragraph
+    and the Import as SMS row say 60.01 lb/bu (one rule, 2 decimals)."""
+    import copy
+    import re
+
+    from engine.report import clean_report as cr
+    from tests.test_app_fixes import _app_defs
+    ns = _app_defs({"re": re, "copy": copy, "si": si}, "NO_PRODUCT_TAIL", "_same_value", "source_with_import")
+    cs = ("flow 2.00 g/s per count; test weight 60.0098 lb/bu; standard moisture 13.0 %; shrink one-sided")
+    src = {"label": "Synthetic card", "options": {"crop": None, "test_weight_lb_bu": 60.0098, "std_moisture_pct": 13.0,
+                                                  "shrink": "one_sided"}, "calibration_summary": cs}
+    R0 = {"product": None, "test_weight_lb_bu": 60.0098, "dry_moisture_pct": 13.0, "expand_dry_moisture": False,
+          "use_manual_moisture": False, "manual_moisture_pct": None, "use_manual_swath": False,
+          "manual_swath_ft": None, "min_yield": 5.0, "max_yield": 10000.0, "start_delay_s": 0.0, "stop_delay_s": 0.0,
+          "flow_shift_s": 0.0}
+    for R in ({**R0, "dry_moisture_pct": 12.0},
+              {**R0, "test_weight_lb_bu": 60.0098 + 1e-3, "use_manual_moisture": True, "manual_moisture_pct": 16.0}):
+        s = ns["source_with_import"](src, R, {"weight_and_moisture": True})
+        txt = cr._source_text({"source": s, "sms_import": {"resolved": R}})
+        assert re.findall(r"test weight ([\d.]+) lb/bu", txt) == ["60.01"], txt
+        assert "60.0098" not in txt and "weight to volume 60.01 lb/bu" in si.describe(R)
 
 
 def test_an_older_decodes_line_and_help_name_what_its_yields_carry():
@@ -2379,3 +2412,58 @@ def test_the_report_names_the_import_of_a_cleaning():
                           "converted with product wheat; weight to volume 60.00 lb/bu; dry moisture 13.50 %"), txt
     assert "values from: SMS product Wheat - Spring: weight to volume 60.00 lb/bu" in txt, txt
     assert CR._import_text(base).startswith("min. yield volume")
+
+
+def _s2_help(at):
+    hs = [str(c.help) for c in at.caption if c.help and "S2 narrows the readings" in str(c.help)]
+    assert len(hs) == 1, hs
+    return hs[0]
+
+
+def test_the_s2_help_names_the_order_of_the_readings_of_a_timed_point_file(tmp_path, monkeypatch):
+    """0.3.2 (M10): step 3's S2 line says, behind its "?", the order S2 took: a point file with a time per reading in
+    time order; the rest of the help stays."""
+    from engine.clean import sms3sigma as sms
+    from tests.synthetic_strips import make_strips
+    F = make_strips(str(tmp_path / "f"), "Strip A", "Strip B", times=("2026-09-14 10:00:00", "2026-09-14 09:00:00"))
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, F["shp"])
+    sw = _clean(at)["R"]["sms3sigma"]["swath"]
+    assert sw["order_basis"] == sms.ORDER_TIME, sw
+    h = _s2_help(at)
+    assert ("Order of the readings: " + sw["order"] + ".") in h and h.count("Order of the readings") == 1, h
+    assert h.startswith("S2 narrows the readings") and "(mass kept). Order of" in h, h
+
+
+def test_the_s2_help_names_the_file_order_of_an_untimed_point_file(tmp_path, monkeypatch):
+    """0.3.2 (M10, M12): a point file without a time per reading: the help says the file's own row order, and why in
+    the user's words (no setting name)."""
+    from engine.clean import sms3sigma as sms
+    from tests.synthetic_strips import make_strips
+    F = make_strips(str(tmp_path / "f"), "Strip U", "Strip D 9/14/2026")
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, F["shp"])
+    sw = _clean(at)["R"]["sms3sigma"]["swath"]
+    assert sw["order_basis"] == sms.ORDER_FILE, sw
+    h = _s2_help(at)
+    assert h.count("Order of the readings: the file's own row order") == 1, h
+    assert "swath_order" not in h and "cols[" not in " ".join(str(w.value) for w in at.warning), h
+
+
+def test_long_values_wrap_instead_of_being_cut(field, tmp_path, monkeypatch):
+    """0.3.2 (M13): at a 1440-px window nothing is cut: a card's value (a date range) wraps inside its card, the map's
+    statistics name each statistic in full beside its value, and the steps table gives its numbers before the long
+    criterion, which wraps in its own width (no side scroll)."""
+    import re
+    css = open(os.path.join(ROOT, "app", "brand.py"), encoding="utf-8").read()
+    assert re.search(r'st-key-strip_"\] \[data-testid="stMetricValue"\] p,[^}]*white-space: normal; overflow: visible;'
+                     r'\s*text-overflow: clip', css), "a card's value is not wrapped"
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, field["shp"])
+    _clean(at)
+    steps = next(d for d in at.dataframe if "filter" in d.value.columns)
+    assert list(steps.value.columns) == ["filter", "name", "on", "removed", "remaining", "criterion"]
+    assert steps.proto.row_height > 64                    # taller than 4rem: the criterion wraps
+    stats = next(d for d in at.dataframe if "statistic" in d.value.columns)
+    cfg = json.loads(stats.proto.columns)
+    assert cfg["statistic"]["width"] + cfg["value"]["width"] <= 310

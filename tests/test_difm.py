@@ -1344,3 +1344,28 @@ def test_a_difm_zip_held_open_stops_the_cleaning_before_it_runs(tmp_path):
         pass
     assert hashlib.md5(open(zp, "rb").read()).hexdigest() == hashlib.md5(b"old").hexdigest()
     shutil.rmtree(wd)
+
+
+def test_the_product_of_a_file_without_one_is_the_crop_its_import_used():
+    """0.3.2 (O2): a clean file without a Product column gets, in the shapefile for DIFM, the crop its import used
+    when that was another crop than the data's (the SMS product it was imported as, else that crop's SMS name), also
+    when the data names no crop OCED knows (a crop code, a variety: a product chosen for it); the data's own crop
+    name when the import used it (its own crop, or the crop the file carries for data of varieties)."""
+    from engine import difm as ed
+
+    def rec(crop, product, sms_product, monitor=None):
+        return {"settings": {"sms_import": {"crop": crop, "sms_product": sms_product, "fmt": "point_export",
+                                            "resolved": {"product": product, "test_weight_lb_bu": 48.0},
+                                            "applied": {"weight_and_moisture": True}, "monitor": monitor}}}
+    B = ed.import_basis(rec("Spring wheat", "barley", "Barley - Fall"))
+    assert B["product"] == "Barley - Fall" and B["product_from"] == "the SMS product the file was imported as"
+    B = ed.import_basis(rec("Spring wheat", "barley", None))
+    assert B["product"] == "Barley - Fall" and B["product_from"] == "the crop the file was imported as"
+    B = ed.import_basis(rec("Spring wheat", "wheat", "Wheat - Spring"))
+    assert B["product"] == "Spring wheat" and B["product_from"] == "the crop the import read from the file"
+    B = ed.import_basis(rec("Variety X", "barley", "Barley - Fall"))
+    assert B["product"] == "Barley - Fall"
+    B = ed.import_basis(rec("7", "barley", None))
+    assert B["product"] == "Barley - Fall" and B["product_from"] == "the crop the file was imported as"
+    B = ed.import_basis(rec("Variety X", "barley", "Barley - Fall", monitor={"crop": "barley"}))
+    assert B["product"] == "Variety X" and B["product_from"] == "the crop the import read from the file"

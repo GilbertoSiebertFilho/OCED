@@ -548,7 +548,10 @@ def import_basis(R: dict | None, imported: str | None = None) -> dict:
       lb_bu     the weight to volume of the file's import as SMS (the cleaning record's settings['sms_import']:
                 resolved test_weight_lb_bu), only when that import computed the file's yields with it (its 'applied'
                 weight_and_moisture: wet volume = wet mass / lb/bu, dry mass = dry volume x lb/bu, on every reading);
-      product   the crop the import read from the file (its 'crop'), else the SMS product it was imported as;
+      product   the crop the import read from the file (its 'crop'), else the SMS product it was imported as; when
+                the import converted the yields with another crop than the data's (its 'crop', else its monitor's
+                crop; a product chosen for data that names no crop OCED knows), the SMS product it was imported as
+                (else that crop's SMS name) first;
       format    the import's source format (OPS_CENTER for an Operations Center export);
       field, machines   what the Operations Center metadata beside `imported` names (the file the import read:
                 '<stem>-Deere-Metadata.json', the file the import took the crop from): the field, and {machine index
@@ -570,8 +573,24 @@ def import_basis(R: dict | None, imported: str | None = None) -> dict:
     if ap.get("weight_and_moisture") and np.isfinite(tw) and tw > 0:
         out["lb_bu"] = tw
         out["lb_bu_from"] = "the weight to volume of the file's import as SMS, which computed its yields with it"
-    for key, what in (("crop", "the crop the import read from the file"),
-                      ("sms_product", "the SMS product the file was imported as")):
+    from engine import sms_import as si
+    from engine.formats import common
+    used = si.crop_key(RS.get("product")) if RS.get("product") else None
+    order = (("crop", "the crop the import read from the file"),
+             ("sms_product", "the SMS product the file was imported as"))
+    data_k = si.crop_key(IM.get("crop")) if IM.get("crop") else None
+    if data_k is None:
+        # the crop the import read names no crop OCED knows (a crop code, a variety): the one the file carries
+        mon = IM.get("monitor") if isinstance(IM.get("monitor"), dict) else {}
+        data_k = si.crop_key(mon.get("crop")) if mon.get("crop") else None
+    if used and used != data_k:
+        # the import converted the yields with another crop than the data's (or the data names none: a product
+        # chosen): the crop it used comes first
+        order = order[::-1]
+        if not str(IM.get("sms_product") or "").strip():
+            out["product"], out["product_from"] = common.product_name(used), "the crop the file was imported as"
+            order = ()
+    for key, what in order:
         v = str(IM.get(key) or "").strip()
         if v:
             out["product"], out["product_from"] = v, what

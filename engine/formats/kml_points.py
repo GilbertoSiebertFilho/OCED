@@ -36,6 +36,9 @@ NAME_LEN = 10                            # dBASE field names: SMS cuts its names
 TEXT_MAX = 254                           # dBASE text cells
 NUM_MAX = 24                             # widest numeric cell (GDAL writes doubles as N(24,15))
 MAX_FIELDS = 2046                        # the dBASE header length is 16 bits
+# the dBASE header's date of last update: a fixed date (OCED's epoch, as its zip and ISOXML files use), so that the
+# converted file, and the import and the clean file that copy its header, are the same byte for byte on any day
+DBF_DATE = dt.date(1980, 1, 1)
 WGS84_PRJ = ('GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],'
              'PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]')
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -174,10 +177,9 @@ def _write_shapefile(noext, lon, lat, names, fields):
         body[:, at:at + w] = np.frombuffer(b"".join(pad(c) for c in cells), np.uint8).reshape(n, w)
         desc.append(name.encode("ascii").ljust(11, b"\0") + typ.encode() + b"\0" * 4 + bytes([w, dec]) + b"\0" * 14)
         at += w
-    today = dt.date.today()
     with open(noext + ".dbf", "wb") as f:
-        f.write(struct.pack("<4BIHH20x", 3, today.year - 1900, today.month, today.day, n, 32 + 32 * len(fields) + 1,
-                            rlen))
+        f.write(struct.pack("<4BIHH20x", 3, DBF_DATE.year - 1900, DBF_DATE.month, DBF_DATE.day, n,
+                            32 + 32 * len(fields) + 1, rlen))
         f.write(b"".join(desc) + b"\r" + body.tobytes() + b"\x1a")
     with open(noext + ".prj", "w") as f:
         f.write(WGS84_PRJ)

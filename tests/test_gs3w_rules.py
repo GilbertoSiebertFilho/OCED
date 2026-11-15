@@ -524,3 +524,31 @@ def test_the_result_says_which_minimum_yield_the_card_needs(paused, tmp_path):
     with pytest.raises(W.WriteError, match="removed_as_harvest"):
         W.write_clean(source(root), shp, str(tmp_path / "out1"), log=quiet, removed_as_harvest="some")
     assert not os.path.exists(tmp_path / "out1")
+
+
+@pytest.mark.skipif(not SMS, reason="the decoder has no sms_align (no carried grain)")
+def test_the_notes_say_how_many_kept_readings_the_written_card_does_not_give_back(tmp_path):
+    """0.3.2 (R7): kept readings that took no grain record of their own (the run ends within 14 s after them) and
+    held only grain the decoder carried to them, above the import's minimum yield as a cleaning with Use Manual
+    Moisture keeps them (their moisture reads 0 %): the written card cannot hold that grain, so they read 0 kg there
+    and a reader with the import's minimum leaves them out. The writer decodes its own card and says so: the first
+    note gives how many of the kept readings come back, and the check note says it is not exactly the clean
+    readings, with that number."""
+    root = make_card(str(tmp_path / "card"), [(S_A, [(FIELD1, "2026-07-15T18:00:00.400Z", L_A,
+                                                       records(up=range(125, 135), up_kg=30.0))])])
+    df, _ = decode(root)
+    df = df[df.Yld_Vol_Dr >= G.MONITOR_MIN_YIELD].reset_index(drop=True)      # the import's minimum, as a cleaning
+    shp = clean_file(df, str(tmp_path / "clean.shp"))
+    R = W.write_clean(source(root), shp, str(tmp_path / "out"), widths=False, id_tag=0x10c, log=quiet)
+    lost = R["grain"]["n_kept_without_own_record"]
+    assert lost >= 3 and R["n_kept"] == len(df)
+    back, _ = decode(R["path"])
+    yb = back.Yld_Vol_Dr.to_numpy(float)
+    given = int(back.Time.isin(df.Time).to_numpy()[np.isfinite(yb) & (yb >= G.MONITOR_MIN_YIELD)].sum())
+    assert given == len(df) - lost and R["check"]["kept_below_min"] == lost
+    first = next(n for n in R["notes"] if " clean readings stay harvest readings" in n)
+    assert first.startswith(f"{len(df):,} clean readings stay harvest readings, but read with the import's minimum "
+                            f"yield the written card gives back {given:,} of them, {lost:,} fewer"), first
+    ck = next(n for n in R["notes"] if n.startswith("check: "))
+    assert f"NOT exactly the clean readings ({lost:,} kept readings read below the minimum yield" in ck, ck
+    assert not any("holds exactly the clean readings" in n for n in R["notes"])

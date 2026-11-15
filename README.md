@@ -5,9 +5,36 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.1** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.2** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.2:* the files made at the end carry the cleaning's crop and moisture. A product chosen in step 2 for
+a point export (a shapefile, a `.kml` / `.kmz`, an Operations Center or SMS export) is now named in its imported
+file, its clean file, its shapefile for DIFM and the ISOXML written from it (the readings that named another crop);
+after any product change the Product column reads the SMS product name of the crop used (e.g. "Barley - Fall") and
+the Crop column its crop key, in the app and on the command line (`--product`) alike, and the shapefile for DIFM of a
+clean file without a Product column names the crop the import used. An export whose Crop column holds a crop code (a
+number, as Operations Center exports write it) keeps its codes: the crop used goes into an added text column
+Crop_Name (and Product, when the file has none), and the ISOXML written from it names that crop as its crop type, not
+the code (imported with SMS's default, the crop OCED knows for the file, else the code). A file written in the monitor's own format (Case
+IH card, GreenStar 3 card, Gen4 logs) keeps the crop, calibration and moisture the monitor logged; when the
+cleaning's import differs from that (another product, weight to volume, dry moisture, Use Manual Moisture), step 4
+says beside the writer, and first in its notes, with which SMS settings the file gives the clean file's yields (and,
+after a flow shift or a start / stop delay, that the file keeps the grain timing the monitor logged, so no read of it
+gives the clean file's yields exactly; then the 'How to read it into SMS' text says that line tells why the totals
+differ). A GreenStar 3 card written from a cleaning that kept readings the card cannot give back (a reading that took
+no grain record of its own reads 0 kg on the card, below the import's minimum yield) says how many in its notes. The
+Case IH writer now writes a cleaning made with Use Manual Moisture, and every monitor writer says that it keeps the
+logged moisture. Gen4 logs are written below the folder that holds JD-Data (not below the folders of the zips they
+came in), so they fit in the default workspace. Smaller: the report gives the test weight with 2 decimals in its Source
+paragraph as in its Import as SMS row (and the import's weight beside it when that is another), names the day of every
+harvest session (or counts those without one) and gives its start and end as a time of day, and names the SMS
+3-sigma settings of its appendix as the app does (Swath order: automatic); step 2 checks, for each file on its own,
+that a raw data folder still holds the raw data of the file's units before offering 'None'; a converted `.kml` /
+`.kmz` is the same file byte for byte on any day; texts no longer name settings of the command line; a long
+date, a statistic's name and the steps table are no longer cut at a 1440-px window; the ISOXML line beside a card
+says why it cannot be written.
 
 *Changes in 0.3.1:* a point export (a shapefile, a `.kml` / `.kmz`, an Operations Center or SMS export) is imported
 as SMS's generic import of a point file holds it: every reading is kept (min. yield volume 0, no maximum, where 0.3.0

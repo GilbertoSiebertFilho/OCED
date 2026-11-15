@@ -565,7 +565,7 @@ def points_bins(hA, moisture, dur_s, curve, comp, offset):
 def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = True, factors: dict | None = None,
                 new_ids: bool = True, log=print, mode: str = DEFAULT_MODE, totals: str = DEFAULT_TOTALS,
                 verify: bool = True, card_names: dict | None = None, registry: str | None = None,
-                out_name: str | None = None) -> dict:
+                out_name: str | None = None, manual_moisture_pct: float | None = None) -> dict:
     """Write the clean readings of clean_shp back into copies of the cards they were decoded from (module docstring).
 
     source = engine.run.decode(...)["source"]: its decode report gives the card folder (input_root), the tasks (units)
@@ -576,7 +576,10 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
     display's totals in proportion) or "original"; verify (decode the written card and compare, default True);
     card_names {original card folder name: new folder name} (else new names in the display's pattern when new_ids);
     registry = the JSON file of the card names already written (default <out_dir>/../cn1_card_names.json);
-    out_name = the name of the folder in out_dir that holds the card(s) (default <clean file name>_cn1).
+    out_name = the name of the folder in out_dir that holds the card(s) (default <clean file name>_cn1);
+    manual_moisture_pct = the moisture of an import made with Use Manual Moisture (the clean file's Moisture__ is then
+    that value, not the card's): a clean row matches its reading when its moisture is the card's or that value (the
+    card keeps the moisture the monitor logged).
     Returns {"path": the folder holding the written card(s), "zip", "cards", "n_kept", "n_removed", "files_changed",
     "notes", "warnings", "tasks", "expected_summary", "clean_totals", "summary_vs_clean", "check", ...}.
     Raises CardWriteError (a ValueError) with a plain message when it cannot write."""
@@ -673,8 +676,11 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
         kept_read = pos[kk]
         if len(np.unique(kept_read)) != len(kept_read):
             raise CardWriteError(f"{r['task']}: the clean file holds a reading twice")
-        bad = (clean["Time"].astype(str).to_numpy()[sel] != times[kept_read]) | \
-              (np.abs(clean["Moisture__"].to_numpy(float)[sel] - moist[kept_read]) > 0.051)
+        m_clean = clean["Moisture__"].to_numpy(float)[sel]
+        m_bad = np.abs(m_clean - moist[kept_read]) > 0.051
+        if manual_moisture_pct is not None:              # the import set every reading to the manual moisture
+            m_bad &= np.abs(m_clean - float(manual_moisture_pct)) > 0.051
+        bad = (clean["Time"].astype(str).to_numpy()[sel] != times[kept_read]) | m_bad
         if bad.any():
             raise CardWriteError(f"{r['task']}: {int(bad.sum())} clean rows do not match their reading on the card (Time "
                                  "/ moisture): the clean file is not from this decode")

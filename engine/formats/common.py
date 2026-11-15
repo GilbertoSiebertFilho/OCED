@@ -136,6 +136,16 @@ def jd_monitor_product(crop_name, source: str, crop_id=None, file_values: dict |
     return out
 
 
+def product_name(crop):
+    """The Product text of the readings of a crop that replaced the monitor's (a crop chosen in the decode options or
+    in step 2): the SMS product name of that crop ('wheat' -> 'Wheat - Spring'), as SMS's default import of the crop
+    writes it; the crop itself for a crop SMS's product table does not hold (corn, soybeans ...)."""
+    if not crop:
+        return crop
+    from engine import sms_import as si                  # (the product table lives there; imported when used)
+    return si.CROP_PRODUCT.get(str(crop).strip().lower(), crop)
+
+
 @dataclasses.dataclass
 class DecodeOptions:
     crop: str | None = None                  # key of CROPS; None = take it from the monitor if the format stores it

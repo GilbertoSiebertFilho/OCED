@@ -260,7 +260,8 @@ def _kml_text(dry):
 def test_a_yield_kml_or_kmz_keeps_every_reading(ext, tmp_path):
     """A yield KML / KMZ (SMS's Export to Google Earth) opens as a point export and is imported as SMS's generic
     import of a point file holds it: readings at 0, below 5 bu/ac and far above the product's maximum all stay, with
-    the product table's weight to volume and dry moisture; a card's product rule would leave them out."""
+    the product table's weight to volume and dry moisture; a card's product rule would leave them out. The converted
+    and the imported .dbf carry a fixed date of last update (0.3.2, R8: the same bytes on any day)."""
     import zipfile
     from engine import run as er
     rng = np.random.default_rng(7)
@@ -278,9 +279,11 @@ def test_a_yield_kml_or_kmz_keeps_every_reading(ext, tmp_path):
     fmt = er.import_format(None, c)
     crop = er.export_crop_guess(c["path"])
     assert fmt == si.POINT_EXPORT and crop == "wheat"
-    _, n, rec = er.import_as_sms(c["path"], "kml", str(tmp_path / "imp"), {}, crop=crop, log=lambda m: None,
-                                 monitor=c.get("monitor_product"), fmt=fmt)
+    p_imp, n, rec = er.import_as_sms(c["path"], "kml", str(tmp_path / "imp"), {}, crop=crop, log=lambda m: None,
+                                     monitor=c.get("monitor_product"), fmt=fmt)
     assert rec["family"] == "point" and n == rec["n_all"] == len(dry) and rec["left_out"] == {}
+    for x in (c["path"], p_imp):                          # 1980-01-01, not the day of the run
+        assert open(os.path.splitext(x)[0] + ".dbf", "rb").read(4)[1:4] == bytes([80, 1, 1]), x
     assert (rec["resolved"]["min_yield"], rec["resolved"]["max_yield"]) == (0.0, None)
     assert rec["sources"]["min_yield"] == rec["sources"]["max_yield"] == si.SRC_POINT
     assert (rec["resolved"]["test_weight_lb_bu"], rec["resolved"]["dry_moisture_pct"]) == (60.0, 13.5)
@@ -527,3 +530,196 @@ def test_crop_labels_written_in_every_kept_reading(tmp_path):
     rep = si.apply(shp, str(tmp_path / "c.shp"), R, labels={"Product": "barley", "Crop": "barley"})
     e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
     assert len(e) == n - 4 and set(e["Product"]) == {"barley"} and set(e["Crop"]) == {"barley"}
+
+
+def _export(tmp_path, name, products, crops=None, moisture=15.0):
+    n = len(products)
+    wet = np.full(n, 3000.0)
+    d = pd.DataFrame({"Product": products, "Distance_f": 6.6, "Swth_Wdth_": 40.0, "Duration_s": 1.0,
+                      "Moisture__": moisture, "Yld_Mass_W": wet, "Yld_Vol_We": wet / 60.0, "Yld_Mass_D": wet,
+                      "Yld_Vol_Dr": wet / 60.0, "Obj__Id": np.arange(1, n + 1), "x": np.arange(n) * 2.0, "y": 0.0})
+    if crops is not None:
+        d.insert(1, "Crop", crops)
+    return _write(d, str(tmp_path / name / "Export.shp"))
+
+
+def test_a_point_export_converted_with_another_crop_names_it(tmp_path):
+    """0.3.2: a point export whose yields are converted with another crop than the one it names gets the crop used in
+    its own Product column (the SMS product name) and in a Crop column (the crop key, added when it has none); the
+    same crop changes nothing (the file is not even copied: its text stays byte for byte)."""
+    shp = _export(tmp_path, "one", ["Spring wheat"] * 20)
+    R = si.resolve(si.settings({"product": "barley"}), "Spring wheat", None, si.POINT_EXPORT)
+    L = si.export_labels(shp, R, "Spring wheat")
+    assert L == {"Product": "Barley - Fall", "Crop": "barley"}
+    rep = si.apply(shp, str(tmp_path / "a.shp"), R, labels=L, keep_crop="barley")
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    assert set(e["Product"]) == {"Barley - Fall"} and set(e["Crop"]) == {"barley"}
+    R0 = si.resolve(si.settings({}), "Spring wheat", None, si.POINT_EXPORT)
+    assert R0["product"] == "wheat" and si.export_labels(shp, R0, "Spring wheat") is None
+    assert si.export_labels(shp, si.resolve(si.settings({"product": "wheat"}), "Spring wheat", None,
+                                            si.POINT_EXPORT), "Spring wheat") is None
+    # a file of varieties (no crop OCED knows): its Product stays, the Crop column names the crop used
+    shp_v = _export(tmp_path, "var", ["Variety X"] * 20)
+    assert si.export_labels(shp_v, R, None) == {"Crop": "barley"}
+
+
+def test_a_point_export_of_two_crops_relabels_only_the_readings_of_the_other(tmp_path):
+    """0.3.2: a point export naming two crops converted with one of them: the readings of the other crop name the crop
+    used, the readings that already name it keep their own text (its Crop column first, then its Product)."""
+    prods = ["Spring wheat"] * 10 + ["Barley"] * 10
+    shp = _export(tmp_path, "two", prods)
+    R = si.resolve(si.settings({"product": "wheat"}), None, None, si.POINT_EXPORT)
+    L = si.export_labels(shp, R, None)
+    assert L == {"Product": "Wheat - Spring", "Crop": "wheat"}
+    rep = si.apply(shp, str(tmp_path / "a.shp"), R, labels=L, keep_crop="wheat")
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    assert list(e["Product"]) == ["Spring wheat"] * 10 + ["Wheat - Spring"] * 10 and set(e["Crop"]) == {"wheat"}
+    # the crop named in a Crop column decides, not a variety in Product
+    shp_c = _export(tmp_path, "crop", ["Variety X"] * 10 + ["Variety Y"] * 10, crops=["wheat"] * 10 + ["barley"] * 10)
+    L = si.export_labels(shp_c, R, None)
+    rep = si.apply(shp_c, str(tmp_path / "b.shp"), R, labels=L, keep_crop="wheat")
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    assert list(e["Product"]) == ["Variety X"] * 10 + ["Wheat - Spring"] * 10
+    assert list(e["Crop"]) == ["wheat"] * 20
+    # a reading whose Crop names the crop used keeps its text even when its Product names another crop (its Crop
+    # column decides)
+    shp_m = _export(tmp_path, "mixed", ["Barley"] * 20, crops=["wheat"] * 10 + ["barley"] * 10)
+    L = si.export_labels(shp_m, R, None)
+    assert L == {"Product": "Wheat - Spring", "Crop": "wheat"}
+    e = pyogrio.read_dataframe(si.apply(shp_m, str(tmp_path / "m.shp"), R, labels=L, keep_crop="wheat")["path"],
+                               read_geometry=False)
+    assert list(e["Product"]) == ["Barley"] * 10 + ["Wheat - Spring"] * 10 and list(e["Crop"]) == ["wheat"] * 20
+    # every reading already names the crop used (the data's crop not given): no label, the file keeps its text
+    shp_w = _export(tmp_path, "all_wheat", ["Spring wheat"] * 10 + ["HRS wheat"] * 10)
+    assert si.export_labels(shp_w, R, None) is None
+
+
+def _ops_export(tmp_path, name, n=20):
+    """A point export as an Operations Center writes it: an integer crop code in Crop, the variety in VARIETY, no
+    Product column."""
+    wet = np.full(n, 3000.0)
+    d = pd.DataFrame({"Crop": np.full(n, 7, dtype=np.int64), "VARIETY": "Variety Z", "Distance_f": 6.6,
+                      "Swth_Wdth_": 40.0, "Duration_s": 1.0, "Moisture__": 15.0, "Yld_Mass_W": wet,
+                      "Yld_Vol_We": wet / 60.0, "Yld_Mass_D": wet, "Yld_Vol_Dr": wet / 60.0,
+                      "Obj__Id": np.arange(1, n + 1), "x": np.arange(n) * 2.0, "y": 0.0})
+    return _write(d, str(tmp_path / name / "Export.shp"))
+
+
+def test_a_point_export_with_a_number_crop_column_is_converted_and_names_the_crop_used(tmp_path):
+    """0.3.2: an export whose Crop column holds a crop code (a number) and which has no Product column, imported with
+    another product than its crop: its Crop codes stay as they are, a Product column names the SMS product of the crop
+    used and a Crop_Name column its key (both added, as text); through sms_import.apply and engine.run.import_as_sms.
+    A text label is never written into a column of numbers (a plain error, not a TypeError)."""
+    from engine import run as er
+    shp = _ops_export(tmp_path, "ops")
+    assert str(pyogrio.read_info(shp)["dtypes"][0]).startswith("int")
+    R = si.resolve(si.settings({"product": "barley"}), "barley", None, "jd_ops_center")
+    L = si.export_labels(shp, R, "Wheat")
+    assert L == {"Product": "Barley - Fall", si.LABEL_CROP_COLUMN: "barley"}
+    rep = si.apply(shp, str(tmp_path / "a.shp"), R, labels=L, keep_crop="barley")
+    e = pyogrio.read_dataframe(rep["path"], read_geometry=False)
+    assert list(e["Crop"]) == [7] * 20 and set(e["VARIETY"]) == {"Variety Z"}
+    assert set(e["Product"]) == {"Barley - Fall"} and set(e["Crop_Name"]) == {"barley"}
+    assert "Yld_Vol_Dr" in rep["changed"]                            # converted with barley's weight to volume
+    p, n, rec = er.import_as_sms(shp, "ops", str(tmp_path / "cli"), {"product": "barley"}, crop="barley",
+                                 log=lambda m: None, fmt="jd_ops_center", data_crop="Wheat")
+    g = pyogrio.read_dataframe(p, read_geometry=False)
+    assert n == 20 and list(g["Crop"]) == [7] * 20 and set(g["Product"]) == {"Barley - Fall"}
+    assert set(g["Crop_Name"]) == {"barley"}
+    # the data names no crop (its metadata gives none): the file has no Product column, so the SMS product of the crop
+    # used is added there as well as the crop key (0.3.2 round 2: the files written from it name the crop used)
+    assert si.export_labels(shp, R, None) == {"Product": "Barley - Fall", si.LABEL_CROP_COLUMN: "barley"}
+    with pytest.raises(ValueError, match="the column Crop of this file holds numbers"):
+        si.apply(shp, str(tmp_path / "b.shp"), R, labels={"Crop": "barley"})
+
+
+def test_a_crop_code_in_crop_and_crop_name_puts_the_crop_used_in_crop_used(tmp_path):
+    """0.3.2: an export whose Crop and Crop_Name columns both hold numbers takes the crop key of the product used in
+    an added Crop_Used column (the third of the label columns), its numbers left as they are."""
+    shp = _ops_export(tmp_path, "ops2")
+    g = pyogrio.read_dataframe(shp)
+    g["Crop_Name"] = np.int64(7)
+    shp2 = str(tmp_path / "ops2" / "Export2.shp")
+    pyogrio.write_dataframe(g, shp2)
+    R = si.resolve(si.settings({"product": "barley"}), "barley", None, "jd_ops_center")
+    L = si.export_labels(shp2, R, None)
+    assert L == {"Product": "Barley - Fall", "Crop_Used": "barley"}
+    e = pyogrio.read_dataframe(si.apply(shp2, str(tmp_path / "c.shp"), R, labels=L, keep_crop="barley")["path"],
+                               read_geometry=False)
+    assert list(e["Crop"]) == [7] * 20 and list(e["Crop_Name"]) == [7] * 20 and set(e["Crop_Used"]) == {"barley"}
+
+
+def test_a_text_value_is_never_patched_into_a_number_field():
+    """0.3.2: yield_clean._patch_cells refuses a text value for a number field with a plain message (sms_import.apply
+    checks the label columns first, so this guard is the last line); a number is written in the field's width."""
+    from engine.clean import yield_clean as yc
+    desc = b"Crop".ljust(11, b"\0") + b"N" + bytes(4) + bytes([4, 0]) + bytes(14)
+    dbf = {"fdesc": [desc]}
+    recs = np.frombuffer(b" " + b"   7", np.uint8).reshape(1, 5).copy()
+    with pytest.raises(ValueError, match="the column Crop holds numbers: 'barley' cannot be written in it"):
+        yc._patch_cells(recs, dbf, {"Crop": (np.array(["barley"], object), np.array([True]))})
+    assert bytes(recs[0]) == b"    7"
+    assert yc._patch_cells(recs, dbf, {"Crop": (np.array([25.0]), np.array([True]))}) == 0
+    assert bytes(recs[0]) == b"   25"
+
+
+def test_import_as_sms_with_the_datas_own_crop_changes_no_text(tmp_path):
+    """0.3.2: engine.run.import_as_sms called with the data's crop as `crop` and a product that is that crop (no
+    data_crop given, as other engine users call it) writes no label: an export whose Product names varieties keeps
+    its file byte for byte, and an Operations Center export with a crop code is imported without error and without
+    an added column."""
+    import hashlib
+    from engine import run as er
+    shp = _export(tmp_path, "var", ["Variety X"] * 20, moisture=13.5)      # its yields as wheat's: unchanged
+    p, n, rec = er.import_as_sms(shp, "v", str(tmp_path / "w"), {"product": "wheat"}, crop="Wheat",
+                                 log=lambda m: None, fmt=si.POINT_EXPORT)
+
+    def md5(x):
+        return [hashlib.md5(open(os.path.splitext(x)[0] + e, "rb").read()).hexdigest() for e in (".shp", ".dbf")]
+    assert n == 20 and md5(p) == md5(shp)
+    ops = _ops_export(tmp_path, "ops")
+    p, n, rec = er.import_as_sms(ops, "o", str(tmp_path / "w2"), {"product": "wheat"}, crop="Wheat",
+                                 log=lambda m: None, fmt="jd_ops_center")
+    g = pyogrio.read_dataframe(p, read_geometry=False)
+    assert n == 20 and "Crop_Name" not in g.columns and "Product" not in g.columns
+
+
+def _decoder_source(kind, folder):
+    """The input to open of a synthetic raw source of the decoder `kind`."""
+    if kind == "cnh_cn1":
+        from tests.synthetic_cn1 import make_card
+        return make_card(folder)["card"]
+    if kind == "jd_jdl":
+        from tests.synthetic_jdl import make_card
+        make_card(folder)
+        return folder
+    if kind == "jd_gs3_rcd":
+        from tests.test_jd_gs3_rcd import make_card
+        return make_card(folder)["root"]
+    from tests import synthetic_isoxml as SI
+    SI.write_set(os.path.join(folder, "TASKDATA"), SI.harvest(), crop_type="wheat")
+    return folder
+
+
+@pytest.mark.parametrize("kind", ["cnh_cn1", "jd_jdl", "jd_gs3_rcd", "isoxml"])
+def test_a_decoder_names_a_crop_chosen_as_sms_does(tmp_path, kind):
+    """0.3.2: a crop chosen in the decode options that replaces the source's (barley, or wheat for a source of
+    barley) is written in Product as the SMS product name of that crop (the command line's --product, as step 2
+    labels it), the crop key in Crop: by each of the four decoders (Case IH, Gen4, GreenStar 3, ISOXML)."""
+    from engine import run as er
+    from engine.formats import common
+    assert common.product_name("wheat") == "Wheat - Spring" and common.product_name("barley") == "Barley - Fall"
+    assert common.product_name("soybeans") == "soybeans"
+    import dataclasses
+    from engine.formats import detect
+    src = _decoder_source(kind, str(tmp_path / "in"))
+    wd = str(tmp_path / "w")
+    cand = er.open_input([src], wd, log=lambda m: None)[0]
+    assert cand.get("decoder") == kind
+    dec0 = er.decode(cand, None, None, str(tmp_path / "w0"), log=lambda m: None)
+    own = si.crop_key((dec0["report"] or {}).get("crop_name"))
+    chosen = "wheat" if own == "barley" else "barley"
+    opts = dataclasses.replace(detect.default_options(cand["decoder"]), crop=chosen)
+    dec = er.decode(cand, None, opts, wd, log=lambda m: None)
+    g = pyogrio.read_dataframe(dec["shp"], read_geometry=False)
+    assert set(g["Product"]) == {common.product_name(chosen)} and set(g["Crop"]) == {chosen}

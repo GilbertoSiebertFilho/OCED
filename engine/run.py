@@ -92,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.1"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.3.2"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -837,16 +837,23 @@ def import_format(source=None, candidate: dict | None = None) -> str | None:
     return None
 
 
+SAME_AS_CROP = object()         # import_as_sms: data_crop not given (the data's crop is its `crop` argument)
+
+
 def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None = None, crop=None,
-                  log=print, monitor: dict | None = None, fmt: str | None = None, R: dict | None = None) -> tuple:
+                  log=print, monitor: dict | None = None, fmt: str | None = None, R: dict | None = None,
+                  data_crop=SAME_AS_CROP) -> tuple:
     """(path, number of readings imported or None, the import record or None): the file as SMS holds it after its
     import (engine/sms_import.py, the Processing Settings SMS gives this source), written to
     <folder>/<tag>_imported.shp. import_settings: any subset of sms_import.DEFAULTS (None = SMS's defaults; empty
     values = the source's); crop: the crop of the data (a Case IH card's SMS product, e.g. report['crop_name']);
     monitor: the crop definition the file carries (the decode report's or the Operations Center candidate's
     'monitor_product'); fmt: the source format (import_format: the decoder id, 'jd_ops_center', 'point_export',
-    None); R: settings already resolved (sms_import.resolve) instead of resolving them here. The file itself when the
-    import is off. The record is the one the app keeps per file and the one clean() takes as settings['sms_import']
+    None); R: settings already resolved (sms_import.resolve) instead of resolving them here; data_crop: a point
+    export's own crop (its metadata's or columns'; None: it names none, or several): a product chosen that is another
+    crop names the crop used in its Product and Crop columns (sms_import.export_labels), as the app's import does;
+    left out, `crop` is the data's crop (a product chosen that is that crop then changes no text). The file itself
+    when the import is off. The record is the one the app keeps per file and the one clean() takes as settings['sms_import']
     (S0 then takes its minimum): {resolved, settings (the line of sms_import.describe), sources, defaults,
     sms_product, family, sources_text, monitor, fmt, crop, left_out, left_out_by_group, applied, n_all, n_in,
     all_readings, changed, notes, own_yields (a point export of an unknown product that keeps its own dry yields),
@@ -857,7 +864,11 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
         return shp, None, None
     R = R if isinstance(R, dict) and "sources" in R else si.resolve(S, crop, monitor, fmt)
     os.makedirs(folder, exist_ok=True)
-    rep = si.apply(shp, os.path.join(folder, f"{yield_clean.sanitise_tag(tag) or 'run'}_imported.shp"), R)
+    if data_crop is SAME_AS_CROP:
+        data_crop = crop                                 # the caller named the data's crop as `crop` only
+    labels = (si.export_labels(shp, R, data_crop) if (S["product"] and R.get("family") == "point") else None)
+    rep = si.apply(shp, os.path.join(folder, f"{yield_clean.sanitise_tag(tag) or 'run'}_imported.shp"), R,
+                   labels=labels, keep_crop=si.crop_key(R.get("product")) if labels else None)
     rec = {"resolved": {k: R.get(k) for k in si.DEFAULTS}, "settings": si.describe(R),
            "sources": dict(R.get("sources") or {}), "defaults": dict(R.get("defaults") or {}),
            "sms_product": R.get("sms_product"), "family": R.get("family"), "sources_text": si.describe_sources(R),
@@ -1892,6 +1903,7 @@ def _cli(a) -> int:
         imp_set["expand_dry_moisture"] = True
     imp_rec = None
     dec = None
+    data_crop = None
     if cand["kind"] == "raw":
         everything = bool(a.units and a.units.strip().lower() == "all")
         ids = None
@@ -1953,13 +1965,15 @@ def _cli(a) -> int:
         shp = cand["path"]
         # the crop of the export as the app takes it: an Operations Center export's crop name (its metadata), else
         # the file's Crop / Product column
-        imp_crop = a.product or a.crop or cand.get("crop") or export_crop_guess(shp)
+        data_crop = a.crop or cand.get("crop") or export_crop_guess(shp)
+        imp_crop = a.product or data_crop
         imp_mon, imp_fmt = cand.get("monitor_product"), import_format(None, cand)
     if not a.no_sms_import:
         _print("\nImport as SMS:")
         tag_i = (a.tag or (dec["tag"] if dec else os.path.splitext(os.path.basename(shp))[0]))
         shp, _n_i, imp_rec = import_as_sms(shp, tag_i, os.path.join(work, "decoded"), imp_set, crop=imp_crop,
-                                           log=lambda m: _print("  " + m), monitor=imp_mon, fmt=imp_fmt)
+                                           log=lambda m: _print("  " + m), monitor=imp_mon, fmt=imp_fmt,
+                                           data_crop=data_crop)
         if imp_rec:
             _print(f"  values from: {imp_rec['sources_text']}")
 

@@ -684,13 +684,13 @@ def test_apply_to_all_names_each_origin_of_a_product_it_leaves(field, tmp_path, 
 UNREAD = "check that the export is complete (its .shp, .shx and .dbf), or open its data again (step 1)"
 
 
-@pytest.mark.parametrize("how", ["read_error", "held", "io_error", "no_shx", "cut_dbf"])
+@pytest.mark.parametrize("how", ["read_error", "held", "io_error", "no_shx", "cut_dbf", "zero_dbf"])
 def test_a_0_3_0_export_that_cannot_be_read_at_the_open_is_not_taken_as_naming_no_crop(how, field, tmp_path,
                                                                                        monkeypatch):
     """A 0.3.0 export of step 1's barley (its record names no crop) whose file is there but cannot be read when the
     work is first opened (its reader fails with an access denied or an input/output error; on Windows, another program
     holds its .dbf with no sharing, which GDAL would read as a file with no columns; its .shx is missing; its .dbf is
-    cut after 40 bytes, a header that is not valid): its basis is pending, never 'no crop', and saved so; step 1's
+    cut after 40 bytes, or 0 bytes long: a header that is not valid): its basis is pending, never 'no crop', and saved so; step 1's
     badge, steps 1, 2 and 3 and Apply to all from K, before and after its click, tell the reason it could not be read
     (the first sentence of the reader's message) and the way on that follows its cause: close the program that holds
     it for an access denied or a file held, else check that the export is complete; never to reconnect a drive.
@@ -719,12 +719,12 @@ def test_a_0_3_0_export_that_cannot_be_read_at_the_open_is_not_taken_as_naming_n
     monkeypatch.setattr(pyogrio, "read_info", info)
     stem = os.path.splitext(readings)[0]
     keep = {}
-    for ext in ({"no_shx": [".shx"], "cut_dbf": [".dbf"]}.get(how) or []):
+    for ext in ({"no_shx": [".shx"], "cut_dbf": [".dbf"], "zero_dbf": [".dbf"]}.get(how) or []):
         keep[ext] = open(stem + ext, "rb").read()
         if ext == ".shx":
             os.remove(stem + ext)
         else:
-            open(stem + ext, "wb").write(keep[ext][:40])
+            open(stem + ext, "wb").write(keep[ext][:0 if how == "zero_dbf" else 40])
     k32 = h = None
     if how == "held":
         import ctypes
@@ -742,9 +742,10 @@ def test_a_0_3_0_export_that_cannot_be_read_at_the_open_is_not_taken_as_naming_n
                "held": "Harvest_A.dbf could not be read: PermissionError: ",
                "io_error": "Harvest_A.shp could not be read: OSError: Input/output error",
                "no_shx": "Harvest_A.shp could not be read: ",
-               "cut_dbf": "Harvest_A.dbf could not be read: its header is not valid (the file is cut or damaged)"}[how]
+               "cut_dbf": "Harvest_A.dbf could not be read: its header is not valid (the file is cut or damaged)",
+               "zero_dbf": "Harvest_A.dbf could not be read: its header is not valid (the file is cut or damaged)"}[how]
         assert B.get("why", "").startswith(why), B
-        if how in ("io_error", "cut_dbf"):
+        if how in ("io_error", "cut_dbf", "zero_dbf"):
             assert B["why"] == why, B
         if how == "no_shx":                               # the first sentence of the reader's message only
             assert "Harvest_A.shx" in B["why"] and "SHAPE_RESTORE_SHX" not in B["why"], B

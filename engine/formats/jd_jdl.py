@@ -1462,7 +1462,7 @@ def decode_detailed(root: str, unit_ids=None, opts: C.DecodeOptions | None = Non
         yc = C.yield_columns(wet_lb, area_ac, r.moist.values, tw, sm, opts.shrink)
         out = pd.DataFrame({
             "Field": m0.field, "Dataset": C.dataset_name(f"{m0.field} {m0.vin[-6:]}".strip(), start),
-            "Product": crop if override else (m0.variety or m0.crop), "Obj__Id": np.arange(1, len(r) + 1),
+            "Product": C.product_name(crop) if override else (m0.variety or m0.crop), "Obj__Id": np.arange(1, len(r) + 1),
             "Time": ts.strftime("%Y-%m-%d %H:%M:%S.") + ((r.t_ms.values % 1000) // 100).astype(str),
             "Duration_s": r.dur_s.values, "Elevation_": r.alt_m.values * C.FT_PER_M,
             "Speed_mph_": r.speed_kmh.values / 3.6 * C.MPH_PER_MS, "Distance_f": r.dist_m.values * C.FT_PER_M,

@@ -1000,7 +1000,7 @@ def explorer(shp: str, key: str, height: int = 520, default: str | None = None, 
             if S_s.get("valid"):
                 lo, hi = (S_s["p2"], S_s["p98"]) if S_s["p98"] > S_s["p2"] else (S_s["min"], S_s["max"])
                 scale_note = "scale of step 1"
-    c_map, c_side = st.columns([2.6, 1], gap="medium")
+    c_map, c_side = st.columns([1.8, 1], gap="medium")      # the side wide enough for its table's labels
     with c_map:
         pv = strips_of(shp, mtime(shp)) if draw == "strips" else pd.DataFrame()
         if draw == "strips" and ("polygon" not in pv or "row" not in pv):
@@ -1089,7 +1089,10 @@ def explorer(shp: str, key: str, height: int = 520, default: str | None = None, 
                                    columns=["statistic", "value", "change vs the clean map"])
             else:
                 tbl = pd.DataFrame(rows_, columns=["statistic", "value"])
-            st.dataframe(tbl, hide_index=True, height=36 * (len(rows_) + 1) + 3)
+            # the statistic's name in full and the value beside it within the side column (no side scroll)
+            st.dataframe(tbl, hide_index=True, height=36 * (len(rows_) + 1) + 3,
+                         column_config={"statistic": st.column_config.TextColumn(width=200),
+                                        "value": st.column_config.TextColumn(width=104)})
             f = v[np.isfinite(v)]
             if len(f) > 1 and kind == "num" and S["p98"] > S["p2"]:
                 import altair as alt
@@ -2179,7 +2182,8 @@ def source_with_import(source: dict | None, R: dict, applied: dict | None, src_s
         o.update(o_new)
         cs = str(s.get("calibration_summary") or "")
         cs = re.sub(r"shrink [a-z-]+", f"shrink {sh.replace('_', '-')}", cs)
-        for k, pat, txt in (("test_weight_lb_bu", r"test weight [^;]*? lb/bu", "test weight {:g} lb/bu"),
+        # the test weight with 2 decimals, as the Import as SMS row and the report give it (one rule)
+        for k, pat, txt in (("test_weight_lb_bu", r"test weight [^;]*? lb/bu", "test weight {:.2f} lb/bu"),
                             ("std_moisture_pct", r"standard moisture [^;]*? %", "standard moisture {:g} %")):
             if k in o_new:
                 m = re.search(pat, cs)
@@ -2200,18 +2204,27 @@ def source_with_import(source: dict | None, R: dict, applied: dict | None, src_s
     return s
 
 
-def crop_labels(D: dict, B: dict | None, R: dict, rep: dict | None = None) -> dict | None:
-    """The Product and Crop a raw file's import writes in every reading when its yields are converted with another
-    crop than the one its decoded readings are labelled with (a product chosen in step 2: what 0.3.0's decoder wrote
-    for a product chosen before extracting; SMS's default of a file an earlier version decoded with another product):
-    {"Product": name, "Crop": crop key} ({"Crop": crop key} only when the data names no crop OCED knows). None for a
-    point export (its columns are the vendor's) or when the labels already name that crop. rep: the decode report of
-    the readings of B (default: the default import's own decode, else the file's)."""
-    if D.get("kind") != "raw":
-        return None
+def crop_labels(D: dict, B: dict | None, R: dict, rep: dict | None = None, src: str | None = None) -> dict | None:
+    """The Product and Crop a file's import writes in its readings when its yields are converted with another crop
+    than the one its readings are labelled with (a product chosen in step 2; for a raw file also what 0.3.0's decoder
+    wrote for a product chosen before extracting, and SMS's default of a file an earlier version decoded with another
+    product): {"Product": the SMS product name of the crop used (common.product_name; the data's own name of that crop
+    when it names it so), "Crop": crop key} ({"Crop": crop key} only when the data names no crop OCED knows). A point
+    export: its own Product / Crop columns (sms_import.export_labels on src, else the readings of B; the data's crop
+    is its columns', else its metadata's), written with
+    keep_crop (label_keep): a reading that already names the crop used keeps its text. None when the labels already
+    name that crop (the file keeps its text byte for byte). rep: the decode report of the readings of B (default: the
+    default import's own decode, else the file's)."""
     P = si.crop_key(R.get("product")) if R.get("product") else None
     if not P:
         return None
+    if D.get("kind") != "raw":
+        path = src or (ew.resolve_moved(B["all_readings"], ss.workdir) if (B or {}).get("all_readings") else None)
+        if not D.get("yield", True) or not path or not os.path.exists(path):
+            return None
+        mon = (B or {}).get("monitor") if isinstance((B or {}).get("monitor"), dict) else {}
+        # the data's crop: its columns', else its metadata's (an Operations Center export of varieties)
+        return si.export_labels(path, R, (B or {}).get("crop") or mon.get("crop"))
     if not isinstance(rep, dict):
         rep = default_of(D).get("report")
         rep = rep if isinstance(rep, dict) else (D.get("report") if isinstance(D.get("report"), dict) else {})
@@ -2222,8 +2235,15 @@ def crop_labels(D: dict, B: dict | None, R: dict, rep: dict | None = None) -> di
         return None
     if labelled is None:                                 # a crop the card does not name: its Product stays (0.3.0)
         return {"Crop": P}
-    name = str(data_crop) if (data_crop and "," not in str(data_crop) and si.crop_key(data_crop) == P) else P
+    name = (str(data_crop) if (data_crop and "," not in str(data_crop) and si.crop_key(data_crop) == P)
+            else common.product_name(P))
     return {"Product": name, "Crop": P}
+
+
+def label_keep(D: dict, R: dict) -> str | None:
+    """The keep_crop of a file's import (engine/sms_import.py apply): a point export's readings that already name the
+    crop the import used keep their own text; None for a raw file (its readings are labelled alike)."""
+    return si.crop_key(R.get("product")) if (D.get("kind") != "raw" and R.get("product")) else None
 
 
 def _summary_crop(source: dict | None, labels: dict | None) -> dict | None:
@@ -2526,9 +2546,9 @@ def apply_custom(tag: str, S_f: dict, warns: list | None = None, product_from: d
     # a temporary name no import in use has (a swap blocked earlier leaves the import in use under a _next name)
     nxt = _next_path(folder, tag, in_use=(D.get("shp"), def_shp))
     _remove_files(_parts(os.path.splitext(nxt)[0]))          # one an earlier failure left
-    labels = crop_labels(D, B, R)
+    labels = crop_labels(D, B, R, src=src)
     try:
-        rep = si.apply(src, nxt, R, labels=labels)
+        rep = si.apply(src, nxt, R, labels=labels, keep_crop=label_keep(D, R))
     except Exception as e:
         _remove_files(_parts(os.path.splitext(nxt)[0]))
         raise ValueError(f"{tag} could not be imported with these settings ({_error_reason(e)}): the file and its "
@@ -2608,6 +2628,45 @@ def _raw_root(D: dict, S0: dict | None = None) -> str | None:
     return ew.input_root({"source": S0 or {}, "report": D.get("report")}, ss.workdir)
 
 
+def _tree_sig(root: str):
+    """A cheap signature of everything under a folder: (number of files, their total size, the newest modification
+    time), from one walk; a file deleted, added or changed anywhere below it changes it."""
+    n = size = newest = 0
+    for d, _, fs in os.walk(root):
+        for f in fs:
+            try:
+                st_ = os.stat(os.path.join(d, f))
+            except OSError:
+                continue
+            n, size, newest = n + 1, size + st_.st_size, max(newest, st_.st_mtime_ns)
+    return n, size, newest
+
+
+def raw_at_hand(tag: str, D: dict, root: str | None) -> bool:
+    """The input folder of a raw file is there and still holds the raw data of its units, as decoding it again needs
+    (_raw_candidate: a raw candidate of its format whose units include the ones the file was decoded from). Checked
+    once per file, folder and content in the session (the file: its tag, format and the recorded unit ids of its
+    import's source, so that two files of one folder each get their own answer; the folder's path and a signature of
+    every file below it: a file deleted in a sub-folder changes it)."""
+    if not root or not os.path.isdir(root):
+        return False
+    S0 = default_of(D).get("source") if isinstance(default_of(D).get("source"), dict) else D.get("source")
+    S0 = S0 if isinstance(S0, dict) else {}
+    try:
+        key = (str(tag), str(S0.get("format") or ""), tuple(sorted(str(u) for u in (S0.get("unit_ids") or []))),
+               os.path.normcase(os.path.abspath(root)), _tree_sig(root))
+    except OSError:
+        return False
+    memo = ss.setdefault("raw_at_hand", {})
+    if key not in memo:
+        try:
+            _raw_candidate(tag, D)
+            memo[key] = True
+        except Exception:                                # not at hand, or a folder that cannot be read
+            memo[key] = False
+    return memo[key]
+
+
 def _raw_candidate(tag: str, D: dict) -> tuple:
     """(how the file was decoded: its source, the raw candidate of its input folder to decode it again). ValueError
     when that is not recorded or the raw data is gone."""
@@ -2623,9 +2682,14 @@ def _raw_candidate(tag: str, D: dict) -> tuple:
     raw = [c for c in cands if c.get("kind") == "raw" and c.get("decoder") == fid]
     cand = next((c for c in raw if os.path.normcase(os.path.abspath(c["probe"].root))
                  == os.path.normcase(os.path.abspath(root))), raw[0] if raw else None)
-    if cand is None:
-        raise ValueError(f"The raw data is no longer in {_folder_name(root)}: reconnect the drive or open it again "
-                         "(step 1).")
+    try:
+        ids = {u.id for u in er.list_units(cand)} if cand is not None else set()
+    except Exception:                                    # the folder's remains cannot be listed
+        ids = set()
+    if cand is None or not set(S0["unit_ids"]) <= ids:
+        # the folder there, but not the raw data of this file's units (files deleted below its folders)
+        raise ValueError(f"The raw data of {tag} is not at hand ({_folder_name(root)}): reconnect the drive or open it "
+                         "again (step 1).")
     cand["inputs_left_out"] = list(S0.get("inputs_left_out") or [])
     return S0, cand
 
@@ -3744,9 +3808,9 @@ def _rebase_own_import(tag: str, D: dict, B: dict, src: str, rep_dec: dict | Non
         R = si.resolve(S, S.get("product") or B.get("crop"), B.get("monitor"), B.get("fmt"))
         if not same_import(R, RS):
             return False
-        labels = crop_labels(D, B, R, rep=rep_dec)
+        labels = crop_labels(D, B, R, rep=rep_dec, src=src)
         _remove_files(_parts(os.path.splitext(nxt)[0]))
-        rep = si.apply(src, nxt, R, labels=labels)
+        rep = si.apply(src, nxt, R, labels=labels, keep_crop=label_keep(D, R))
         sig = content_sig(rep["path"])
         if sig is None or sig != content_sig(D["shp"]):
             return False
@@ -3824,12 +3888,12 @@ def ensure_default(tag: str, retry: bool = False) -> str | None:
     R0 = default_resolved(B)
     folder = os.path.join(ss.workdir, "decoded" if D.get("kind") == "raw" else "imported")
     os.makedirs(folder, exist_ok=True)
-    labels = crop_labels(D, B, R0, rep=rep_dec)          # a file an earlier version decoded with another product
+    labels = crop_labels(D, B, R0, rep=rep_dec, src=src)  # a file an earlier version decoded with another product
     # written under a temporary name and swapped in once complete: the default may be the import in use
     nxt = _next_path(folder, tag, in_use=(D.get("shp"), DF.get("shp")))
     _remove_files(_parts(os.path.splitext(nxt)[0]))
     try:
-        rep = si.apply(src, nxt, R0, labels=labels)
+        rep = si.apply(src, nxt, R0, labels=labels, keep_crop=label_keep(D, R0))
     except Exception as e:
         _remove_files(_parts(os.path.splitext(nxt)[0]))
         # said once; not tried again until its files change (the reason stays for step 1's import line)
@@ -6416,6 +6480,12 @@ NATIVE_HOW = {
 NATIVE_SETTINGS = ("Use the Processing Settings of the raw read (the clean run's weight to volume, dry moisture and "
                    "min / max yield; expand dry moisture off, start / stop delay 0, flow shift 0, manual swath off) and "
                    "compare SMS's Summary and points with the totals shown here.")
+NATIVE_SETTINGS_NAMED = ("Use the SMS settings named in the line beside the writer (where a line names them; for any "
+                         "other writer the Processing Settings of the raw read) and compare SMS's Summary and points "
+                         "with the totals shown here.")
+# a line beside the writer says only that the grain timing differs (no settings to name): the raw read's settings, and
+# why its totals will not match
+NATIVE_SETTINGS_TIMING = NATIVE_SETTINGS[:-1] + " (the line beside the writer says why the totals differ)."
 NATIVE_FILE_LABEL = {"cnh_cn1": "CNH_clean_card", "jd_gs3_rcd": "GS3_clean_card", "jd_jdl": "JDL_clean_logs",
                      "isoxml": "ISOXML_TASKDATA"}
 NATIVE_LOOSE = ("notes", "warnings")
@@ -6435,10 +6505,17 @@ def native_dir(tag: str) -> str:
 def _input_tree_depth(root: str | None, fid: str) -> int:
     """The longest path a writer copies from the input card (relative to where it starts the card in its folder):
     every file under the input folder (a Case IH card: below its .cn1 folder; a GreenStar 3 card: from the folder
-    above its cards, as the writer keeps their own folder names). 0 without an input folder."""
+    above its cards, as the writer keeps their own folder names; Gen4 logs: below the folder that holds JD-Data, under
+    a number when there are several, as the writer writes them: jd_jdl_write.out_relpath). 0 without an input
+    folder."""
     if not root or not os.path.isdir(root):
         return 0
     base = root
+    if fid == "jd_jdl":
+        from engine.formats import jd_jdl_write as jw
+        roots = jw.record_roots(root)
+        return max((len(jw.out_relpath(os.path.join(d, f), roots)) for d, _, fs in os.walk(root) for f in fs),
+                   default=0)
     if fid == "jd_gs3_rcd":
         from engine.formats import jd_gs3_rcd_write as gw
         cards = sorted({gw._card_root(os.path.join(d, f), root) for d, _, fs in os.walk(root) for f in fs
@@ -6553,8 +6630,11 @@ def _native_summary(res: dict, factors: bool = False) -> dict:
         miss, extra = int(chk.get("missing") or 0), int(chk.get("extra") or 0)
         ngd = int(chk.get("n_grain_differs") or 0)
         mx = (chk.get("max_abs") or {}).get("wet_kg")
+        kb = int(chk.get("kept_below_min") or 0)        # kept readings a reader with the minimum yield leaves out
         line = (f"decoded back: {int(chk.get('decoded') or 0):,} readings, {int(chk.get('matched') or 0):,} matched, "
-                f"{miss:,} missing, {extra:,} extra; the grain of {ngd:,} reading(s) differs from the clean file"
+                f"{miss:,} missing, {extra:,} extra"
+                + (f" ({kb:,} of the kept readings read below the minimum yield and are not given back)" if kb else "")
+                + f"; the grain of {ngd:,} reading(s) differs from the clean file"
                 + (" x the factor of its combine" if factors else "") + " by more than 0.5 g"
                 + (f" (at most {float(mx) * 2.20462262185:,.2f} lb)" if (ngd and mx is not None) else ""))
         # the writer reports a reading's grain that moved to a neighbouring record as a note, not as a failure: the
@@ -6867,6 +6947,122 @@ def native_too_deep_msg(t: str, deep: int) -> str:
             "characters: " + what[:1].lower() + what[1:])
 
 
+def _cleaning_import(t: str, C: dict | None) -> dict:
+    """The import record the cleaning on screen was made from (its settings['sms_import']), else the file's."""
+    IM = (((C or {}).get("R") or {}).get("settings") or {}).get("sms_import")
+    return IM if isinstance(IM, dict) else ((ss.datasets.get(t) or {}).get("sms_import") or {})
+
+
+TIMING_KEYS = (("flow_shift_s", "flow shift"), ("start_delay_s", "start delay"), ("stop_delay_s", "stop delay"))
+
+
+def _monitor_crop_text(keeps) -> str:
+    """The monitor's crop in the step-4 line: its name when it is an SMS product name, else the card's own text
+    quoted, with the SMS product it stands for (a GreenStar 3 card's name cut at its field's width: "'Wheat (Hard Red
+    Spri' (as the monitor stores it; SMS: Wheat - Spring)")."""
+    s = str(keeps or "").strip()
+    if not s:
+        return "of the card"
+    if si.sms_product(s) == s:
+        return s
+    k = si.crop_key(s)
+    sms = si.sms_product(s) or (common.product_name(k) if k else None)
+    return f"'{s}' (as the monitor stores it" + (f"; SMS: {sms})" if sms and sms != s else ")")
+
+
+def native_read_settings(t: str, C: dict | None, fid: str) -> dict | None:
+    """What SMS must be told to read the clean harvest of `t` written in the format fid with the clean file's yields,
+    when its own read of that file would not give them: {keeps, product, tw, dm, manual, expand, timing, text}; None
+    when SMS's read with its Processing Settings untouched gives them (or the import kept no record). A monitor's own
+    format (Case IH card, GreenStar 3 card, Gen4 logs) keeps the crop, calibration, moisture and grain timing the
+    monitor logged: SMS reads it as it reads the original data (the file's default import, step 1), so another
+    product, weight to volume, dry moisture, Expand Dry Moisture or Use Manual Moisture of the cleaning's import must be
+    set in SMS; a flow shift or start / stop delay of the cleaning's import ('timing': [(name, seconds)]) moved the
+    grain between readings, which the file does not carry, so no read of it gives the clean file's yields exactly (the
+    line says so). ISOXML task data written from the clean readings names the crop of the clean file and carries its
+    moisture: SMS gives such a task its own weight and dry moisture for that crop (isoxml.ISO_SMS_CROPS, else the
+    product table)."""
+    D = ss.datasets.get(t) or {}
+    IM = _cleaning_import(t, C)
+    RS = IM.get("resolved") if isinstance(IM.get("resolved"), dict) else None
+    if not RS or not RS.get("test_weight_lb_bu") or RS.get("dry_moisture_pct") is None:
+        return None
+    P = si.crop_key(RS.get("product")) if RS.get("product") else None
+    timing = []
+    if fid == nw.ISOXML:
+        sv = iso_crops().get(P) if P else None
+        mon = ({"crop": P, "test_weight_lb_bu": sv[0], "dry_moisture_pct": sv[1], "basis": "sms_crop"} if sv else
+               ({"crop": P} if P else None))
+        try:
+            R0 = si.resolve(si.settings({}), P, mon, "isoxml")
+        except ValueError:
+            return None
+        keeps, manual = None, False                       # the written task data carries the clean moisture
+    else:
+        IM0 = default_of(D).get("sms_import") or {}
+        R0 = IM0.get("resolved") if isinstance(IM0.get("resolved"), dict) else None
+        if R0 is None:
+            B = import_basis(D)
+            if B is None:
+                return None
+            R0 = default_resolved(B)
+        keeps = IM0.get("crop") or (import_basis(D) or {}).get("crop") or R0.get("product") or None
+        manual = bool(RS.get("use_manual_moisture"))
+        for k, what in TIMING_KEYS:                       # the grain moved between readings by the import
+            x = RS.get(k)
+            if x is not None and float(x) != 0.0 and not _same_value(float(x), float(R0.get(k) or 0.0)):
+                timing.append((what, float(x)))
+    same = (si.crop_key(R0.get("product")) == P and _same_value(R0.get("test_weight_lb_bu"), RS["test_weight_lb_bu"])
+            and _same_value(R0.get("dry_moisture_pct"), RS["dry_moisture_pct"])
+            and bool(R0.get("expand_dry_moisture")) == bool(RS.get("expand_dry_moisture")) and not manual)
+    if same and not timing:
+        return None
+    name = IM.get("sms_product") or (common.product_name(P) if P else None) or "the product"
+    out = {"keeps": keeps, "product": name, "tw": float(RS["test_weight_lb_bu"]), "dm": float(RS["dry_moisture_pct"]),
+           "manual": (float(RS["manual_moisture_pct"]) if (manual and RS.get("manual_moisture_pct") is not None)
+                      else None), "expand": bool(RS.get("expand_dry_moisture")), "timing": timing}
+
+    def v(x):                                            # 2 decimals, more when the value has them (a card's own)
+        return f"{x:.2f}" if abs(x - round(x, 2)) < 1e-9 else f"{round(x, 4):g}"
+    how = (f"product {name}, weight to volume {v(out['tw'])} lb/bu, dry moisture {v(out['dm'])} %"
+           + (", Expand Dry Moisture on" if out["expand"] else "")
+           + (f", Use Manual Moisture {v(out['manual'])} %" if out["manual"] is not None else ""))
+    if fid == nw.ISOXML:
+        out["text"] = ("This file names the crop of the clean file and carries its moisture, but SMS gives such task "
+                       "data its own weight to volume and dry moisture for that crop: to get the clean file's yields, "
+                       f"read it into SMS with {how}.")
+        return out
+    crop_t = _monitor_crop_text(keeps)
+    late = ""
+    if timing:
+        tm = ", ".join(f"{w} {x:g} s" for w, x in timing)
+        late = (f"the cleaning's import moved the grain between readings ({tm}) and this file keeps the grain timing "
+                "the monitor logged, so no read of it gives the clean file's yields exactly: neither SMS's default "
+                "read nor the same " + ("values" if len(timing) > 1 else "value") + " set in SMS reproduces them")
+    if same:
+        out["text"] = f"This file keeps the monitor's crop {crop_t} and its logged moisture, but {late}."
+    elif timing:
+        out["text"] = (f"This file keeps the monitor's crop {crop_t} and its logged moisture: read it into SMS with "
+                       f"{how} for the clean file's crop and moisture; but {late}.")
+    else:
+        out["text"] = (f"This file keeps the monitor's crop {crop_t} and its logged moisture: to get the clean file's "
+                       f"yields, read it into SMS with {how}.")
+    return out
+
+
+def native_caveat_text(note: str, RD: dict | None) -> str:
+    """A writer's 'not yet tested in SMS' note when step 4 names how SMS reads the written file (RD, first in the
+    notes): it points at the settings of that first note, not at the Processing Settings of the raw read (with those
+    SMS gives other yields than the clean file's)."""
+    s = str(note)
+    if not RD or "Processing Settings of the raw read" not in s:
+        return note
+    if "read it into SMS with" not in str(RD.get("text")):       # only the grain timing differs: the raw read's
+        return s.replace("the Processing Settings of the raw read", "the Processing Settings of the raw read (the "
+                                                                    "first note says why its yields still differ)")
+    return s.replace("the Processing Settings of the raw read", "the settings named in the first note")
+
+
 def write_native(t: str, C: dict, fmt_id: str, opts: dict, log=print) -> dict:
     """Writes the clean harvest of `t` in the format fmt_id (engine/formats/native_write.py write) into
     native/<tag>/ and keeps its record there (native/<tag>/<format>.json). opts: widths, apply (the factors of step
@@ -6884,6 +7080,9 @@ def write_native(t: str, C: dict, fmt_id: str, opts: dict, log=print) -> dict:
     adv.setdefault(NATIVE_OUT_KEY.get(fmt_id, "out_name"), NATIVE_OUT_NAME.get(fmt_id, fmt_id))
     if fmt_id == "cnh_cn1":
         adv.setdefault("registry", os.path.join(WORKSPACE, "cn1_card_names.json"))   # one name never given twice
+    RS_c = _cleaning_import(t, C).get("resolved") or {}
+    if RS_c.get("use_manual_moisture") and RS_c.get("manual_moisture_pct") is not None:
+        adv["manual_moisture_pct"] = float(RS_c["manual_moisture_pct"])   # the file keeps the logged moisture
     moved = native_set_aside(out, fmt_id)               # a Case IH / GreenStar 3 card written before
     try:
         res = nw.write(fmt_id, src, C["shp"], out, widths=bool(opts.get("widths", True)), factors=fac,
@@ -6898,8 +7097,12 @@ def write_native(t: str, C: dict, fmt_id: str, opts: dict, log=print) -> dict:
             raise ValueError(f"not written ({type(e).__name__}: {e}).{kept}") from e
         raise
     adv.pop("registry", None)
-    for k in ("out_name", "folder_name"):
+    for k in ("out_name", "folder_name", "manual_moisture_pct"):
         adv.pop(k, None)
+    RD = native_read_settings(t, C, fmt_id)
+    if RD:                                               # how SMS reads it with the clean file's yields
+        res = {**res, "notes": [RD["text"]] + [native_caveat_text(n, RD) for n in (res.get("notes") or [])
+                                               if n != RD["text"]]}
     left = drop_earlier_sets(out, fmt_id, res) + native_drop_aside(moved)
     if left:
         res = {**res, "warnings": list(res.get("warnings") or []) + [
@@ -7097,12 +7300,19 @@ def native_block(t: str, C: dict):
                                             type="primary" if (o.get("native") and o.get("available")) else "secondary",
                                             icon=":material/save:")
         native_ok = any(o.get("native") and o.get("available") for o in opts)
+        avail = [o for o in opts if o.get("available")]
+        named = False                                    # a line names the SMS settings of a writer
+        timing_only = False                              # a line says only that the grain timing differs
+        for o in avail:                                  # how SMS reads it with the clean file's yields
+            RD = native_read_settings(t, C, o["id"])
+            if RD:
+                st.caption((f"{o['label']}: " if len(avail) > 1 else "") + RD["text"])
+                named = named or "read it into SMS with" in RD["text"]
+                timing_only = timing_only or (bool(RD.get("timing")) and "read it into SMS with" not in RD["text"])
         for o in opts:
             if not o.get("available") and o.get("reason"):
-                if o["id"] == nw.ISOXML and native_ok:       # the monitor's own format is offered: why not ISOXML
-                    st.caption(f"{o['label']}: not available", help=f"{o['reason'][:1].upper()}{o['reason'][1:]}.")
-                else:                                        # why the monitor's format cannot be written: in sight
-                    st.caption(f"{o['label']}: not available - {o['reason']}.")
+                # why it cannot be written, in sight (its button above is disabled)
+                st.caption(f"{o['label']}: not available - {o['reason']}.")
         go = next((fid for fid, c in clicks.items() if c), None)
         shift = False
         if ref and ref.get("fid") and not go:
@@ -7153,7 +7363,8 @@ def native_block(t: str, C: dict):
             for o in opts:                                   # what each format that can be written holds
                 if o.get("available") and o.get("reason"):
                     st.caption(f"{o['label']}: {o['reason']}.")
-            st.caption(" ".join(how + [NATIVE_SETTINGS]))
+            st.caption(" ".join(how + [NATIVE_SETTINGS_NAMED if named else
+                                       NATIVE_SETTINGS_TIMING if timing_only else NATIVE_SETTINGS]))
         for fid in [o["id"] for o in opts] + [f for f in NRs if f not in {o["id"] for o in opts}]:
             if fid in NRs:
                 st.divider()
@@ -7941,7 +8152,7 @@ def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
             me_away = (how == "sms" or not is_raw) and not (src_me and os.path.exists(src_me))
             # a raw file on 'None' is decoded again from its raw data: that folder not at hand, no Apply either
             raw_root = _raw_root(D) if (is_raw and how == "none" and changed) else None
-            raw_away = is_raw and how == "none" and changed and not (raw_root and os.path.isdir(raw_root))
+            raw_away = is_raw and how == "none" and changed and not raw_at_hand(tag, D, raw_root)
             plan = {}
             if raw_away:
                 st.caption(f":orange[The raw data of {tag} is not at hand ({_folder_name(raw_root)}): reconnect the "
@@ -9081,7 +9292,14 @@ with st.container(border=True, key="oced_step_3"):
                                                                   "of the edge is inside)",
                                                      "removed": p["removed"], "remaining": p["remaining"]}
                                                     for p in pre]), steps_df], ignore_index=True)
-            st.dataframe(steps_df, hide_index=True)
+            # the numbers before the long criterion, which wraps in its own width (rows taller than 4rem wrap)
+            st.dataframe(steps_df[["filter", "name", "on", "removed", "remaining", "criterion"]], hide_index=True,
+                         row_height=66, column_config={"filter": st.column_config.TextColumn(width=50),
+                                                       "name": st.column_config.TextColumn(width=190),
+                                                       "on": st.column_config.CheckboxColumn(width=40),
+                                                       "removed": st.column_config.NumberColumn(width=80),
+                                                       "remaining": st.column_config.NumberColumn(width=90),
+                                                       "criterion": st.column_config.TextColumn(width=440)})
             if not A3:
                 sw = M3.get("swath") or {}
                 bias = {str(k): float(v) for k, v in (sw.get("lateral_bias_ft") or {}).items() if v is not None}

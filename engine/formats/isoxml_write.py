@@ -160,6 +160,46 @@ def _columns(cols) -> dict:
     return cc
 
 
+# where a point export's import names the crop it used (sms_import.export_labels: the first of these that is text)
+CROP_TEXT_COLUMNS = ("Crop", "Crop_Name", "Crop_Used")
+
+
+def _is_text(s) -> bool:
+    """A column of crop names: text, with some value that is not a number (a crop code written as text is a code)."""
+    if pd.api.types.is_numeric_dtype(s) or pd.api.types.is_bool_dtype(s):
+        return False
+    v = s.dropna().astype(str).str.strip()
+    v = v[(v != "") & ~v.str.lower().isin(("nan", "none"))]
+    return bool(len(v)) and bool(pd.to_numeric(v, errors="coerce").isna().any())
+
+
+def _crop_values(df, cc, source) -> np.ndarray:
+    """The crop of every reading (text) the set names (CTP) and the crop table reads: the first text column of
+    CROP_TEXT_COLUMNS (a decoded file's Crop, or the Crop_Name / Crop_Used an import added beside a Crop column of
+    numbers); a Crop column of numbers only (a crop code) gives the crop OCED knows for the file instead, the crop of
+    the import (the source's options) else of its Product column; the code itself only when nothing else is known.
+    A file without any of these columns names no crop (as before: its Product says it)."""
+    from engine import sms_import as si
+    n = len(df)
+    low = {str(c).lower(): c for c in df.columns}
+    cols = [low[c.lower()] for c in CROP_TEXT_COLUMNS if c.lower() in low]
+    for c in cols:
+        if _is_text(df[c]):
+            return df[c].astype(str).to_numpy()
+    codes = [c for c in cols if pd.to_numeric(df[c], errors="coerce").notna().any()]
+    if not codes:
+        return df[cols[0]].astype(str).to_numpy() if cols else np.full(n, "", object)
+    opts = (source or {}).get("options") or {}
+    known = si.crop_key(opts.get("crop")) if opts.get("crop") else None
+    if not known and cc.get("product") and n:
+        v = df[cc["product"]].dropna().astype(str).str.strip()
+        v = v[v != ""]
+        known = si.crop_key(str(v.mode().iat[0])) if len(v) else None
+    if known:
+        return np.full(n, known, object)
+    return df[codes[0]].astype(str).to_numpy()
+
+
 def _load(path: str):
     import pyogrio
     g = pyogrio.read_dataframe(path)
@@ -195,8 +235,11 @@ def _crop_constants(df, cc, source, warns) -> tuple[float, float, list]:
         how.append(f"test weight {tw:.3f} lb/bu = median Yld_Mass_W / Yld_Vol_We of the file")
     opts = (source or {}).get("options") or {}
     crop = None
-    if cc.get("crop") and len(df):
-        crop = str(df[cc["crop"]].astype(str).mode().iat[0]).strip().lower() or None
+    cv = cc.get("crop_values")
+    if cv is None and cc.get("crop"):
+        cv = df[cc["crop"]].astype(str).to_numpy()
+    if cv is not None and len(df):
+        crop = str(pd.Series(cv).mode().iat[0]).strip().lower() or None
         crop = None if crop in ("nan", "none") else crop
     crop = crop or (str(opts.get("crop")).lower() if opts.get("crop") else None)
     if tw is None:
@@ -340,7 +383,8 @@ def _readings(df, cc, widths, factors, tw, ms, notes, warns) -> pd.DataFrame:
         "order": _num(df, cc.get("order"), 0.0),
         "field": df[cc["field"]].astype(str).to_numpy() if cc.get("field") else np.full(n, "", object),
         "product": df[cc["product"]].astype(str).to_numpy() if cc.get("product") else np.full(n, "", object),
-        "crop": df[cc["crop"]].astype(str).to_numpy() if cc.get("crop") else np.full(n, "", object),
+        "crop": (cc["crop_values"] if cc.get("crop_values") is not None else
+                 df[cc["crop"]].astype(str).to_numpy() if cc.get("crop") else np.full(n, "", object)),
         "lon": df.lon.to_numpy(float), "lat": df.lat.to_numpy(float),
         "dur_s": dur, "width_ft": width, "area_ac": area,
         "wet_lb": wet_lb * fac, "dry_lb": dry_lb * fac, "moist": _num(df, cc.get("moisture"), 0.0),
@@ -826,6 +870,7 @@ def write_clean(source: dict | None, clean_shp: str, out_dir: str, *, widths: bo
     df, cc = _load(clean_shp)
     if not len(df):
         raise IsoxmlWriteError("the clean file has no readings: there is nothing to write")
+    cc["crop_values"] = _crop_values(df, cc, source)    # the crop the import used, not a crop code beside it
     tw, ms, how = _crop_constants(df, cc, source, warns)
     notes += how
     R = _readings(df, cc, widths, factors, tw, ms, notes, warns)

@@ -887,7 +887,7 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
             order_basis = ORDER_FILE
             order_reason = ("set by swath_order 'file'" if mode_o == "file" else
                             "a point file without a time per reading: SMS holds it as one dataset, in the order of "
-                            "its import (swath_order auto)")
+                            "its import")
             order_note = f"the file's own row order, as one block ({order_reason})"
             if has_time:
                 order_note += "; it replaces the per-record time order"
@@ -916,7 +916,7 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                                   + "): the SMS export lists them in file-name order")
                 order_reason = ("set by swath_order 'chain'" if mode_o == "chain" else
                                 "an SMS export of GreenStar 4 data without a time per reading: SMS lists its logged "
-                                "files in file-name order (swath_order auto)")
+                                "files in file-name order")
                 if has_time:
                     order_note += "; it replaces the per-record time order"
                     warnings.append("SMS 3-sigma: swath_order 'chain' replaces the per-record time order of the swath "

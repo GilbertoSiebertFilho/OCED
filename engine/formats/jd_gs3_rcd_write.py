@@ -1028,6 +1028,7 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
 
     # ---- what was done
     nk = int(keep.sum())
+    i_kept = len(notes)                                  # the check below says how many of them come back
     notes.append(f"{nk:,} clean readings stay harvest readings; {n_rem:,} decoded readings the clean file left out "
                  f"(the import's minimum / maximum and the cleaning): {n_rem - n_rem_left:,} set to not harvesting, "
                  f"{n_rem_left:,} left as harvest readings with 0 kg of grain; no record deleted, every record keeps "
@@ -1161,12 +1162,23 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
                 warnings.append(f"check: decoding the written card gives {ck['decoded']:,} readings: {ck['missing']:,} "
                                 f"kept readings missing, {ck['extra']:,} readings that are not in the clean file")
             xb = int(ck.get("extra_below_min") or 0)
+            kb = int(ck.get("kept_below_min") or 0)        # kept readings that read below the minimum yield there
+            back = nk - int(ck["missing"]) - kb
+            if back != nk:                               # the written card decoded again: what it gives back
+                notes[i_kept] = notes[i_kept].replace(
+                    f"{nk:,} clean readings stay harvest readings; ",
+                    f"{nk:,} clean readings stay harvest readings, but read with the import's minimum yield the "
+                    f"written card gives back {back:,} of them, {nk - back:,} fewer (the check below says why); ", 1)
             notes.append(f"check: the written card decodes to {ck['decoded']:,} readings ({ck['matched']:,} of the "
                          f"{nk:,} kept, {ck['extra']:,} others"
                          + (f", {xb:,} harvest records left with 0 kg, below the minimum yield" if xb else "")
                          + "); read with the import's minimum it holds "
-                         + ("exactly the clean readings" if not (ck["missing"] or ck["extra"]) else
-                            "NOT exactly the clean readings")
+                         + ("exactly the clean readings" if not (ck["missing"] or ck["extra"] or kb) else
+                            "NOT exactly the clean readings"
+                            + (f" ({kb:,} kept readings read below the minimum yield on the written card and are not "
+                               "given back" + (f"; {ginfo['n_lost']:,} kept readings took no grain record of their "
+                                               "own, so the grain the decoder carried to them is not on the card"
+                                               if ginfo["n_lost"] else "") + ")" if kb else ""))
                          + f"; grain differs by more than {GRAIN_TOL_KG * 1000:g} g from the clean file"
                          f"{' x the factor' if factors else ''} on {ck['n_grain_differs']:,} readings")
             nb = int((ck.get("expected_summary") or {}).get("n_below_min") or 0)
@@ -1202,7 +1214,8 @@ def check_written(path: str, source: dict, J: pd.DataFrame, keep: np.ndarray, re
     kg); positions are compared on the readings level 2 did not narrow (``narrowed``: their record rows; a narrowed
     reading sits at the centre of its recording sections, the clean point where the cleaning moved it). The expected
     summary is what a reader that reads the card as the decoder does and applies the monitor product's minimum /
-    maximum yield should show (n_below_min: the decoded readings below that minimum). factors: the level-3 factors
+    maximum yield should show (n_below_min: the decoded readings below that minimum; kept_below_min: the kept
+    readings among them, which such a reader does not give back). factors: the level-3 factors
     written ({machine: f}); a clean row's grain is then compared x the factor of its machine. left: (Machine, Time)
     of the harvest records the writer left as harvest readings with 0 kg (removed_as_harvest): a reading of the
     written card the clean file does not hold is "extra_below_min", not "extra", when it is one of them, reads no
@@ -1223,6 +1236,7 @@ def check_written(path: str, source: dict, J: pd.DataFrame, keep: np.ndarray, re
     ok_left = is_left & ro._below.to_numpy().astype(bool) & no_grain
     out = {"decoded": int(len(df)), "matched": int(len(both)), "missing": int((M._merge == "left_only").sum()),
            "extra": int((~ok_left).sum()), "extra_below_min": int(ok_left.sum()),
+           "kept_below_min": int(both._below.to_numpy().astype(bool).sum()),
            "decoded_at_min": int((~below).sum()),
            "max_abs": {}, "n_grain_differs": 0}
     for c, tol in (("Duration_s", 1e-6), ("Distance_f", 0.5 / 30.48), ("Swth_Wdth_", WIDTH_TOL_FT),
