@@ -334,7 +334,7 @@ def test_the_settings_appendix_names_each_sms_setting_as_the_report_does():
     got = dict(tuple(r) for r in rows[1:])
     assert rows[0] == ["SMS 3-sigma setting", "Value"] and len(got) == len(sms.DEFAULTS)
     assert not set(got) & set(sms.DEFAULTS) and not any("_" in k for k in got)
-    assert got["Swath order"] == "automatic" and got["S1 edge tolerance"] == "1 cm"
+    assert got["Swath order"] == "automatic" and got["S1 edge tolerance"] == "0 cm"
     assert got["Limits"] == "mean \u00b1 3 SD"
     assert got["Another yield pass while the SD falls by more than"] == "25 %"
     assert got["Order of the filters"] == sms.FILTER_ORDER_LABELS["moisture_speed"]

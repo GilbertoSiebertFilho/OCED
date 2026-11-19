@@ -130,6 +130,33 @@ def test_jdl_writer_round_trip_subset_width_and_ids(tmp_path, mode):
         assert k in res
 
 
+def test_jdl_writer_round_trip_with_the_receivers_logged_distance_and_speed(tmp_path):
+    # GNSS records that log the receiver's own distance and speed (Gen4): the SMS points take their distance and speed
+    # from them, and the written card gives them back unchanged (the writer never touches a GNSS record)
+    card, dec = _decode(tmp_path, "sms", logged=True)
+    g = pyogrio.read_dataframe(dec["shp"])
+    from tests.synthetic_jdl import track
+    tr = track(logged=True)
+    full = (g.Duration_s.values > 0.99) & (g.Duration_s.values < 1.01)
+    assert full.sum() > 50
+    # every 1 s point holds 5 fixes of 0.35-0.45 m: not the antenna's 2 m/s x 1 s
+    d_m = g.Distance_f.values[full] * 0.3048
+    assert (d_m > 5 * 0.349).all() and (d_m < 5 * 0.451).all()
+    assert np.abs(g.Speed_mph_.values[full] / 2.2369362920544 - 2.0).max() <= 0.2 + 1e-9
+    assert np.abs(d_m - 2.0).max() > 0.05
+    clean_shp = str(tmp_path / "syn_clean.shp")
+    g0, c = _write_subset(dec, clean_shp, _subset)
+    res = W.write_clean(dec["source"], clean_shp, str(tmp_path / "out"), log=lambda m: None)
+    assert res["round_trip"]["ok"], res["round_trip"]
+    df1 = _redecode(res, dec, "sms")
+    a = c.set_index("Time").sort_index()
+    b = df1.set_index("Time").sort_index()
+    assert list(a.index) == list(b.index)
+    for col in ("Duration_s", "Distance_f", "Speed_mph_", "Moisture__", "Yld_Vol_Dr"):
+        np.testing.assert_allclose(b[col].values, a[col].values, rtol=1e-12)
+    assert len(tr["gdist"]) == len(tr["gt"])
+
+
 @pytest.mark.parametrize("mode", MODES)
 def test_jdl_writer_combine_factor(tmp_path, mode):
     _, dec = _decode(tmp_path, mode)

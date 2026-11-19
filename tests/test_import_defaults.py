@@ -723,3 +723,71 @@ def test_a_decoder_names_a_crop_chosen_as_sms_does(tmp_path, kind):
     dec = er.decode(cand, None, opts, wd, log=lambda m: None)
     g = pyogrio.read_dataframe(dec["shp"], read_geometry=False)
     assert set(g["Product"]) == {common.product_name(chosen)} and set(g["Crop"]) == {chosen}
+
+
+def test_manual_moisture_is_used_with_two_decimals():
+    """A manual moisture typed with a third decimal is used as the app's box shows it (2 decimals)."""
+    from engine import sms_import as si_
+    assert si_.settings({"use_manual_moisture": True, "manual_moisture_pct": 14.163})["manual_moisture_pct"] == 14.16
+    assert si_.settings({"manual_moisture_pct": 14.165000001})["manual_moisture_pct"] == 14.17
+    assert si_.settings({"manual_moisture_pct": 13.5})["manual_moisture_pct"] == 13.5
+    assert si_.settings({})["manual_moisture_pct"] is None
+    R = si_.resolve(si_.settings({"use_manual_moisture": True, "manual_moisture_pct": 9.163, "product": "canola"}))
+    assert R["manual_moisture_pct"] == 9.16
+
+
+def test_the_settings_line_says_what_was_applied(tmp_path):
+    """Settings asked for that the import cannot apply (a file without a width, a wet mass or a duration column) are
+    never presented as settings in force: the line says 'requested, NOT applied', each gets a warning on the log and
+    a warning in the cleaning built on the record; values carry the decimals they are used with (60.0098)."""
+    from engine import run as er
+    from engine.clean import yield_clean as yc
+    df = _ops()[["DISTANCE", "Moisture", "VRYIELDVOL", "Time", "Machine", "x", "y"]].copy()
+    df["Speed_mph_"], df["Track_deg_"] = 4.5, 90.0
+    shp = _write(df, str(tmp_path / "noy" / "No_width.shp"))
+    S = {"use_manual_swath": True, "manual_swath_ft": 30.0, "use_manual_moisture": True, "manual_moisture_pct": 12.0,
+         "flow_shift_s": 2.0, "test_weight_lb_bu": 60.0098, "dry_moisture_pct": 13.5}
+    logs = []
+    _path, _n, rec = er.import_as_sms(shp, "na", str(tmp_path / "imp"), S, crop="wheat", log=logs.append,
+                                      fmt=si.POINT_EXPORT)
+    line = rec["settings"]
+    assert "manual swath 30.00 ft requested, NOT applied" in line
+    assert "manual moisture 12.00 % requested, NOT applied" in line
+    assert "flow shift 2.00 s (requested, NOT applied)" in line
+    assert "weight to volume 60.0098 lb/bu" in line and "(typed, NOT applied)" in line
+    na = si.not_applied(dict(rec["resolved"], sources=rec["sources"]), rec)
+    assert set(na) == {"manual_swath", "manual_moisture", "flow_shift", "weight_and_moisture"}
+    assert na["manual_swath"].endswith("NOT applied: the file has no width column")
+    assert sum(m.startswith("WARNING: import as SMS: ") for m in logs) == 4
+    # the cleaning built on that record carries the same four warnings
+    S2 = yc.merge_settings({"method": "sms3sigma", "sms_import": rec, "sms3sigma": {"min_yield": 0.0},
+                            "harvester_width_ft": 30.0})
+    C, _ = yc.resolve_columns(list(pyogrio.read_info(shp)["fields"]), S2)
+    R = yc.clean(shp, S2, C, log=lambda m: None)[4]
+    assert sum(w.startswith("import as SMS: ") and "NOT applied" in w for w in R["warnings"]) == 4
+    # applied settings: the line is the one it always was, no warning
+    shp3 = _write(_ops(), str(tmp_path / "ok" / "Ops.shp"))
+    logs3 = []
+    _p, _n, rec3 = er.import_as_sms(shp3, "ok", str(tmp_path / "imp3"), {"use_manual_swath": True,
+                                                                        "manual_swath_ft": 20.0},
+                                    crop="wheat", log=logs3.append, fmt=si.OPS_CENTER)
+    assert "manual swath 20.00 ft;" in rec3["settings"] and "NOT applied" not in rec3["settings"]
+    assert not any("NOT applied" in m for m in logs3)
+    assert si.not_applied(dict(rec3["resolved"], sources=rec3["sources"]), rec3) == {}
+    # a record made before 'applied' was kept says nothing
+    assert si.not_applied(rec3["resolved"], {"notes": ["manual swath not applied: x"]}) == {}
+
+
+def test_values_are_printed_as_used():
+    assert si.value_text(60.0098) == "60.0098" and si.value_text(60.009833) == "60.009833"
+    assert si.value_text(60.0) == "60.00" and si.value_text(14.16) == "14.16" and si.value_text(5.0, 3) == "5.000"
+    assert si.value_text(10000.0) == "10,000.00" and si.value_text(None) == "-"
+
+
+def test_manual_moisture_switched_on_without_a_value_follows_the_dry_moisture_with_two_decimals():
+    """Switched on and left empty, the manual moisture is the dry moisture, with the 2 decimals of a typed one."""
+    from engine import sms_import as si_
+    R = si_.resolve(si_.settings({"use_manual_moisture": True, "dry_moisture_pct": 14.163, "product": "canola"}))
+    assert R["manual_moisture_pct"] == 14.16 and R["dry_moisture_pct"] == 14.163
+    R2 = si_.resolve(si_.settings({"dry_moisture_pct": 14.163, "product": "canola"}))
+    assert R2["manual_moisture_pct"] == 14.163          # switched off: it only follows the dry moisture, unused

@@ -311,3 +311,216 @@ def test_validate_only_lets_the_weight_apply_no_factor(f15):
     adv = N["machines"]["advice"]["COMBINE-B"]
     assert "did NOT confirm" in adv and "raise the max factor to apply" not in adv
     assert np.isclose(N["level"]["factor_final"], 1.0, atol=1e-6)
+
+
+def test_yield_per_acre_over_a_boundary_larger_than_the_ground_is_warned(f5):
+    """bu/ac without acres is made a total over the boundary (the documented default, not changed): when the boundary
+    and the ground harvested once differ by more than 2 %, a warning names both areas and both L; L over the
+    harvested ground = L over the boundary x harvested / boundary. Acres given: no such warning."""
+    import geopandas as gpd
+    from tests.synthetic import _rect
+    T = f5.T
+    df = f5.F["df"]
+    big = os.path.join(f5.folder, "big_boundary.geojson")
+    gpd.GeoDataFrame({"Name": ["big"]}, geometry=[_rect(-60.0, float(df["x"].max()) + 60.0, -60.0,
+                                                         float(df["y"].max()) + 60.0)], crs="EPSG:4326").to_file(
+        big, driver="GeoJSON")
+    aoi = {"aoi": {"file": big, "buffer_m": 0.01, "clip_output": True}}
+    R = f5.clean("buac_big", _ticket(T["dry_bu"] / T["ground_ac"], "bu/ac", "dry"), settings=aoi)
+    L = R["level"]
+    ck = L["ticket_area_check"]
+    assert ck["boundary_ac"] == pytest.approx(L["ticket_area_ac"]) and L["ticket_area_source"] == "the field boundary"
+    assert ck["harvested_once_ac"] == pytest.approx(R["sms3sigma"]["area_after_swath_ac"])
+    assert ck["boundary_vs_harvested_pct"] > 30
+    assert ck["factor_over_boundary"] == pytest.approx(L["factor_final"] if L["factor_final"] is not None
+                                                       else L["factor"])
+    assert ck["factor_over_harvested"] == pytest.approx(ck["factor_over_boundary"] * ck["harvested_once_ac"]
+                                                        / ck["boundary_ac"])
+    assert ck["factor_over_harvested"] == pytest.approx(T["dry_bu"] / T["monitor_dry_bu"], rel=3e-3)
+    w = [x for x in R["warnings"] if x.startswith("grower's weight:") and "harvested once" in x]
+    assert len(w) == 1 and f"{ck['boundary_ac']:,.2f} ac" in w[0] and f"{ck['harvested_once_ac']:,.2f} ac" in w[0]
+    assert f"L = {ck['factor_over_boundary']:.4f}" in w[0] and f"would be {ck['factor_over_harvested']:.4f}" in w[0]
+    R2 = f5.clean("buac_big_acres", _ticket(T["dry_bu"] / T["ground_ac"], "bu/ac", "dry", area_ac=T["ground_ac"]),
+                  settings=aoi)
+    assert "ticket_area_check" not in R2["level"]
+    assert not any("harvested once" in x for x in R2["warnings"])
+
+
+def test_the_leveled_column_sums_are_said_for_every_reading_and_for_the_clean_file(f5):
+    """The processed readings x L sum to the weight compared; the clean file (read back) sums to less, by the grain
+    of the readings the cleaning removed: the record, the note, the PDF's sentence and engine.run give both."""
+    T = f5.T
+    R = f5.clean("lb_sums", _ticket(T["wet_lb"], "lb"))
+    L = R["level"]
+    clean = pyogrio.read_dataframe(R["files"]["difm_ready_shp"], read_geometry=False)
+    c_sum = float((clean["Yld_Level"] * clean["Distance_f"] * clean["Swth_Wdth_"] / FT2_PER_AC).sum())
+    assert L["clean_file_level_column"] == "Yld_Level"
+    assert L["clean_file_level_sum_bu"] == pytest.approx(c_sum, rel=1e-6)
+    tick = L["ticket_compared_bu"]
+    assert L["clean_file_level_vs_ticket_pct"] == pytest.approx(100 * (c_sum / tick - 1), abs=1e-6)
+    assert L["removed_share_of_leveled_pct"] == pytest.approx(100 * (1 - c_sum / L["yld_level_integral_bu"]))
+    assert L["removed_share_of_leveled_pct"] > 0 and L["clean_file_level_vs_ticket_pct"] < L["yld_level_vs_ticket_pct"]
+    gap_txt = f"{L['clean_file_level_vs_ticket_pct']:+.2f} %"
+    assert "over every processed reading" in R["yield_column_note"] and gap_txt in R["yield_column_note"]
+    assert "the values read back from the clean file" in R["yield_column_note"]
+    assert L["difm_note"] == R["yield_column_note"]
+    assert gap_txt in cr._difm_column(R)[1] and "over every processed reading" in cr._difm_column(R)[1]
+    assert gap_txt in er.difm_note(R)
+
+
+def test_no_sentence_says_the_leveled_column_sums_to_the_weight_without_its_qualifier(f5):
+    """A Case IH / New Holland card whose readings differ from its Summary (the card warning fires): no warning, note
+    or rule says 'sums to the grower's weight' without 'over every processed reading', since the clean file sums
+    less (the readings the cleaning removed)."""
+    T = f5.T
+    src = {"format": "cnh_cn1", "label": "synthetic card", "totals": {"wet_lb": T["wet_lb"] * 1.04},
+           "sms_summary": {"wet_lb": T["wet_lb"]}}
+    S = {"method": "sms3sigma", "tag": "cnh_card", "moisture": {"standard_pct": T["std_moist"]},
+         "machines": {"harmonise": False}, "scale_ticket": _ticket(T["dry_bu"], "bu", "dry")}
+    R = er.clean(f5.F["shp"], os.path.join(f5.folder, "cnh_card"), S, log=lambda m: None, source=src)
+    w = [x for x in R["warnings"] if "card's own Summary" in x]
+    assert len(w) == 1 and "over every processed reading" in w[0]
+    assert R["level"]["clean_file_level_vs_ticket_pct"] < -0.05       # the clean file does sum less
+    texts = list(R["warnings"]) + list(R.get("notes") or []) + [R["level"]["rule"], R["yield_column_note"],
+                                                                cr._difm_column(R)[1], er.difm_note(R)]
+    for t in texts:
+        for bad in ("sums to the grower's weight", "integrates to it"):
+            if bad in t:
+                i = t.index(bad)
+                assert "over every processed reading" in t[max(0, i - 160): i + 200], t
+
+
+def test_grain_set_aside_by_the_field_of_interest_names_the_whole_file_L(f5):
+    """A field of interest that leaves out the last 15 m of 600 m passes (about 2.5 % of the grain, under the 5 % of
+    the older warning): L is unchanged (the weight is taken as the field of interest's) and a warning names the
+    set-aside grain and the L of the whole file. Without a field of interest: no such warning."""
+    import geopandas as gpd
+    from tests.synthetic import _rect
+    T = f5.T
+    df = f5.F["df"]
+    cut = os.path.join(f5.folder, "cut_boundary.geojson")
+    gpd.GeoDataFrame({"Name": ["cut"]}, geometry=[_rect(-60.0, float(df["x"].max()) - 15.0, -60.0,
+                                                         float(df["y"].max()) + 60.0)], crs="EPSG:4326").to_file(
+        cut, driver="GeoJSON")
+    R = f5.clean("lb_cut", _ticket(T["wet_lb"], "lb"), settings={"aoi": {"file": cut, "buffer_m": 0.01,
+                                                                         "clip_output": True}})
+    L = R["level"]
+    share = L["set_aside_integral_bu"] / L["export_total_bu"]
+    assert 0.01 < share < 0.05
+    assert L["factor_whole_file"] == pytest.approx(L["scale_ticket_bu"] / (L["export_total_bu"]
+                                                                           + L["set_aside_integral_bu"]))
+    w = [x for x in R["warnings"] if "set aside by the field of interest" in x]
+    assert len(w) == 1 and f"L = {L['factor']:.4f}" in w[0] and f"{L['factor_whole_file']:.4f} (whole file)" in w[0]
+    R0 = f5.clean("lb_sums", _ticket(T["wet_lb"], "lb"))
+    assert not any("set aside" in x for x in R0["warnings"])
+
+
+def _left_out_case(tmp_path, ticket=None, source=None, low_every=None):
+    """A synthetic export imported as SMS with a 5 bu/ac minimum (its near-zero readings left out), cleaned with the
+    boundary (20 m short of the passes) and a wet weight in lb: (R, record, the export's frame). low_every: every
+    so many readings logged a twentieth of their grain (low flow), so that more grain is left out at import."""
+    import geopandas as gpd
+    from engine.clean import sms3sigma as sms
+    from tests.synthetic import make_field
+    F = make_field(str(tmp_path / "f"))
+    if low_every:
+        g = gpd.read_file(F["shp"])
+        low = (np.arange(len(g)) % int(low_every)) == 0
+        for c in ("Yld_Mass_W", "Yld_Vol_We", "Yld_Vol_Dr", "Yld_Mass_D"):
+            if c in g:
+                g.loc[low, c] = g.loc[low, c].astype(float) * 0.05
+        F = dict(F, shp=str(tmp_path / "low.shp"))
+        g.to_file(F["shp"], engine="pyogrio")
+    shp_i, _n, rec = er.import_as_sms(F["shp"], "lo", str(tmp_path / "imp"), {"min_yield": 5.0, "product": "wheat"},
+                                      crop="wheat", log=lambda m: None, fmt=er.import_format(None, {"kind": "export"}))
+    RS = rec["resolved"]
+    S = {"method": "sms3sigma", "tag": "lo", "sms3sigma": {"min_yield": 5.0}, "machines": {"harmonise": False},
+         "sms_import": rec, "test_weight_lb_bu": RS["test_weight_lb_bu"],
+         "moisture": {"standard_pct": RS["dry_moisture_pct"]},
+         "scale_ticket": _ticket(100000.0, "lb") if ticket is None else ticket,
+         "aoi": {"file": F["boundary"], "buffer_m": float(sms.DEFAULTS["clip_tolerance_m"]), "clip_output": True}}
+    R = er.clean(shp_i, str(tmp_path / "out"), S, log=lambda m: None, source=source)
+    return R, rec, gpd.read_file(F["shp"]), F
+
+
+def test_the_grain_the_import_left_out_is_in_the_total_L_is_built_on(tmp_path):
+    """The readings the import left out below its minimum still carry grain the scale weighed: computed again from
+    the file of every reading with the import's own settings, inside the field of interest, on the basis of the
+    monitor total, they are in the monitor total L is built on (L compares all the grain the monitor logged there
+    with all the grain weighed); the record names them and gives L of the processed readings alone."""
+    import geopandas as gpd
+    from engine import sms_import as si
+    R, rec, g0, F = _left_out_case(tmp_path)
+    L = R["level"]
+    lo = L["import_left_out"]
+    assert rec["left_out"]["below the min. yield volume"] > 0
+    # by hand: the import's dry yield (wet mass / 60 one-sided to 13.5 %) below 5, inside the boundary + 1 cm
+    M = g0["Moisture__"].to_numpy(float)
+    wet_bu = g0["Yld_Mass_W"].to_numpy(float) / 60.0
+    dry = wet_bu * np.minimum(1.0, (100 - M) / 86.5)
+    utm = g0.estimate_utm_crs()
+    poly = gpd.read_file(F["boundary"]).to_crs(utm).geometry.union_all().buffer(0.01)
+    ins = g0.geometry.to_crs(utm).within(poly).to_numpy()
+    low = dry < 5.0
+    area = g0["Distance_f"].to_numpy(float) * g0["Swth_Wdth_"].to_numpy(float) / FT2_PER_AC
+    st = lo["steps"]["below the min. yield volume"]
+    assert st["n"] == int((low & ins).sum()) and lo["n_outside_field"] == int((low & ~ins).sum())
+    assert st["bu"] == pytest.approx(float((wet_bu * area)[low & ins].sum()), rel=1e-9)
+    assert st["n"] > 0 and lo["basis"] == "wet" and lo["below_min_bu"] == pytest.approx(st["bu"])
+    proc = L["processed_set_integral_bu"]
+    assert lo["share_of_monitor_pct"] == pytest.approx(100 * st["bu"] / proc)
+    assert lo["included_in_L"] is True and L["import_left_out_in_total_bu"] == pytest.approx(st["bu"])
+    assert L["export_total_bu"] == pytest.approx(proc + st["bu"])
+    assert L["factor"] == pytest.approx(L["ticket_compared_bu"] / (proc + st["bu"]))
+    assert lo["factor_with_below_min"] == pytest.approx(L["factor"])
+    assert lo["factor_processed_only"] == pytest.approx(L["ticket_compared_bu"] / proc)
+    assert f"plus the {st['n']:,} readings Import as SMS left out below its minimum" in L["source"]
+    # the leveled total (the processed readings and the left-out ones x L) is the weight: no level warning
+    assert L["leveled_export_integral_bu"] == pytest.approx(L["ticket_compared_bu"], rel=1e-9)
+    assert not any(w.startswith("the leveled export integrates to") for w in R["warnings"])
+    # the same computation as the import itself: its counts per step
+    lo_all = si.left_out_readings(rec["all_readings"], dict(rec["resolved"], family=rec["family"],
+                                                             sources=rec["sources"]))
+    assert dict(lo_all["step"].value_counts()) == rec["left_out"]
+    txt = cr._left_out_text(L)
+    assert "below the min. yield volume" in txt and "they are in the monitor total L is built on" in txt
+    assert "carry the rest" in R["yield_column_note"] and "in the monitor total L is built on" in R["yield_column_note"]
+
+
+def test_left_out_grain_in_L_is_what_the_texts_give_for_the_processed_readings(tmp_path):
+    """A dry weight with the grain of the readings the import left out below its minimum in the monitor total L is
+    built on: the leveled column over the processed readings alone sums below the weight by that grain, and every
+    text says so with that figure (never '<comparison column> x L sums to the weight compared', never the shrink as
+    the reason); the PDF's monitor total names its two parts; the areas stay the processed set's; the rule and the
+    card warning say what L is built on."""
+    T_bu = 2500.0
+    src = {"format": "cnh_cn1", "label": "synthetic card", "totals": {"wet_lb": 1.04e5}, "sms_summary": {"wet_lb": 1e5}}
+    R, rec, g0, F = _left_out_case(tmp_path, ticket=_ticket(T_bu, "bu", "dry"), source=src, low_every=10)
+    L = R["level"]
+    lo = L["import_left_out"]
+    assert lo["included_in_L"] and lo["share_of_monitor_pct"] > 0.05 and L["comparison_basis"].startswith("dry")
+    tick = L["ticket_compared_bu"]
+    gap, pp = L["yld_level_vs_ticket_pct"], L["leveled_processed_vs_ticket_pct"]
+    assert pp == pytest.approx(100 * (L["leveled_processed_integral_bu"] / tick - 1))
+    assert L["leveled_processed_integral_bu"] + L["import_left_out_leveled_bu"] == pytest.approx(tick, rel=1e-9)
+    assert gap == pytest.approx(pp, abs=1e-6) and gap < -0.05      # the dry weight levels the column compared
+    assert L["import_left_out_leveled_bu"] == pytest.approx(lo["below_min_bu"] * L["factor"], rel=1e-9)
+    n_lo = lo["steps"]["below the min. yield volume"]["n"]
+    for t in (R["yield_column_note"], cr._difm_column(R)[1], er.difm_note(R)):
+        assert "sums to the weight compared" not in t and "shrinks" not in t, t
+        assert f"{gap:+.2f} %" in t and "left out below its minimum" in t, t
+    assert f"the {n_lo:,} readings Import as SMS left out below its minimum" in R["yield_column_note"]
+    # the PDF's level paragraph: the monitor total and its two parts, the areas of each
+    txt = cr._level_text(R)
+    assert "all processed points" not in txt
+    assert f"{L['processed_set_integral_bu']:,.2f} bu over {L['export_area_ac']:,.2f} ac" in txt
+    assert f"{L['import_left_out_in_total_bu']:,.2f} bu over {L['import_left_out_area_ac']:,.2f} ac" in txt
+    assert L["import_left_out_area_ac"] == pytest.approx(lo["below_min_area_ac"]) and lo["below_min_area_ac"] > 0
+    assert L["area_swept_ac"] == L["export_area_ac"] == L["export_integral_area_ac"]
+    # the processed set's swept area, as the SMS 3-sigma record gives it (the left-out readings' acres apart)
+    assert L["export_area_ac"] == pytest.approx(R["sms3sigma"]["area_swept_ac"], rel=1e-12)
+    assert "plus the readings Import as SMS left out below its minimum" in L["rule"]
+    assert "with the readings the import left out below its minimum" in L["rule"]
+    w = [x for x in R["warnings"] if "card's own Summary" in x]
+    assert len(w) == 1 and f"with the {n_lo:,} readings Import as SMS left out below its minimum" in w[0]
+    assert f"{L['import_left_out_in_total_bu']:,.0f} bu of readings the import left out" in er.level_caption(R)

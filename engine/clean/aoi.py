@@ -362,6 +362,17 @@ def is_plan_like(gdf, tcol, typed_headland: np.ndarray, rate_col, plot_col, area
     return False, f"{len(area)} polygons and no rate / plot column (a plan needs >= {MIN_PLAN_POLYGONS})"
 
 
+def require_degrees(gdf, path) -> None:
+    """A polygon file without a coordinate system (.prj) is taken as WGS 84 only when its coordinates are degrees:
+    projected coordinates (metres of a UTM zone ...) raise a ValueError that names the file and its coordinate range
+    (instead of a geometry error further on)."""
+    x0, y0, x1, y1 = (float(v) for v in gdf.total_bounds)
+    if not (-180 <= x0 <= x1 <= 180 and -90 <= y0 <= y1 <= 90):
+        raise ValueError(f"{os.path.basename(str(path))} has no coordinate system (.prj) and its coordinates "
+                         f"({x0:,.0f} .. {x1:,.0f}, {y0:,.0f} .. {y1:,.0f}) are not degrees: add the file's .prj "
+                         "(e.g. its UTM zone) next to it and load it again")
+
+
 def read_plan(path, id_col=None, rate_col=None, headland_types=("headland", "border"), feature=None) -> Plan:
     """Read the field-of-interest / plan file. Raises ValueError when the file is missing, unreadable or holds no
     polygon, or when `feature` (a 1-based polygon index, or a list of them) is out of range. See the module docstring
@@ -381,6 +392,7 @@ def read_plan(path, id_col=None, rate_col=None, headland_types=("headland", "bor
     gdf = gdf.reset_index(drop=True)
     crs_note = None
     if gdf.crs is None:
+        require_degrees(gdf, path)
         gdf = gdf.set_crs("EPSG:4326")
         crs_note = f"{os.path.basename(path)} has no coordinate system: taken as WGS 84 (EPSG:4326)"
         warnings.append(crs_note)

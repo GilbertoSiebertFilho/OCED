@@ -136,6 +136,36 @@ def test_unknown_combines_are_one_group_with_a_warning(two, tmp_path):
     assert Rt["sms3sigma"]["grouping"]["n_groups"] == 2
 
 
+def _grouping_warnings(R):
+    return [w for w in R["warnings"] if w.startswith("SMS 3-sigma:") and ("combines apart" in w or "one group" in w)]
+
+
+def test_a_merged_file_of_several_combines_is_one_group_with_a_warning(two, field, tmp_path):
+    """One dataset name, one record-id sequence, no machine column, two combines in it (a merged export): one task,
+    one group, and the warning says that several combines would be cleaned as one group and how many names and logs
+    the file holds; the limits are those of the one group without the warning (a warning only)."""
+    df = pyogrio.read_dataframe(two["shp"]).drop(columns=["Machine", "Src_Fmt"])
+    df["Dataset"] = "Merged export"
+    df["Obj__Id"] = np.arange(1, len(df) + 1)
+    shp = str(tmp_path / "merged.shp")
+    df.to_file(shp, engine="pyogrio")
+    R, g = _clean(shp)
+    G = R["sms3sigma"]["grouping"]
+    assert (G["mode"], G["n_groups"], G["n_machines"], G["n_tasks"]) == ("field", 1, None, 1)
+    W = _grouping_warnings(R)
+    assert len(W) == 1 and "does not tell the combines apart" in W[0]
+    Rf, gf = _clean(shp, {"group_by": "field"})
+    assert _limits(Rf) == _limits(R) and (gf["Keep"].to_numpy() == g["Keep"].to_numpy()).all()
+    assert _grouping_warnings(Rf) == []          # 'field' chosen and no combine found: nothing to say
+    # two combines found (the machine column) and 'field' chosen: told that they are cleaned as one group
+    R2, _ = _clean(two["shp"], {"group_by": "field"})
+    W = _grouping_warnings(R2)
+    assert len(W) == 1 and "the 2 combines of this file" in W[0] and "group_by 'field'" in W[0]
+    # one combine named by the machine column: no grouping warning, whatever the grouping
+    for gb in ("auto", "field", "machine"):
+        assert _grouping_warnings(_clean(field["shp"], {"group_by": gb})[0]) == []
+
+
 def test_a_reading_without_a_value_is_not_removed_by_that_filter(two):
     """300 readings of COMBINE-A have no moisture and 200 of COMBINE-B no speed: the 3-sigma steps keep them, count
     them (no_value) and warn; what a step removes is what lies outside its limits."""
@@ -312,3 +342,88 @@ def test_swath_bias_setting(field, tmp_path):
     assert R3["sms3sigma"]["swath"]["n_narrowed"] == s1["n_narrowed"]
     with pytest.raises(ValueError, match="swath_bias"):
         _clean(shp, {"swath_bias": "always"})
+
+
+def test_constant_column_gets_no_limit_whatever_its_decimals():
+    """A constant column (a manual moisture: every reading holds one value) has no spread to cut. Summed in floating
+    point its SD is about 1e-15, not 0; with a third decimal the limits rounded to 2 decimals (14.16-14.16) would
+    exclude every reading. Such a column gets no limit, as an SD of exactly 0 does."""
+    for v in (14.163, 14.162, 9.163, 14.13, 14.125, 13.5, 13.300000190734863):
+        for n in (1_000, 20_000, 50_000):
+            lim, why = sms.sigma_limits_why(np.full(n, v), 3.0, 0.0, 2)
+            assert why == sms.NO_LIMIT_SD0 and sms.sigma_limits(np.full(n, v), 3.0, 0.0, 2) is None, (v, n)
+
+
+def test_rounded_limits_never_exclude_the_mean():
+    """A near-constant column: 20,000 readings at 14.163 and one at 14.17 (SD 4.9e-5) give limits 14.16-14.16 that do
+    not contain the mean and would remove all 20,001 readings: no limit, and the reason is given."""
+    v = np.r_[np.full(20_000, 14.163), 14.17]
+    lim, why = sms.sigma_limits_why(v, 3.0, 0.0, 2)
+    assert why == sms.NO_LIMIT_MEAN_OUTSIDE and (lim[3], lim[4]) == (14.16, 14.16)
+    assert sms.sigma_limits(v, 3.0, 0.0, 2) is None
+    assert "do not contain the mean" in sms.mean_outside_note(lim, 2)
+    # ordinary data: the limits are those of mean +/- 3 SD as before
+    rng = np.random.default_rng(3)
+    w = 14.0 + rng.normal(0, 0.4, 5_000)
+    lim2, why2 = sms.sigma_limits_why(w, 3.0, 0.0, 2)
+    mu, sd = float(w.mean()), float(w.std())
+    assert why2 is None and lim2[3] == sms.round_half_up(mu - 3 * sd, 2) and lim2[4] == sms.round_half_up(mu + 3 * sd, 2)
+    # a 2-decimal near-constant column keeps its limits (they hold the mean): nothing changes for it
+    x = np.r_[np.full(1_000, 14.13), np.full(10, 14.20)]
+    lim3, why3 = sms.sigma_limits_why(x, 3.0, 0.0, 2)
+    assert why3 is None and lim3[3] <= float(x.mean()) <= lim3[4]
+
+
+def test_manual_moisture_with_a_third_decimal_removes_nothing(two, tmp_path):
+    """Both combines at a constant moisture of 14.163 % (COMBINE-A) and 14.163 % with one reading at 14.17 %
+    (COMBINE-B, near-constant): the moisture step keeps every reading of both and says why for COMBINE-B; the
+    readings without a moisture stay unfiltered as before."""
+    df = pyogrio.read_dataframe(two["shp"])
+    has = df["Moisture__"].notna()
+    df.loc[has, "Moisture__"] = 14.163
+    ib = df.index[(df["Machine"] == "COMBINE-B") & has][0]
+    df.loc[ib, "Moisture__"] = 14.17
+    shp = str(tmp_path / "manual_moisture.shp")
+    df.to_file(shp, engine="pyogrio")
+    R, _g = _clean(shp)
+    steps = {(s["group"], s["step"]): s for s in R["sms3sigma"]["steps"]}
+    for m in ("COMBINE-A", "COMBINE-B"):
+        s = steps[(m, "S3")]
+        assert s["removed"] == 0 and s["lo"] is None and s["n_after"] == s["n_before"]
+    assert steps[("COMBINE-A", "S3")]["note"] == sms.NO_LIMIT_NOTE
+    assert "do not contain the mean" in steps[("COMBINE-B", "S3")]["note"]
+    w = [x for x in R["warnings"] if "do not contain the mean" in x]
+    assert len(w) == 1 and "COMBINE-B" in w[0] and "14.16-14.16" in w[0]
+    assert R["cascade"][3]["removed"] == 0
+
+
+def test_a_typed_floor_keeps_its_limits_and_is_not_called_constant():
+    """The rounding guard judges mean +/- 3 SD before the floor: a floor the user typed above the group's mean keeps
+    the limits it always gave (floor - rounded upper limit) and no 'constant' reason."""
+    rng = np.random.default_rng(11)
+    v = 20.0 + rng.normal(0, 4.0, 2_000)
+    mu, sd = float(v.mean()), float(v.std())
+    lim, why = sms.sigma_limits_why(v, 3.0, 40.0, 2)
+    assert why is None and lim[3] == 40.0 and lim[4] == sms.round_half_up(mu + 3 * sd, 2)
+    assert sms.sigma_limits(v, 3.0, 40.0, 2) == lim
+
+
+def test_rounded_limits_that_remove_most_of_a_near_constant_column_give_no_limit():
+    """A near-constant column whose common value has more decimals than the limits: 98.6 % of the readings at
+    14.1599 and 1.4 % at 14.1743 give limits 14.16-14.17 that hold the mean (14.1601) but remove 98.6 % of the
+    readings. The rounding alone does that: no limit, with the reason; ordinary columns keep theirs."""
+    v = np.r_[np.full(986, 14.1599), np.full(14, 14.1743)]
+    lim, why = sms.sigma_limits_why(v, 3.0, 0.0, 2)
+    assert (lim[3], lim[4]) == (14.16, 14.17) and lim[3] <= float(v.mean()) <= lim[4]
+    assert why == sms.NO_LIMIT_MEAN_OUTSIDE and sms.sigma_limits(v, 3.0, 0.0, 2) is None
+    assert "more than half" in sms.mean_outside_note(lim, 2)
+    w = "".join(sms.mean_outside_warning("S3", "moisture", "%", "COMBINE-A", lim, 2))
+    assert "14.16-14.17 %" in w and "constant or nearly so" in w
+    # 3-sigma itself never removes more than 1/9 of a group: random columns of any spread keep their plain limits
+    rng = np.random.default_rng(5)
+    for s_ in (0.004, 0.01, 0.4, 25.0):
+        x = 14.0 + rng.normal(0, s_, 3_000)
+        lim2, why2 = sms.sigma_limits_why(x, 3.0, 0.0, 2)
+        mu, sd = float(x.mean()), float(x.std())
+        assert why2 is None and (lim2[3], lim2[4]) == (max(0.0, sms.round_half_up(mu - 3 * sd, 2)),
+                                                       sms.round_half_up(mu + 3 * sd, 2)), s_

@@ -52,6 +52,7 @@ from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, Simpl
                                 TableStyle)
 
 from engine.clean import references as refs
+from engine.clean.sms3sigma import edge_rule_text as sms_edge_rule
 from engine.clean import yield_clean
 
 # Olds College palette (assets/brand/BRAND.md, app/brand.py): navy headings and table headers, light-blue zebra rows and
@@ -476,12 +477,30 @@ def _difm_column(R) -> tuple[str, str]:
                          L.get("yld_lvl_sy_vs_ticket_pct"))
         else:
             what, gap = "the mapped dry yield x factor x L", L.get("yld_level_vs_ticket_pct")
+        cf = ""
+        if L.get("clean_file_level_vs_ticket_pct") is not None and L.get("clean_file_level_column") == col:
+            cf = (f"; the clean file's {col} sums to {float(L['clean_file_level_sum_bu']):,.2f} bu, "
+                  f"{float(L['clean_file_level_vs_ticket_pct']):+.2f} % of the weight compared"
+                  + (f" (the readings the cleaning removed carry {float(L['removed_share_of_leveled_pct']):.2f} % of "
+                     "the leveled grain)" if L.get("removed_share_of_leveled_pct") is not None else ""))
         if gap is not None and abs(float(gap)) <= 0.05:
-            return col, why + f": the bu/ac now sum to the scale; {what}"
+            return col, why + f": over every processed reading the bu/ac now sum to the scale; {what}{cf}"
         if gap is None:
-            return col, why + f"; {what} (its total against the weight was not measured)"
-        return col, (why + f"; {what}: it sums to {float(gap):+.2f} % of the weight compared, the gap between this "
-                     f"column and the comparison column ({L.get('integral_column')})")
+            return col, why + f"; {what} (its total against the weight was not measured){cf}"
+        pp = L.get("leveled_processed_vs_ticket_pct")
+        if (L.get("import_left_out") or {}).get("included_in_L") and pp is not None:
+            # the monitor total L is built on also holds the readings the import left out below its minimum
+            lo_why = ("the readings Import as SMS left out below its minimum, in the monitor total L is built on, "
+                      "carry the rest")
+            if abs(float(gap) - float(pp)) <= 0.05:
+                return col, (why + f"; {what}: over every processed reading it sums to {float(gap):+.2f} % of the "
+                             f"weight compared: {lo_why}" + cf)
+            return col, (why + f"; {what}: over every processed reading it sums to {float(gap):+.2f} % of the weight "
+                         f"compared ({L.get('integral_column')} x L {float(pp):+.2f} %: {lo_why}; the rest is the gap "
+                         f"between this column and the comparison column)" + cf)
+        return col, (why + f"; {what}: over every processed reading it sums to {float(gap):+.2f} % of the weight "
+                     f"compared, the gap between this column and the comparison column ({L.get('integral_column')})"
+                     + cf)
     fa = ((R.get("machines") or {}).get("factor_applied") or {}).values()
     if str(col).startswith("Yld_Harm") and not any(f is not None and abs(float(f) - 1) > 1e-12 for f in fa):
         col = (R.get("columns") or {}).get("yield") or "Yld_Vol_Dr"
@@ -529,6 +548,31 @@ def _import_text(imp: dict) -> str:
     return s + "."
 
 
+def _left_out_text(L) -> str:
+    """The grain of the readings the import left out, next to L (level['import_left_out']); '' when none."""
+    lo = L.get("import_left_out") if isinstance(L, dict) else None
+    if not isinstance(lo, dict):
+        return ""
+    st = lo.get("steps") or {}
+    parts = [f"{_n(v.get('n'))} {_e(k)} ({_n(v.get('bu'), 2)} bu over {_n(v.get('area_ac'), 2)} ac)"
+             for k, v in st.items() if v.get("n")]
+    if not parts:
+        return ""
+    s = ("The import left out " + "; ".join(parts) + " inside the field of interest (on the basis of the monitor "
+         f"total: {_e(lo.get('basis'))})")
+    if lo.get("below_min_bu"):
+        s += (f": the readings below the minimum carry {float(lo.get('share_of_monitor_pct') or 0):.2f} % of the "
+              "monitor total, grain the scale weighed")
+        if lo.get("included_in_L"):
+            s += ", and they are in the monitor total L is built on"
+        elif lo.get("factor_with_below_min") is not None:
+            s += f"; with them L would be {float(lo['factor_with_below_min']):.4f}"
+    if lo.get("above_max_bu"):
+        s += (f"; the readings above the maximum would add {float(lo.get('above_max_share_of_monitor_pct') or 0):.2f}"
+              " % more, readings the import judged implausible, not counted")
+    return s + "."
+
+
 def _level_text(R) -> str | None:
     L = R.get("level")
     if not L:
@@ -552,9 +596,20 @@ def _level_text(R) -> str | None:
     if L.get("ticket_bu_at_standard") is not None and tick is not None:
         s += (f" = {float(tick):,.2f} bu at the standard moisture (the ticket shrunk by the rule of the column it is "
               f"compared with, {_e(L.get('integral_column'))}: {_e(L.get('comparison_basis') or '')})")
-    s += (f" / monitor total {_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac "
-          f"(column {_e(L.get('integral_column'))}, all processed points"
-          + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else ""))
+    lo_in = bool((L.get("import_left_out") or {}).get("included_in_L")) and L.get("processed_set_integral_bu") is not None
+    if lo_in:
+        # the monitor total L is built on: the processed points plus the readings the import left out below its minimum
+        n_lo = ((L["import_left_out"].get("steps") or {}).get("below the min. yield volume") or {}).get("n")
+        s += (f" / monitor total {_n(mon, 2)} bu (column {_e(L.get('integral_column'))}: the processed points, "
+              f"{_n(L['processed_set_integral_bu'], 2)} bu over "
+              f"{_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, plus the {_n(n_lo)} readings "
+              f"Import as SMS left out below its minimum, {_n(L.get('import_left_out_in_total_bu'), 2)} bu over "
+              f"{_n(L.get('import_left_out_area_ac'), 2)} ac"
+              + (f"; {_n(L.get('export_total_lb'))} lb in all" if L.get("export_total_lb") else ""))
+    else:
+        s += (f" / monitor total {_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac "
+              f"(column {_e(L.get('integral_column'))}, all processed points"
+              + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else ""))
     if _harmonised_differs(L) and "factor_harmonised" in L:
         # the L in the file (and of the band and the verdict) is the one after the combine factor: that one in bold
         s += (f") = L = {float(L['factor']):.4f} before the combine factor; with it the monitor total is "
@@ -605,6 +660,23 @@ def _source_text(R) -> str:
     return s + "."
 
 
+def _aoi_zone_text(R) -> str:
+    """Where the field-of-interest pre-step cut: the SMS 3-sigma method's S1 edge tolerance in cm when the pre-step
+    cut at it (aoi.buffer_m equal to the record's sms3sigma.clip.edge_tolerance_m; for a record without it, a cut
+    under 1 m), else the processing buffer in m (the OCCD method, or an SMS cleaning whose pre-step kept a wider
+    buffer, e.g. the engine's own 50 m)."""
+    A = R.get("aoi") or {}
+    bm = A.get("buffer_m")
+    if bm is None:
+        return "outside the field"
+    bm = float(bm)
+    if _is_sms(R):
+        tol = ((R.get("sms3sigma") or {}).get("clip") or {}).get("edge_tolerance_m")
+        if (bm == float(tol)) if tol is not None else (bm < 1):
+            return f"outside the field (S1 edge tolerance {100 * bm:g} cm)"
+    return f"outside the field + {bm:g} m buffer"
+
+
 def _aoi_text(R) -> str | None:
     A = R.get("aoi")
     if not A:
@@ -615,8 +687,8 @@ def _aoi_text(R) -> str | None:
                                              if A.get("headland_polygons") else "")
     if A.get("area_ac") is not None:
         s += f", {_n(A['area_ac'], 2)} ac"
-    s += (f". {_n(A.get('n_outside_buffer'))} points outside the field + {_n(A.get('buffer_m'))} m buffer were "
-          f"dropped before the cascade; {_n(A.get('n_in'))} processed")
+    s += (f". {_n(A.get('n_outside_buffer'))} points " + _aoi_zone_text(R)
+          + f" were dropped before the cascade; {_n(A.get('n_in'))} processed")
     if A.get("n_output_outside_aoi") is not None:
         s += (f"; {_n(A['n_output_outside_aoi'])} kept points outside the field itself were left out of the clean "
               "file (column In_AOI in the flagged file)" if A.get("clip_output", True) else
@@ -808,8 +880,8 @@ def _sms_swath_text(R) -> str:
     sw = (R.get("sms3sigma") or {}).get("swath") or {}
     if not sw:
         return "switched off"
-    t = (f"{_n(sw.get('n_removed'))} fully overlapped readings removed, {_n(sw.get('n_narrowed'))} narrowed to the "
-         "uncovered strip and moved to its centre")
+    t = (f"in the swath step, before the 3-sigma filters: {_n(sw.get('n_removed'))} fully overlapped readings "
+         f"removed, {_n(sw.get('n_narrowed'))} narrowed to the uncovered strip and moved to its centre")
     if sw.get("min_width_ft") is not None:
         t += f" (narrowest {sw['min_width_ft']:.2f} ft, largest scale x {sw.get('max_scale', float('nan')):.2f})"
     if sw.get("n_shortened"):
@@ -956,7 +1028,7 @@ def _section_aoi(story, A, num, sms=False, clip=None):
         story.append(Paragraph(
             "The boundary file is the field SMS clips to (Clip To Field Boundary, S1): the readings whose logged point "
             "lies outside it are set aside before the import check"
-            + (f" (a point within {100 * float(tol):g} cm of the edge counts as inside)" if tol is not None else "")
+            + (f" ({sms_edge_rule(tol)})" if tol is not None else "")
             + " and are not in the flagged file; the swath step, the 3-sigma statistics, the area and the averages use "
             "the readings inside only. When the file holds plots, Plot_Id (and Tgt_Rate) are added to the outputs. "
             f"{_e(refs.cite('aoi', notes=False))}.", BODY))
@@ -1254,7 +1326,8 @@ def _final_map(story, R):
     applied = "; ".join(_e(a) for a in (fm.get("applied") or []))
     _fig_block(story, R, "final", f"<b>Final map</b>: {_e(fm.get('column', ''))}, the yield to map",
                f"The {_n(fm.get('n_points'))} points of the clean file with their own values ({_e(fm.get('values_from') or '')}); "
-               f"mean {_n(fm.get('mean'), 2)}, median {_n(fm.get('median'), 2)}, SD {_n(fm.get('sd'), 2)} bu/ac, CV "
+               f"mean {_n(fm.get('mean'), 2)}, median {_n(fm.get('median'), 2)}, SD {_n(fm.get('sd'), 2)} bu/ac "
+               "(population SD, as SMS's Edit Legend), CV "
                f"{_n(fm.get('cv_pct'), 2)} %. {applied}. Colours centred on the field mean (yellow): red below, green "
                "above; nothing is interpolated or smoothed.", 4.9 * inch)
 
@@ -1376,9 +1449,15 @@ def _section_level(story, R, num):
         rows.append(["Monitor totals", "; ".join(f"{names[k]} {_n(v, 2)} bu" for k, v in tots if v is not None)
                      + (f"; over {_n(L.get('monitor_area_ac'), 2)} ac ({_e(L.get('monitor_area_source') or '')}) for "
                         "the bu/ac" if L.get("monitor_area_ac") else "")])
-    rows.append(["Monitor total (processed set)",
-                 f"{_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, column "
-                 f"{_e(L.get('integral_column'))}" + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else "")
+    lo_in = bool((L.get("import_left_out") or {}).get("included_in_L")) and L.get("processed_set_integral_bu") is not None
+    rows.append(["Monitor total (processed set + readings the import left out below its minimum)" if lo_in else
+                 "Monitor total (processed set)",
+                 (f"{_n(mon, 2)} bu: the processed set {_n(L['processed_set_integral_bu'], 2)} bu over "
+                  f"{_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac + the readings left out "
+                  f"{_n(L.get('import_left_out_in_total_bu'), 2)} bu over {_n(L.get('import_left_out_area_ac'), 2)} "
+                  "ac, column " if lo_in else
+                  f"{_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, column ")
+                 + f"{_e(L.get('integral_column'))}" + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else "")
                  + (f"; after the combine harmonisation {_n(L.get('export_total_harmonised_bu'), 2)} bu"
                     if harm_differs else "")])
     # the factor applied to the columns first (factor_final = after the harmonisation when a combine factor was
@@ -1535,6 +1614,8 @@ def make_report(result: dict, path: str) -> str:
     if isinstance(imp, dict):
         rows.append(["Import as SMS", _import_text(imp)])
     lv = _level_text(R)
+    if lv and _left_out_text(R.get("level")):
+        lv += " " + _left_out_text(R.get("level"))
     if lv:
         added_l = R.get("difm_ready_added_columns")
         val_l = (R.get("level") or {}).get("use") == "validate" or (

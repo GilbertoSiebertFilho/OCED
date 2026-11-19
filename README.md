@@ -5,9 +5,23 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.2** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.3** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.3:* closer to SMS, and every value typed by hand used as it is shown. The clip (S1) keeps a reading
+only inside the boundary (edge tolerance 0, as SMS; it was 1 cm), in the field-of-interest pre-step and the
+as-applied cleaning too, and the report, the app and the cleaning record name the tolerance used. John Deere Gen4
+logs: the speed and the distance of a reading are the receiver's logged ones, as SMS reads them (the decode report
+names fixes without them). A manual moisture is used with the 2 decimals it is shown with, and a 3-sigma limit never
+leaves out the group's own mean (limits whose rounding would remove more than half of a group are not applied, with a
+warning). The import's settings line says what was applied, with the decimals a typed value is used with; the command
+line has flags for every manual import value. The grower's weight: the grain of the readings the import left out
+(below its minimum) is reported and counted in the monitor total behind the level L; both areas of a bu/ac weight and
+both sums of the leveled column are given; grain set aside by the field of interest is named from 1 %. New warnings,
+which change no number: a file's units (bushel, moisture as a fraction, width), several combines that may be cleaned
+as one group, units left out of the field of interest with readings inside it, a boundary without a .prj, the Gen4
+calibration check at the monitor's test weight; the final-map line gives SMS's average and a population SD.
 
 *Changes in 0.3.2:* the files made at the end carry the cleaning's crop and moisture. A product chosen in step 2 for
 a point export (a shapefile, a `.kml` / `.kmz`, an Operations Center or SMS export) is now named in its imported
@@ -281,7 +295,8 @@ deeper.
      the yields: the monitor's total against the grower's on the same basis, `L = grower / monitor` and a verdict
      (≤ 1 %, 1–3 %, 3–10 %, > 10 %). The two totals are compared as masses in the file's own bushel: a bushel weight
      never changes a weight given in lb, kg or t. A weight *at the standard moisture* is compared with the file's dry
-     yield as imported (one-sided), and `Yld_Level` then sums to that weight; a wet weight with its grain moisture is
+     yield as imported (one-sided), and `Yld_Level` over every processed reading then sums to that weight (the clean
+     file, without the readings the cleaning removed, sums less: the report gives both); a wet weight with its grain moisture is
      a dry-matter comparison. A yield per acre without acres is over the boundary when the clip is on, else over the
      area harvested (every strip once, after S2). *Validate* changes no yield and lets the weight confirm no combine
      factor; *validate and adjust* also writes `Yld_Level` (the dry yield × L) into the clean file. The monitor's
@@ -300,7 +315,11 @@ deeper.
      `.prj`, a `.geojson`, `.gpkg`, `.kml` or `.kmz`; a file of several fields asks which one is this field
      (polygons that all carry one field name, none overlapping another and each within 100 m of another, are taken
      together as that field without asking; a drawing tool's default name such as "Untitled Polygon" is no field
-     name). A point on the edge is inside (1 cm tolerance, as SMS).
+     name). A reading whose logged point lies outside the boundary is clipped, even by a few millimetres, as in SMS
+     (edge tolerance 0, measured on SMS harvest cleanings, and the same for as-applied files, which SMS clips with
+     the same command; `sms3sigma.clip_tolerance_m`, or `clip_tolerance_m` of an as-applied cleaning, widens it).
+     A point exactly on the edge is clipped, and so is a reading in a gap between two polygons of the field (a field
+     drawn in parts): the field is the union of its polygons; a tolerance above 0 closes gaps up to twice its width.
    - On screen: a line with the import the cleaning starts from (step 1's default or step 2's settings, its
      readings and S0's minimum: the import's, or *S0 minimum* in the settings for a file not imported as SMS), then
      the settings, folded into one line once the file is cleaned. The result: a strip of cards (readings kept, area,
@@ -429,8 +448,8 @@ SMS's product table for the weight to volume and dry moisture, min. yield volume
 kept); `--no-sms-import` cleans the file as it is; `--product`,
 `--weight-to-volume`, `--dry-moisture`, `--min-yield`, `--max-yield`, `--expand-dry-moisture` set the import's
 values, and S0 then takes the import's minimum), then cleaned with the SMS 3-sigma method (the default `--method
-sms3sigma`; `--sms-order`, `--sms-group`). `--aoi FILE` is the field boundary: for the SMS method the S1 clip (1 cm edge
-tolerance), as in the app. A planter, sprayer or other point export (no yield column) is cleaned as an as-applied
+sms3sigma`; `--sms-order`, `--sms-group`). `--aoi FILE` is the field boundary: for the SMS method the S1 clip (edge
+tolerance 0, as SMS), as in the app. A planter, sprayer or other point export (no yield column) is cleaned as an as-applied
 file by `engine/clean/applied3s.py` (`--attributes A,B` chooses the attributes), never by the yield cleaning.
 
 Grower data (monitor cards, exports, boundaries, results) never goes into this repository: `.gitignore` lets only the

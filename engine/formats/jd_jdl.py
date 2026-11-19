@@ -31,10 +31,15 @@ Two ways to turn the logs into readings (``decode(points=...)``):
 Points as Ag Leader SMS Advanced makes them, the default (points="sms"; _sms_groups, _sms_file_points). SMS reads
 every log file on its own and makes its points of the 5 Hz header samples (type 2), about one per second: the samples
 whose intervals add up to no more than 0.9 s are one point, at the position of its last sample. Per point: Duration =
-the time since the point before; distance = the antenna's (type 1) own 5 Hz steps added up; width = the sections on
-0.1 s after the last sample; flow and moisture = the distance-weighted mean of the channel over the point's samples,
-a sample with the header not working counting as 0; wet mass = flow x Duration. Every point with a width is kept,
-the first and last of a pass and the ones after a stop included: SMS's own import then leaves out those under its
+the time since the point before; distance = the receiver's own distance per fix, which the GNSS records (type 1)
+log beside the position, added up over the point's fixes - the fixes of a gap in the header record (a stop) too
+(_sms_logged; logs without that stream: the antenna's 5 Hz steps); width = the sections on 0.1 s after the last
+sample; flow and moisture = the distance-weighted mean of the channel over the point's samples, a sample with the
+header not working counting as 0; wet mass = flow x Duration; speed = the receiver's own logged ground speed: each
+fix's speed goes to the header sample nearest in time, a sample reads the plain mean of what it gets and a point the
+mean of its samples weighted by their logged distance, so across a stop the first half of the fixes reads in the
+point before it (logs without these streams: the antenna distance over the GNSS time). Every point with a width is
+kept, the first and last of a pass and the ones after a stop included: SMS's own import then leaves out those under its
 minimum yield (engine/sms_import.py). Measured against raw SMS point exports: every SMS point is one of these points,
 with the same Duration, distance, width, flow and moisture on nearly every point, and the area and wet mass of a field
 met closely. Not reproduced: a few points SMS leaves out (most of them short, before a gap) or keeps with another flow
@@ -393,13 +398,16 @@ def read_meta(path) -> FileMeta | None:
 class FileData:
     meta: FileMeta
     samples: dict            # (ddi, unit) -> [t_ms int64 array, value float array]
-    gnss: pd.DataFrame       # t_ms, lat, lon, alt_m
+    gnss: pd.DataFrame       # t_ms, lat, lon, alt_m, dist_mm, speed_mms (logged distance / speed, NaN when not
+                             # logged), blk_hdr_last (time of the last header sample of the fix's data block)
     ends: pd.DataFrame       # t_ms, lat1, lon1, lat2, lon2   (header end points)
     cws: dict                # group rank -> (t_ms int64 array, states uint8 2-D array (n_events x n_sections))
     n_blocks: int = 0
     n_records: int = 0
     n_absolute: int = 0      # records without a carry (first block of a log session): absolute arrays
     n_incomplete: int = 0    # position records missing a delta array (skipped)
+    n_unlogged: int = 0      # GNSS fixes without the receiver's logged distance or speed in a file that logs them
+    n_abs_logged: int = 0    # absolute GNSS records that also carry an anchor of the logged distance or speed
     warnings: list = dataclasses.field(default_factory=list)
     t0_ms: int | None = None                                 # start of the file's first data block
     carry: dict = dataclasses.field(default_factory=dict)    # (ddi, unit) -> the value a channel brings into the file
@@ -431,6 +439,23 @@ def _stream(rec_fields, anchors, deltas, t_delta, bs):
     return t, vals, absolute
 
 
+def _gnss_logged(rec_fields, n, absolute):
+    """What a type-1 (GNSS) record logs besides the position, per sample: the receiver's own distance travelled since
+    the sample before (mm; anchor 8 / deltas 15) and its ground speed (mm/s; anchor 5 / deltas 21), anchored delta
+    streams like the position (the anchor of a record that has anchors, 0 in an absolute record). NaN where the
+    record does not hold the stream. Measured against SMS's raw point exports: SMS's Distance of a point is the sum of
+    the first over the point's fixes and its Speed is built from the second (_sms_logged)."""
+    d = {a: v for a, _, v in rec_fields}
+    out = []
+    for a, k in ((8, 15), (5, 21)):
+        z = _zz(d[k]) if k in d and isinstance(d[k], (bytes, bytearray)) else np.zeros(0, np.int64)
+        if len(z) < n or not (absolute or a in d):
+            out.append(np.full(n, np.nan))
+            continue
+        out.append((0.0 if absolute else float(_num(d[a]))) + np.cumsum(z[:n]).astype(float))
+    return out
+
+
 def decode_file(path, meta: FileMeta | None = None) -> FileData:
     """Decode the data blocks of one .jdl (only the channels in WANT, the GNSS, the header ends and the section states).
     What the first record of a stream carries into the file (the last value of the log before it) is kept apart, in
@@ -458,6 +483,7 @@ def decode_file(path, meta: FileMeta | None = None) -> FileData:
             if out.t0_ms is None:
                 out.t0_ms = bs
             out.n_blocks += 1
+            g0, h_last = len(G), None                     # this block's GNSS records; its last header sample
             for v9 in _all(hf, 9):
                 types, ids, recs = [], None, []
                 for f3, wt3, v3 in _fields(v9):
@@ -511,13 +537,16 @@ def decode_file(path, meta: FileMeta | None = None) -> FileData:
                             if 1 in a and 2 in a:
                                 out.gnss_carry = (float(_num(a[1])) / 1e9, float(_num(a[2])) / 1e9,
                                                   ref + _s64(a[26]) if 26 in a else bs)
-                        r = _stream(_fields(raw), (1, 2, 4), (12, 13, 16), 10, bs)
+                        fr = _fields(raw)
+                        r = _stream(fr, (1, 2, 4), (12, 13, 16), 10, bs)
                         if r is None:
                             out.n_incomplete += 1
                         if r is None or r == "carry":
                             continue
                         out.n_absolute += r[2]
-                        G.append((r[0], r[1][0] / 1e9, r[1][1] / 1e9, r[1][2] / 1000.0))
+                        out.n_abs_logged += bool(r[2] and any(a in (5, 8) for a, _, _ in fr))
+                        G.append((r[0], r[1][0] / 1e9, r[1][1] / 1e9, r[1][2] / 1000.0,
+                                  *_gnss_logged(fr, len(r[0]), r[2])))
                     elif t == 2 and (meta.header_id is None or cid == meta.header_id):
                         if "ends" not in first:
                             first.add("ends")
@@ -531,6 +560,7 @@ def decode_file(path, meta: FileMeta | None = None) -> FileData:
                             continue
                         out.n_absolute += r[2]
                         E.append((r[0], *(x / 1e9 for x in r[1])))
+                        h_last = int(r[0].max()) if h_last is None else max(h_last, int(r[0].max()))
                     elif t == 4:
                         d = _fields(raw)
                         ev_t, ev_s = [], []
@@ -550,11 +580,18 @@ def decode_file(path, meta: FileMeta | None = None) -> FileData:
                             lst = CW.setdefault(cid, [[], []])
                             lst[0].extend(ev_t)
                             lst[1].extend(ev_s)
+            for k in range(g0, len(G)):                   # the block's last header sample, with every GNSS record
+                G[k] = G[k][:6] + (np.full(len(G[k][0]), np.iinfo(np.int64).min if h_last is None else h_last,
+                                           np.int64),)
     for key, (tt, vv) in S.items():
         out.samples[key] = [np.concatenate(tt), np.concatenate(vv)]
-    cols = ["t_ms", "lat", "lon", "alt_m"]
+    cols = ["t_ms", "lat", "lon", "alt_m", "dist_mm", "speed_mms", "blk_hdr_last"]
     out.gnss = (pd.DataFrame({c: np.concatenate([g[i] for g in G]) for i, c in enumerate(cols)}) if G
                 else pd.DataFrame(columns=cols))
+    if len(out.gnss):
+        dm = np.isfinite(out.gnss.dist_mm.values.astype(float))
+        if dm.any():                                      # the file logs them: fixes that lack one (_sms_logged)
+            out.n_unlogged = int((~(dm & np.isfinite(out.gnss.speed_mms.values.astype(float)))).sum())
     cols = ["t_ms", "lat1", "lon1", "lat2", "lon2"]
     out.ends = (pd.DataFrame({c: np.concatenate([e[i] for e in E]) for i, c in enumerate(cols)}) if E
                 else pd.DataFrame(columns=cols))
@@ -1180,6 +1217,54 @@ def _held(fd: FileData, key, t):
     return _step_at(ts, vs, np.asarray(t, np.int64) + SMS_SNAP_MS) if len(ts) else np.full(len(t), np.nan)
 
 
+def _sms_logged(gn: pd.DataFrame, t, last):
+    """What the receiver logged (type-1 records, _gnss_logged), as SMS adds it up -> (distance m per header sample,
+    speed km/h per point; NaN where a point gets no fix), or None when the file's GNSS records do not log it.
+    t: the times of the file's header samples; last: the index of every point's last sample (_sms_groups).
+    Distance: a header sample takes the fixes after the header sample before it up to its own time - the fixes logged
+    in a gap of the header record too (a stop) - except the fixes logged after the last header sample of their data
+    block, which no sample takes; its distance is the sum of their logged distance.
+    Speed: every fix's logged speed goes to the header sample NEAREST in time (a fix exactly halfway to the earlier
+    sample, a fix at a sample's own time to that sample, a fix later than the file's last header sample to none; no
+    block rule), so across a gap of the header record the sample before the gap takes the first half of the fixes and
+    the sample after it the second half. A sample's speed is the plain mean of the speeds it gets; a point's speed is
+    the mean of its samples' speeds weighted by their logged distance (the plain mean when that distance is 0).
+    Measured point by point against SMS's raw point exports: the distance equals SMS's within the export's rounding
+    (4 decimals), and so does the speed except on a handful of points (the first point of a log session, a few
+    readings at long stops)."""
+    if "dist_mm" not in gn or not np.isfinite(gn.dist_mm.values.astype(float)).any():
+        return None
+    gt = gn.t_ms.values.astype(np.int64)
+    dmm = gn.dist_mm.values.astype(float)
+    vmm = gn.speed_mms.values.astype(float)
+    t = np.asarray(t, np.int64)
+    nt, n = len(t), len(last)
+    # ---- distance: the header sample at or after the fix, within the fix's data block
+    q = np.searchsorted(t, gt, side="left")
+    ok = (q < nt) & (gt <= gn.blk_hdr_last.values.astype(np.int64)) & np.isfinite(dmm)
+    step = np.bincount(q[ok], weights=dmm[ok], minlength=nt) / 1000.0
+    # ---- speed: the header sample nearest in time (halfway -> the earlier one), none after the last sample
+    qn = np.minimum(q, nt - 1)                              # the sample at or after the fix
+    qp = np.maximum(q - 1, 0)                               # the sample before it
+    after = np.abs(t[qn] - gt)
+    before = np.abs(gt - t[qp])
+    near = np.where((q > 0) & (before <= after) & (t[qn] != gt), qp, qn)
+    k = np.isfinite(vmm) & (q < nt)
+    sv = np.bincount(near[k], weights=vmm[k], minlength=nt)
+    nv = np.bincount(near[k], minlength=nt)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        s = np.where(nv > 0, sv / nv, np.nan)               # mm/s per header sample
+    pnt = np.searchsorted(last, np.arange(nt), side="left")  # the point of every header sample
+    fin = np.isfinite(s)
+    num = np.bincount(pnt[fin], weights=(s * step)[fin], minlength=n)
+    den = np.bincount(pnt[fin], weights=step[fin], minlength=n)
+    pl = np.bincount(pnt[fin], weights=s[fin], minlength=n)
+    cn = np.bincount(pnt[fin], minlength=n)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        speed = np.where(den > 0, num / den, np.where(cn > 0, pl / cn, np.nan)) / 1000.0 * 3.6
+    return step, speed
+
+
 def _sms_file_points(fd: FileData, lat0, lon0):
     """The points SMS makes of ONE log file (it reads every file on its own) -> (DataFrame, info), one row per point,
     exported or not ('reason'), from the 5 Hz header samples (type 2) of the file:
@@ -1189,15 +1274,20 @@ def _sms_file_points(fd: FileData, lat0, lon0):
                     on at the file's first widest point (0 for a header that works at full width once)
         Duration_s  _sms_groups; the last point of a file runs on to the next flow sample when that comes before
                     another GNSS fix
-        distance    per sample, what the antenna (type 1) moved since the fix before the sample's own, on the
-                    ellipsoid; 0 for a sample without a fix of its own; the carry of the GNSS record gives the first
-                    fix its step; a file of one sample and no carry: SMS_LONE_M. A point adds its samples up
+        distance    per sample, the receiver's logged distance of the fixes since the sample before (_sms_logged);
+                    in a log without that stream, what the antenna (type 1) moved since the fix before the sample's
+                    own, on the ellipsoid (0 for a sample without a fix of its own; the carry of the GNSS record
+                    gives the first fix its step); a file of one sample and no carry: SMS_LONE_M. A point adds its
+                    samples up
         width       the sections on SMS_SNAP_MS after the last sample (the logged width DDI 12001 without section
                     states); Y offset = the middle of those sections from the reference above
         flow,       the mean over the point's samples, weighted by their distance, of the channel held as _held
         moisture    does; a sample with the header not working (no section on) counts as 0, so a point that starts
                     or ends a pass reads low, as in SMS
         elevation   the antenna altitude at the last sample
+        speed       the receiver's logged speed: each fix to the header sample nearest in time, plain mean per sample,
+                    the samples weighted by their logged distance (_sms_logged); without those streams in the log:
+                    distance / the GNSS time of the samples
     Positions farther than OUTLIER_KM from (lat0, lon0) are garbage and left out before anything else."""
     info = {"end_samples_outlier": 0, "gnss_samples_outlier": 0, "no_section_states": False}
     en = fd.ends.drop_duplicates("t_ms")
@@ -1214,12 +1304,13 @@ def _sms_file_points(fd: FileData, lat0, lon0):
     mx, my = (x1 + x2) / 2, (y1 + y2) / 2
     carried = fd.ends_carry is not None
     first, last, dur = _sms_groups(t, fd.t0_ms if fd.t0_ms is not None else t[0], carried)
-    # ---- distance: the antenna's own 5 Hz steps
+    # ---- distance: what the receiver logged (_sms_logged), else the antenna's own 5 Hz steps
     gn = fd.gnss.drop_duplicates("t_ms")
     gx, gy = _local_xy(gn.lat.values, gn.lon.values, lat0, lon0)
     gfar = np.hypot(gx, gy) > OUTLIER_KM * 1000
     info["gnss_samples_outlier"] = int(gfar.sum())
     gt, gx, gy, galt = gn.t_ms.values.astype(np.int64)[~gfar], gx[~gfar], gy[~gfar], gn.alt_m.values[~gfar]
+    logged = _sms_logged(gn[~gfar], t, last)
     gstep = np.r_[0.0, np.hypot(np.diff(gx), np.diff(gy))]
     gdt = np.r_[0.0, np.diff(gt) / 1000.0]
     if len(gt) and fd.gnss_carry is not None:
@@ -1232,6 +1323,8 @@ def _sms_file_points(fd: FileData, lat0, lon0):
     step = np.where(own, gstep[j], 0.0) if len(gt) else np.zeros(n)
     moving = np.where(own, gdt[j], 0.0) if len(gt) else np.zeros(n)
     alt = np.where(own, galt[j], np.nan) if len(gt) else np.full(n, np.nan)
+    if logged is not None:
+        step = logged[0]                                    # SMS: the receiver's logged distance of the fixes
     if n == 1 and not carried:
         step[0] = SMS_LONE_M
     # ---- sections on at every sample
@@ -1273,6 +1366,9 @@ def _sms_file_points(fd: FileData, lat0, lon0):
         f_pt = np.where(dist > 0, total(flow * step) / dist, total(flow) / cnt)
         m_pt = np.where(dist > 0, total(moist * step) / dist, total(moist) / cnt)
         speed = np.where(total(moving) > 0, dist / total(moving), 0.0) * 3.6
+    if logged is not None:                                  # the receiver's own speed, as SMS (_sms_logged)
+        lone = n == 1 and not carried                       # a file's only sample (SMS_LONE_M): speed as before
+        speed = np.where(np.isfinite(logged[1]) & (not lone), logged[1], speed)
     if (DDI_FLOW, "mg1sec-1") in fd.samples:                # the last point runs on to the next flow sample
         ft = fd.samples[(DDI_FLOW, "mg1sec-1")][0]
         k = np.searchsorted(ft, t[-1], side="right")
@@ -1403,6 +1499,17 @@ def decode_detailed(root: str, unit_ids=None, opts: C.DecodeOptions | None = Non
         if n_inc:
             report["warnings"].append(f"{m0.vin}: {n_inc} malformed position record(s) (time deltas without value "
                                       "deltas) skipped")
+        n_unl = sum(fd.n_unlogged for fd in fds)
+        if n_unl and points == "sms":
+            report["warnings"].append(
+                f"{m0.vin}: {n_unl:,} GNSS fix(es) in {sum(fd.n_unlogged > 0 for fd in fds)} log file(s) without the "
+                "receiver's logged distance or speed, which the rest of the file logs - those fixes add no distance "
+                "and no speed to their point")
+        n_abl = sum(fd.n_abs_logged for fd in fds)
+        if n_abl and points == "sms":
+            report["warnings"].append(
+                f"{m0.vin}: {n_abl} GNSS record(s) with absolute positions also carry an anchor of the receiver's "
+                "logged distance or speed; it is not used (the stream is read from 0, as the position)")
         d, info = _sms_points(fds, m0) if points == "sms" else _readings(fds, m0)
         report["warnings"].extend(info.pop("warnings"))
         n_read += len(d)
@@ -1410,6 +1517,7 @@ def decode_detailed(root: str, unit_ids=None, opts: C.DecodeOptions | None = Non
         tw_s = [fd.samples[(DDI_TW, "lb1bu-1")][1] for fd in fds if (DDI_TW, "lb1bu-1") in fd.samples]
         mon_tw = (float(np.median(np.concatenate(tw_s))) if tw_s else
                   (m0.tw_kg_bu * C.LB_PER_KG if m0.tw_kg_bu else None))
+        log_tw = mon_tw                 # the test weight of the monitor's own bushels (DDI 39), whatever is used here
         ck = _crop_key(m0.crop)
         # a crop chosen in the options that differs from the monitor's: the monitor's test weight and standard
         # moisture belong to the monitor's crop and are not used (as jd_gs3_rcd)
@@ -1471,14 +1579,18 @@ def decode_detailed(root: str, unit_ids=None, opts: C.DecodeOptions | None = Non
             "t_ms": r.t_ms.values, "Y_Offset_f": r.y_off_m.values * C.FT_PER_M, "Yld_Mon_W": r.y39.values,
             "Spd560_mph": r.speed560_kmh.values / 3.6 * C.MPH_PER_MS, "n_act": r.n_act.values})
         frames.append(out)
-        # calibration evidence: our wet yield vs the monitor's own wet yield (DDI 39) on full-width readings
+        # calibration evidence: our wet yield vs the monitor's own wet yield (DDI 39) on full-width readings, both in
+        # bushels of the monitor's test weight (DDI 39 is in those; ours are in bushels of tw): a typed weight to
+        # volume or another crop is not a calibration difference. Without the monitor's test weight: as decoded
         with np.errstate(invalid="ignore", divide="ignore"):
-            ratio = out.Yld_Vol_We.values / r.y39.values
+            ratio = out.Yld_Vol_We.values * ((float(tw) / float(log_tw)) if (log_tw and tw) else 1.0) / r.y39.values
         okr = np.isfinite(ratio) & (r.y39.values > 10) & (r.speed_kmh.values > 2)
         if okr.sum() >= 30 and abs(float(np.median(ratio[okr])) - 1) > MONITOR_RATIO_TOL:
             report["warnings"].append(
                 f"{m0.vin}: the decoded wet yield is {100 * float(np.median(ratio[okr])):.0f} % of the monitor's own wet "
-                f"yield (DDI 39, median over {int(okr.sum()):,} readings; it should be close to 100 %): the area "
+                f"yield (DDI 39, median over {int(okr.sum()):,} readings, both in bushels of "
+                + (f"{float(log_tw):.2f} lb, the monitor's test weight" if (log_tw and tw) else "the decode's test weight")
+                + "; it should be close to 100 %): the area "
                 "(width or distance) or the mass flow was read wrong - check this decode before cleaning it")
         details.append(dict(
             machine=m0.vin, model=m0.model, client=m0.client, farm=m0.farm, field=m0.field, crop=m0.crop,
@@ -1502,7 +1614,8 @@ def decode_detailed(root: str, unit_ids=None, opts: C.DecodeOptions | None = Non
     report["points"] = points
     report["calibration"] = {
         "channel": "DDI 510 mass flow (mg/s, the display's calibrated wet grain flow) x reading duration = wet mass",
-        "area": ("width of the sections on x the antenna's 5 Hz steps added up over the point (as SMS)" if points == "sms"
+        "area": ("width of the sections on x the receiver's logged distance per fix (else the antenna's 5 Hz steps) "
+                 "added up over the point (as SMS)" if points == "sms"
                  else "DDI 12001 active width x path length of the header centre (5 Hz header end points) during the "
                       "reading"),
         "crop": crop, "test_weight_lb_bu": tw, "std_moisture_pct": sm, "shrink": opts.shrink,

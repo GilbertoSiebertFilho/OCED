@@ -40,7 +40,7 @@ NAME = "OCED"
 LONG_NAME = "OCED — Olds College Extract Data"
 TAGLINE = "Olds College Extract Data · raw yield data to clean shapefiles with the SMS 3-sigma sequence"
 ORG = "Olds College Smart Farm (OFPE)"
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 
 # ---- palette (hex strings; BRAND.md)
 NAVY = "#00358E"            # primary: buttons, headings, tree group titles, active states, lines and fits in figures
@@ -419,5 +419,5 @@ def rule():
 
 
 def footer_caption() -> str:
-    """The sidebar footer: 'OCED 0.3.2 · Olds College Smart Farm (OFPE)'."""
+    """The sidebar footer: 'OCED 0.3.3 · Olds College Smart Farm (OFPE)'."""
     return f"{NAME} {VERSION} · {ORG}"

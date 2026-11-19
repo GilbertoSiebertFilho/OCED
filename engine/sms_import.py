@@ -186,6 +186,11 @@ UNKNOWN_POINT_SUFFIX = ("; SMS's generic import of a point file needs a product,
                         "would")
 OTHER_YIELD_NAMES = ("vryieldmas",)   # per-area yields with no known basis: scaled with the manual swath only
 LABEL_CROP_COLUMN = "Crop_Name"   # the text column of the crop used when a point export's Crop column holds numbers
+# the checks of a file's units (unit_checks): warnings only, no value of the import changes
+BUSHEL_TOL = 0.005                    # the file's own mass / volume and the weight to volume in use differ beyond 0.5 %
+KG_HA_PER_LB_AC = 1.12085             # a mass per area in kg/ha read as lb/ac is this much too large
+MOISTURE_FRACTION_MAX = 1.0           # a moisture column whose 99th percentile is at most 1 holds fractions, not %
+WIDTH_FT_RANGE = (3.0, 80.0)          # a combine's logged width (ft): a median outside this is in another unit
 
 
 def sms_product(text) -> str | None:
@@ -320,8 +325,19 @@ def table_values(crop) -> tuple:
     return tw, ms, SMS_MIN_YIELD, MAX_YIELD_OTHER, None, (SRC_CROPS if k else None)
 
 
+MANUAL_MOISTURE_DECIMALS = 2          # the decimals of the manual moisture (the app's box, the 3-sigma limits)
+
+
+def round_manual_moisture(v):
+    """A typed manual moisture with the decimals it is used with (MANUAL_MOISTURE_DECIMALS), as the app's box shows
+    it ('%.2f'); None stays None."""
+    if v is None:
+        return None
+    return float(f"{float(v):.{MANUAL_MOISTURE_DECIMALS}f}")
+
+
 def settings(S: dict | None = None) -> dict:
-    """Every key of DEFAULTS, the given ones validated."""
+    """Every key of DEFAULTS, the given ones validated (a manual moisture rounded to MANUAL_MOISTURE_DECIMALS)."""
     out = dict(DEFAULTS)
     for k, v in (S or {}).items():
         if k not in DEFAULTS:
@@ -340,6 +356,11 @@ def settings(S: dict | None = None) -> dict:
         if not np.isfinite(v) or not lo <= v <= hi:
             raise ValueError(f"SMS import setting {k} = {v!r} is outside {lo:g}-{hi:g}")
         out[k] = v
+    if out["manual_moisture_pct"] is not None:
+        # the manual moisture is used with the decimals the app's box shows (MANUAL_MOISTURE_DECIMALS): a third
+        # decimal typed there is not visible, and every reading then holds that one value, whose 3-sigma limits are
+        # rounded to 2 decimals (14.163 % would give limits 14.16-14.16 that exclude every reading)
+        out["manual_moisture_pct"] = round_manual_moisture(out["manual_moisture_pct"])
     if out["product"] is not None:
         k = crop_key(out["product"])
         if k is None:
@@ -418,8 +439,11 @@ def resolve(S: dict, crop=None, monitor: dict | None = None, fmt: str | None = N
         out[k] = (None if v is None else float(v)) if given else d[k]
         if given and not (v is not None and d[k] is not None and abs(float(v) - float(d[k])) <= 1e-9):
             src[k] = SRC_YOU                             # the user's value differs from the source's: it wins
+    # an empty manual moisture follows the dry moisture; switched on, it is used with the decimals of a typed one
+    # (a dry moisture of 14.163 % would otherwise reach every reading with its third decimal)
     out["manual_moisture_pct"] = (S["manual_moisture_pct"] if S["manual_moisture_pct"] is not None
-                                  else out["dry_moisture_pct"])
+                                  else (round_manual_moisture(out["dry_moisture_pct"]) if S.get("use_manual_moisture")
+                                        else out["dry_moisture_pct"]))
     out["sources"] = src
     out["defaults"] = d
     out["sms_product"] = sms_name
@@ -428,25 +452,103 @@ def resolve(S: dict, crop=None, monitor: dict | None = None, fmt: str | None = N
     return out
 
 
-def describe(R: dict) -> str:
-    """One line of the settings, as SMS's dialog lists them."""
-    def f(v, d=2):
-        return "-" if v is None else f"{float(v):,.{d}f}"
+def value_text(v, d: int = 2) -> str:
+    """A value as it is used: `d` decimals, all of its own when it has more (a card's 60.0098 lb/bu reads 60.0098, not
+    60.01); '-' for None."""
+    if v is None:
+        return "-"
+    x = float(v)
+    s = f"{x:,.{d}f}"
+    if abs(x - round(x, d)) > 1e-9 * max(1.0, abs(x)):
+        s = f"{x:,.6f}".rstrip("0").rstrip(".")
+    return s
+
+
+# what the import applied (apply's 'applied') for each setting the user can ask for, and how its notes say why not
+_NOT_APPLIED_WHY = {
+    "manual_swath": ("manual swath not applied",),
+    "manual_moisture": ("manual moisture not applied",),
+    "flow_shift": ("flow shift", "not applied"),
+    "start_stop_delay": ("start / stop delay", "not applied"),
+    "weight_and_moisture": ("weight to volume and dry moisture not applied",),
+}
+
+
+def _why_not(notes, key) -> str:
+    """The reason an import note gives for a setting not applied ('the file has no width column'), or ''."""
+    keys = _NOT_APPLIED_WHY[key]
+    n = next((str(x) for x in notes or [] if all(k in str(x) for k in keys)), "")
+    if not n:
+        return ""
+    if "not applied: " in n:                     # 'manual swath not applied: the file has no width column'
+        return n.split("not applied: ", 1)[1].strip()
+    n = n.replace(": not applied", "")           # 'flow shift: the file needs ... columns: not applied'
+    return n.split(": ", 1)[1].strip() if ": " in n else n.strip()
+
+
+def not_applied(R: dict, rep: dict | None) -> dict:
+    """{setting: one sentence} of the settings the user asked for that the import could not apply (rep = apply's
+    result or an import record: 'applied' and 'notes'): a manual swath or moisture, a flow shift, start / stop delays,
+    and a weight to volume or dry moisture typed by the user. Empty without rep['applied'] (a record made before it
+    was kept: nothing is known)."""
+    ap = (rep or {}).get("applied")
+    if not isinstance(ap, dict) or not ap:
+        return {}
+    notes = (rep or {}).get("notes") or []
+    src = R.get("sources") or (rep or {}).get("sources") or {}
+    out = {}
+
+    def say(key, what):
+        why = _why_not(notes, key)
+        out[key] = f"{what} NOT applied" + (f": {why}" if why else "")
+    if R.get("use_manual_swath") and not ap.get("manual_swath"):
+        say("manual_swath", f"manual swath {value_text(R.get('manual_swath_ft'))} ft requested,")
+    if R.get("use_manual_moisture") and not ap.get("manual_moisture"):
+        say("manual_moisture", f"manual moisture {value_text(R.get('manual_moisture_pct'))} % requested,")
+    if R.get("flow_shift_s") and not ap.get("flow_shift"):
+        say("flow_shift", f"flow shift {value_text(R.get('flow_shift_s'))} s requested,")
+    if (R.get("start_delay_s") or R.get("stop_delay_s")) and not ap.get("start_stop_delay"):
+        say("start_stop_delay", f"start delay {value_text(R.get('start_delay_s'))} s / stop delay "
+                                f"{value_text(R.get('stop_delay_s'))} s requested,")
+    if (SRC_YOU in (src.get("test_weight_lb_bu"), src.get("dry_moisture_pct"))
+            and not ap.get("weight_and_moisture")):
+        say("weight_and_moisture", f"weight to volume {value_text(R.get('test_weight_lb_bu'))} lb/bu and dry moisture "
+                                   f"{value_text(R.get('dry_moisture_pct'))} % typed,")
+    return out
+
+
+def describe(R: dict, rep: dict | None = None) -> str:
+    """One line of the settings, as SMS's dialog lists them. A value the user typed (source 'you', and the manual
+    swath, moisture, delays and flow shift) is given as it is used, with all its decimals (value_text: 62.345 lb/bu,
+    not 62.35); the source's values with 2 decimals (a card's 60.0098 lb/bu reads 60.01, the rule of the app and the
+    report). With rep (apply's result or an import record) a setting the user asked for that the import could not
+    apply reads 'requested, NOT applied' (not_applied), so the line never presents it as a setting in force."""
+    src = R.get("sources") or {}
+
+    def f(v, d=2, key=None):
+        if v is None:
+            return "-"
+        return value_text(v, d) if (key is None or src.get(key) == SRC_YOU) else f"{float(v):,.{d}f}"
+    na = not_applied(R, rep)
     mn = R["min_yield"] if R["min_yield"] != AUTO else None
-    s = (f"product {R.get('product') or 'unknown'}; weight to volume {f(R['test_weight_lb_bu'])} lb/bu; dry moisture "
-         f"{f(R['dry_moisture_pct'])} %; expand dry moisture {'on' if R['expand_dry_moisture'] else 'off'}")
+    s = (f"product {R.get('product') or 'unknown'}; weight to volume {f(R['test_weight_lb_bu'], key='test_weight_lb_bu')}"
+         f" lb/bu; dry moisture {f(R['dry_moisture_pct'], key='dry_moisture_pct')} %"
+         + (" (typed, NOT applied)" if "weight_and_moisture" in na else "")
+         + f"; expand dry moisture {'on' if R['expand_dry_moisture'] else 'off'}")
     if R["use_manual_swath"]:
-        s += f"; manual swath {f(R['manual_swath_ft'])} ft"
+        s += f"; manual swath {f(R['manual_swath_ft'])} ft" + (" requested, NOT applied" if "manual_swath" in na else "")
     if R["use_manual_moisture"]:
-        s += f"; manual moisture {f(R['manual_moisture_pct'])} %"
+        s += (f"; manual moisture {f(R['manual_moisture_pct'])} %"
+              + (" requested, NOT applied" if "manual_moisture" in na else ""))
     if R["max_yield"] is not None:
-        s += (f"; yield volume {f(mn, 3)}-{f(R['max_yield'])} bu/ac" if mn is not None
-              else f"; yield volume up to {f(R['max_yield'])} bu/ac, no minimum")
+        s += (f"; yield volume {f(mn, 3, 'min_yield')}-{f(R['max_yield'], key='max_yield')} bu/ac" if mn is not None
+              else f"; yield volume up to {f(R['max_yield'], key='max_yield')} bu/ac, no minimum")
     else:
-        s += (f"; yield volume from {f(mn, 3)} bu/ac, no maximum" if mn is not None
+        s += (f"; yield volume from {f(mn, 3, 'min_yield')} bu/ac, no maximum" if mn is not None
               else "; no yield volume limits")
-    s += (f"; start delay {f(R['start_delay_s'])} s, stop delay {f(R['stop_delay_s'])} s, flow shift "
-          f"{f(R['flow_shift_s'])} s")
+    s += (f"; start delay {f(R['start_delay_s'])} s, stop delay {f(R['stop_delay_s'])} s"
+          + (" (requested, NOT applied)" if "start_stop_delay" in na else "")
+          + f", flow shift {f(R['flow_shift_s'])} s" + (" (requested, NOT applied)" if "flow_shift" in na else ""))
     return s
 
 
@@ -457,12 +559,15 @@ def describe_sources(R: dict) -> str:
     src = R.get("sources") or {}
     head = (f"SMS product {R['sms_product']}: " if R.get("sms_product") and SRC_TABLE in src.values() else "")
 
-    def f(v, unit, d=2):
-        return "none" if v in (None, AUTO) else f"{float(v):,.{d}f} {unit}"
-    parts = [f"weight to volume {f(R.get('test_weight_lb_bu'), 'lb/bu')}",
-             f"dry moisture {f(R.get('dry_moisture_pct'), '%')}",
-             f"min. yield volume {f(R.get('min_yield'), 'bu/ac', 3)}",
-             f"max. yield volume {f(R.get('max_yield'), 'bu/ac')}"]
+    def f(v, unit, d=2, key=None):
+        if v in (None, AUTO):
+            return "none"
+        # a typed value as it is used (all its decimals), the source's with the usual decimals (describe)
+        return f"{value_text(v, d) if src.get(key) == SRC_YOU else f'{float(v):,.{d}f}'} {unit}"
+    parts = [f"weight to volume {f(R.get('test_weight_lb_bu'), 'lb/bu', key='test_weight_lb_bu')}",
+             f"dry moisture {f(R.get('dry_moisture_pct'), '%', key='dry_moisture_pct')}",
+             f"min. yield volume {f(R.get('min_yield'), 'bu/ac', 3, 'min_yield')}",
+             f"max. yield volume {f(R.get('max_yield'), 'bu/ac', key='max_yield')}"]
     return head + ", ".join(p + (f" ({src[k]})" if src.get(k) else "") for p, k in zip(parts, RESOLVED_KEYS))
 
 
@@ -592,6 +697,63 @@ def _shift(clock, runs, period, values, s) -> np.ndarray:
     return out
 
 
+def file_bushel(g, Y: dict) -> tuple:
+    """(lb/bu, which pair) the file's own yield columns give: the median of wet mass / wet volume over the readings
+    where both are positive, else of dry mass / dry volume; (None, None) when the file has neither pair."""
+    for m, v, lab in (("wet_mass", "wet_vol", "wet mass / wet volume"), ("dry_mass", "dry_vol", "dry mass / dry volume")):
+        a, b = _num(g, Y.get(m)), _num(g, Y.get(v))
+        if a is None or b is None:
+            continue
+        k = np.isfinite(a) & np.isfinite(b) & (a > 0) & (b > 0)
+        if k.sum():
+            return float(np.median(a[k] / b[k])), f"{Y[m]} / {Y[v]}"
+    return None, None
+
+
+def unit_checks(g, C: dict, Y: dict, tw=None, converts: bool = False) -> list:
+    """Warnings about the units of a harvest point file, each naming what it measured; no value of the import changes:
+    - converts (the import computes the volumes again from the wet mass with tw): the file's own bushel (file_bushel)
+      differs from tw by more than BUSHEL_TOL, so the bushels the import writes differ from the file's own by that
+      ratio (a ratio of 1.1209 is a mass column in kg/ha read as lb/ac);
+    - moisture given as a fraction (its 99th percentile at most MOISTURE_FRACTION_MAX, some reading above 0);
+    - a logged width whose median is outside WIDTH_FT_RANGE ft (inches, or another unit)."""
+    out = []
+    if converts and tw:
+        fb, pair = file_bushel(g, Y)
+        if fb is not None:
+            r = fb / float(tw)
+            if abs(r - 1) > BUSHEL_TOL:
+                if abs(r / KG_HA_PER_LB_AC - 1) <= BUSHEL_TOL:
+                    why = (f"{KG_HA_PER_LB_AC:.4f} = kg/ha over lb/ac: the mass column looks like kg/ha read as lb/ac, "
+                           f"so every yield the import computes from it is {100 * (r - 1):.2f} % too high (or the file "
+                           f"was made at {fb:.2f} lb/bu, a bushel {100 * (r - 1):.1f} % heavier: if that is its bushel "
+                           "weight, type it)")
+                else:
+                    why = (f"the bushels the import writes are {100 * (r - 1):+.2f} % against the file's own (the file "
+                           f"was made at {fb:.2f} lb/bu; if that is the right bushel weight, type it)")
+                out.append(f"the file's own bushel is {fb:.2f} lb/bu ({pair}, median) but the import converts the wet "
+                           f"mass with {float(tw):.2f} lb/bu (ratio {r:.4f}): {why}")
+    mo = _num(g, C.get("moisture"))
+    if mo is not None:
+        f = mo[np.isfinite(mo)]
+        if len(f) and float(f.max()) > 0 and float(np.percentile(f, 99)) <= MOISTURE_FRACTION_MAX:
+            out.append(f"the moisture column {C['moisture']} looks like a fraction, not a percentage (99 % of the "
+                       f"readings at or below {MOISTURE_FRACTION_MAX:g}, largest {float(f.max()):.3g}): every reading is "
+                       "then drier than the dry moisture, so the dry yield is not shrunk, and the moisture filter runs "
+                       "on fractions; give the moisture in % (x 100) or use a manual moisture")
+    w = _num(g, C.get("width_ft"))
+    if w is not None:
+        f = w[np.isfinite(w) & (w > 0)]
+        if len(f):
+            med = float(np.median(f))
+            if not WIDTH_FT_RANGE[0] <= med <= WIDTH_FT_RANGE[1]:
+                out.append(f"the width column {C['width_ft']} has a median of {med:,.2f}, outside "
+                           f"{WIDTH_FT_RANGE[0]:g}-{WIDTH_FT_RANGE[1]:g} ft for a combine header: it looks like another "
+                           f"unit ({med / 12:,.2f} ft if inches); the areas, Optimize Swath Widths and a manual swath use it "
+                           "as feet")
+    return out
+
+
 def _group_counts(df, C, mask) -> dict:
     """{machine (or dataset): readings of mask}, for the left-out counts per combine."""
     col = C.get("machine") or C.get("dataset")
@@ -602,39 +764,19 @@ def _group_counts(df, C, mask) -> dict:
     return {str(a): int(b) for a, b in zip(u, k)}
 
 
-def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | None = None,
-          keep_crop: str | None = None) -> dict:
-    """Import a standard harvest point file as SMS would: manual swath / moisture, flow shift, the weight to volume
-    and dry moisture (wet volume, dry mass and dry volume computed again from the wet mass), the start / stop delays
-    and the yield volume limits. Writes out_shp with the kept records byte for byte and the changed cells patched
-    (engine.clean.yield_clean.write_points); a file whose records GDAL reads differently from the raw .dbf (deleted
-    records, a damaged .shx) is written through GDAL instead, which a note says. When nothing changes and nothing is
-    left out the file is not copied.
-    labels: {text column: value} written in every kept record (a decoded file whose yields are converted with another
-    crop than the one it is labelled with: {"Product": ..., "Crop": ...}); a column the file lacks is added after its
-    own ones. keep_crop: a crop key: a record that already names that crop (reading_crops over the label columns,
-    its Crop column first) keeps its text (a point export's own names of the crop the import used).
-    Returns {path, n_in, n_out, left_out: {step: n}, left_out_by_group: {step: {machine: n}}, changed: [columns],
-    relabelled: [columns], applied: {setting: True / False}, settings, notes, own_yields}. own_yields: True for a
-    point export whose product is not known and which carries its own dry yield (bu/ac) and dry mass: its yields are
-    the file's own (OWN_YIELDS_NOTE); another file of an unknown product gets UNKNOWN_PRODUCT_NOTE."""
-    import pyogrio
-    from engine.clean import yield_clean as yc
-    if R.get("min_yield") == AUTO or "sources" not in R:
-        R = {**resolve({k: R.get(k, DEFAULTS[k]) for k in DEFAULTS}, R.get("product")),
-             **{k: R[k] for k in R if k not in DEFAULTS}}
-    base = os.path.splitext(shp)[0]
-    g = pyogrio.read_dataframe(shp)
-    C = yc.detect_columns([c for c in g.columns if c != "geometry"])
+def _import_values(g, C, R: dict, rep: dict) -> dict:
+    """What Import as SMS computes for every reading of g with the settings R (resolved), apply's rep filled in
+    (notes, applied, left_out, left_out_by_group, own_yields): {new: {column: values} of the recomputed cells, keep:
+    the readings kept, masks: {left-out step: its readings}, vals: {wet_mass (lb/ac), wet_vol, dry_mass, dry_vol
+    (bu/ac) ...} as imported, wet: the wet mass per area used (lb/ac; after a flow shift), moisture, width}."""
     n = len(g)
-    applied = {"manual_swath": False, "manual_moisture": False, "flow_shift": False, "weight_and_moisture": False,
-               "start_stop_delay": False, "yield_limits": False}
-    rep = {"path": shp, "n_in": n, "n_out": n, "left_out": {}, "left_out_by_group": {}, "changed": [],
-           "relabelled": [], "applied": applied, "settings": R, "notes": [], "own_yields": False}
-    if n == 0:
-        return rep
+    applied = rep["applied"]
     Y = yield_columns(g.columns, C)                  # what each yield column holds, whatever its name
     other = other_yield_columns(g.columns, Y)
+    # the file's units, from its own columns before anything changes (warnings only)
+    rep["warnings"] = unit_checks(g, C if not R["use_manual_moisture"] else {**C, "moisture": None}, Y,
+                                  R["test_weight_lb_bu"], converts=bool(Y.get("wet_mass")) and bool(R["test_weight_lb_bu"])
+                                  and R["dry_moisture_pct"] is not None)
     vals = {k: _num(g, c) for k, c in Y.items() if c}
     oth = {c: _num(g, c) for c in other}
     wcol, mcol = C.get("width_ft"), C.get("moisture")
@@ -750,6 +892,7 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | No
                                                           else ""))
     # which records stay
     keep = np.ones(n, bool)
+    masks = {}
     dv = vals.get("dry_vol")
 
     def drop(name, bad):
@@ -757,6 +900,7 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | No
         bad = np.asarray(bad, bool) & keep
         if bad.any():
             rep["left_out"][name] = int(bad.sum())
+            masks[name] = bad
             by = _group_counts(g, C, bad)
             if by:
                 rep["left_out_by_group"][name] = by
@@ -783,6 +927,45 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | No
         if R["max_yield"] is not None:
             drop("above the max. yield volume", dv > float(R["max_yield"]))
         applied["yield_limits"] = True
+    return {"new": new, "keep": keep, "masks": masks, "vals": vals, "wet": wet, "moisture": moist,
+            "width": width}
+
+
+def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | None = None,
+          keep_crop: str | None = None) -> dict:
+    """Import a standard harvest point file as SMS would: manual swath / moisture, flow shift, the weight to volume
+    and dry moisture (wet volume, dry mass and dry volume computed again from the wet mass), the start / stop delays
+    and the yield volume limits. Writes out_shp with the kept records byte for byte and the changed cells patched
+    (engine.clean.yield_clean.write_points); a file whose records GDAL reads differently from the raw .dbf (deleted
+    records, a damaged .shx) is written through GDAL instead, which a note says. When nothing changes and nothing is
+    left out the file is not copied.
+    labels: {text column: value} written in every kept record (a decoded file whose yields are converted with another
+    crop than the one it is labelled with: {"Product": ..., "Crop": ...}); a column the file lacks is added after its
+    own ones. keep_crop: a crop key: a record that already names that crop (reading_crops over the label columns,
+    its Crop column first) keeps its text (a point export's own names of the crop the import used).
+    Returns {path, n_in, n_out, left_out: {step: n}, left_out_by_group: {step: {machine: n}}, changed: [columns],
+    relabelled: [columns], applied: {setting: True / False}, settings, notes, warnings (unit_checks: the file's own
+    bushel against the weight to volume in use, moisture as a fraction, a width in another unit), own_yields}.
+    own_yields: True for a point export whose product is not known and which carries its own dry yield (bu/ac) and
+    dry mass: its yields are the file's own (OWN_YIELDS_NOTE); another file of an unknown product gets
+    UNKNOWN_PRODUCT_NOTE."""
+    import pyogrio
+    from engine.clean import yield_clean as yc
+    if R.get("min_yield") == AUTO or "sources" not in R:
+        R = {**resolve({k: R.get(k, DEFAULTS[k]) for k in DEFAULTS}, R.get("product")),
+             **{k: R[k] for k in R if k not in DEFAULTS}}
+    base = os.path.splitext(shp)[0]
+    g = pyogrio.read_dataframe(shp)
+    C = yc.detect_columns([c for c in g.columns if c != "geometry"])
+    n = len(g)
+    applied = {"manual_swath": False, "manual_moisture": False, "flow_shift": False, "weight_and_moisture": False,
+               "start_stop_delay": False, "yield_limits": False}
+    rep = {"path": shp, "n_in": n, "n_out": n, "left_out": {}, "left_out_by_group": {}, "changed": [],
+           "relabelled": [], "applied": applied, "settings": R, "notes": [], "warnings": [], "own_yields": False}
+    if n == 0:
+        return rep
+    X = _import_values(g, C, R, rep)
+    new, keep = X["new"], X["keep"]
     # the cells that really change at the field's own decimals
     dbf = yc._read_dbf(base + ".dbf")
     dec = {d[:11].split(b"\0")[0].decode("latin-1"): d[17] for d in dbf["fdesc"]}
@@ -840,6 +1023,53 @@ def apply(shp: str, out_shp: str, R: dict, log=lambda m: None, labels: dict | No
         + (" (" + ", ".join(f"{k} {v:,}" for k, v in rep["left_out"].items()) + ")" if rep["left_out"] else "")
         + (f"; changed {', '.join(rep['changed'])}" if rep["changed"] else ""))
     return rep
+
+
+def left_out_readings(shp: str, R: dict):
+    """The readings of `shp` (the file of every reading an import was made from: its record's all_readings) that
+    Import as SMS with the settings R leaves out, with what the import computed for them (the same computation as
+    apply): a GeoDataFrame in the file's coordinates with step (the left-out step that took it), wet_lb_ac (wet mass
+    per area), wet_bu_ac, dry_bu_ac (bu/ac in R's weight to volume, one-sided as imported), moisture, distance_ft,
+    width_ft (after a manual swath, the manual width) and machine (the machine column, else the dataset name, else
+    ''). R: the resolved settings (an import record's 'resolved' with its 'family'). None when nothing is left out."""
+    import pyogrio
+    from engine.clean import yield_clean as yc
+    g = pyogrio.read_dataframe(shp)
+    C = yc.detect_columns([c for c in g.columns if c != "geometry"])
+    rep = {"left_out": {}, "left_out_by_group": {}, "notes": [], "own_yields": False,
+           "applied": {"manual_swath": False, "manual_moisture": False, "flow_shift": False,
+                       "weight_and_moisture": False, "start_stop_delay": False, "yield_limits": False}}
+    if len(g) == 0:
+        return None
+    X = _import_values(g, C, R, rep)
+    out = ~X["keep"]
+    if not out.any():
+        return None
+    step = np.full(len(g), "", dtype=object)
+    for k, m in X["masks"].items():
+        step[np.asarray(m, bool)] = k
+    tw = R.get("test_weight_lb_bu")
+    vals = X["vals"]
+    wet = X["wet"]
+    wet_vol = vals.get("wet_vol")
+    if wet_vol is None and wet is not None and tw:
+        wet_vol = wet / float(tw)
+    nan = np.full(len(g), np.nan)
+    dist = _num(g, C.get("distance_ft"))
+    if dist is None and C.get("speed_mph") and C.get("duration_s"):
+        dist = _num(g, C["speed_mph"]) * 1.46667 * _num(g, C["duration_s"])
+    mcol = C.get("machine") or C.get("dataset")
+    res = g.loc[out, ["geometry"]].copy()
+    res["step"] = step[out]
+    res["wet_lb_ac"] = (wet if wet is not None else nan)[out]
+    res["wet_bu_ac"] = (wet_vol if wet_vol is not None else nan)[out]
+    res["dry_bu_ac"] = (vals["dry_vol"] if vals.get("dry_vol") is not None else nan)[out]
+    res["moisture"] = (X["moisture"] if X["moisture"] is not None else nan)[out]
+    res["distance_ft"] = (dist if dist is not None else nan)[out]
+    res["width_ft"] = (X["width"] if X["width"] is not None else nan)[out]
+    res["machine"] = (g[mcol].astype(str).to_numpy()[out] if mcol and mcol in g else "")
+    res["machine_column"] = mcol or ""
+    return res
 
 
 def _write_gdal(out_shp, g, rows, patch, extra=()):

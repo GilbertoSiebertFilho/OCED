@@ -16,9 +16,11 @@ every step, as the user reads them again in Edit Legend after each filter:
       already checked against the minimum of ITS import, and settings['sms_import'] (the import record, e.g.
       engine.run.import_as_sms) makes S0 take that minimum (yield_clean.sms_min_yield); without a record the caller's
       min_yield is used. None or 0 = no minimum; a negative dry yield is removed whatever the minimum.
-  S1  Clip To Field Boundary: the logged point inside the field of interest (a point on the boundary edge counts as
-      inside: clip_tolerance_m = 1 cm, as SMS counts it). Skipped without a
-      field of interest.
+  S1  Clip To Field Boundary: the logged point inside the field of interest (clip_tolerance_m = 0: SMS removes
+      readings whose logged point lies less than 1 cm outside; a larger value widens the edge). A point exactly on
+      the edge is outside at 0. The field of interest is the union of its polygons: a reading in a gap between two
+      of them (a field drawn in parts, a design, a prescription) is outside at 0, as at the edge; a tolerance above 0
+      closes gaps up to twice its width. Skipped without a field of interest.
       With the OCCD field-of-interest pre-step (records > 50 m away set aside first) the SMS clip count is the pre-step
       plus S1.
   S2  Optimize Swath Widths, option "individual swath rectangles" with "Scale Per Area attribute values": in harvest
@@ -71,8 +73,9 @@ that: one group per combine when several are found, one group for the field when
 apart from what the file itself holds, never from a side file: the machine column, else the sources / VINs of the SMS
 dataset names (dataset_machines), else the display serials at the end of the dataset names. When the file does not
 tell the combines apart (a GreenStar export whose tasks all end with the same monitor name), "auto" takes the whole
-file as one group and warns when it holds more than one task. "task" (one group per task) and "field" stay as explicit
-choices (an SMS cleaning made task by task). S0-S2 always run over the whole
+file as one group and always warns (one merged dataset of several combines is one task, and nothing else would say
+it). "task" (one group per task) and "field" stay as explicit choices (an SMS cleaning made task by task); "field"
+with several combines found warns that they are cleaned as one group. S0-S2 always run over the whole
 operation.
 
 A task is: the dataset (with the Ops Center '#log' split when the record id restarts) for SMS / Ops Center exports and
@@ -93,7 +96,8 @@ DEFAULTS = {
     "min_yield": 5.0,           # S0: SMS import minimum dry yield (bu/ac); None or 0 = no check on the yield (the
                                 # caller passes the minimum of the file's own import, engine/sms_import.py)
     "clip": True,               # S1: Clip To Field Boundary (needs a field of interest)
-    "clip_tolerance_m": 0.01,   # S1: a point within this distance outside the boundary counts as inside (edge point)
+    "clip_tolerance_m": 0.0,    # S1: a point within this distance outside the boundary counts as inside; SMS keeps
+                                # no reading outside (even under 1 cm): 0
     "swath": True,              # S2: Optimize Swath Widths (individual swath rectangles)
     "scale_per_area": True,     # S2: per-area values (yield, mass per area) scaled to the new area
     "swath_passes": 1,          # S2: 2 reproduces a chain where Clip + Optimize Swath Widths was added twice
@@ -166,6 +170,17 @@ def filter_order_of(record=None) -> str:
     fallback = LEGACY_FILTER_ORDER if is_record else DEFAULTS["filter_order"]
     o = str(P.get("filter_order") or fallback).strip().lower()
     return o if o in FILTER_ORDERS else fallback
+
+
+def edge_rule_text(tol_m) -> str:
+    """The S1 edge rule in words for a criterion, a table row or the report: at a tolerance above 0 'a point within N
+    cm of the edge counts as inside'; at 0 (SMS) a point on the edge, or outside it by any distance, is clipped. The
+    field of interest is the union of its polygons, so a reading in a gap between two of them is outside too (a
+    tolerance above 0 closes gaps up to twice its width)."""
+    tol = float(tol_m or 0.0)
+    if tol > 0:
+        return f"a point within {100 * tol:g} cm of the edge counts as inside"
+    return "no edge tolerance: a point on the edge or outside it by any distance is clipped"
 
 
 def step_attributes(order: str | None = None) -> dict:
@@ -480,20 +495,77 @@ def round_half_up(v: float, dec: int | None) -> float:
     return math.floor(v * q + 0.5) / q
 
 
-def sigma_limits(values, k: float, floor, dec):
-    """(n, mean, sd, lo, hi) of the finite values: mean +/- k SD (ddof 0), lo floored, both rounded half up to `dec`
-    decimals as the user types them; None when fewer than 2 finite values or SD = 0."""
+# an SD this small next to the mean is the floating-point noise of summing a constant column (14.163 repeated gives an
+# SD of about 1e-15, not 0): such a column has no spread to cut, as when the SD is exactly 0
+SD_ZERO_REL = 1e-9
+NO_LIMIT_FEW, NO_LIMIT_SD0, NO_LIMIT_MEAN_OUTSIDE = "few", "sd0", "mean_outside"
+NO_LIMIT_NOTE = "fewer than 2 values or SD = 0: no limit"
+# the share of a group beyond which rounded limits are taken to cut it because of the rounding, not of its spread
+# (mean +/- 3 SD itself never removes more than 1/9 of a group)
+ROUNDED_MAX_SHARE = 0.5
+
+
+def sigma_limits_why(values, k: float, floor, dec) -> tuple:
+    """((n, mean, sd, lo, hi) or None, why the group gets no limit or None). The limits are mean +/- k SD (ddof 0),
+    lo floored, both rounded half up to `dec` decimals as the user types them. No limit (why):
+    NO_LIMIT_FEW   fewer than 2 finite values;
+    NO_LIMIT_SD0   SD 0, or below SD_ZERO_REL x max(1, |mean|) (the float noise of a constant column);
+    NO_LIMIT_MEAN_OUTSIDE  the rounding to `dec` decimals alone would make the limits cut the bulk of the group: a
+                   constant or near-constant column whose values carry more decimals than the limits (a manual
+                   moisture of 14.163 % gives 14.16-14.16). Judged on mean +/- k SD rounded, before the floor (a
+                   floor the user typed is applied as typed, whatever it removes): the rounded limits do not contain
+                   the group's own mean, or they would remove more than half of its values (ROUNDED_MAX_SHARE; mean
+                   +/- k SD itself never removes more than 1 / k^2 of them). The would-be limits are returned with
+                   it, for the warning that says so."""
     v = np.asarray(values, float)
     v = v[np.isfinite(v)]
     if len(v) < 2:
-        return None
+        return None, NO_LIMIT_FEW
     mu, sd = float(v.mean()), float(v.std(ddof=0))
-    if not sd > 0:
-        return None
+    if not sd > SD_ZERO_REL * max(1.0, abs(mu)):
+        return None, NO_LIMIT_SD0
     lo, hi = mu - k * sd, mu + k * sd
+    r_lo, r_hi = round_half_up(lo, dec), round_half_up(hi, dec)
     if floor is not None:
         lo = max(lo, float(floor))
-    return len(v), mu, sd, round_half_up(lo, dec), round_half_up(hi, dec)
+    lim = (len(v), mu, sd, round_half_up(lo, dec), r_hi)
+    if not r_lo <= mu <= r_hi or float(((v < r_lo) | (v > r_hi)).mean()) > ROUNDED_MAX_SHARE:
+        return lim, NO_LIMIT_MEAN_OUTSIDE
+    return lim, None
+
+
+def sigma_limits(values, k: float, floor, dec):
+    """(n, mean, sd, lo, hi) of the finite values: mean +/- k SD (ddof 0), lo floored, both rounded half up to `dec`
+    decimals as the user types them; None when fewer than 2 finite values, SD = 0 or the rounded limits would not
+    contain the mean (sigma_limits_why)."""
+    lim, no_lim = sigma_limits_why(values, k, floor, dec)
+    return None if no_lim else lim
+
+
+def _cut_by_rounding(lim, dec) -> tuple:
+    """(decimals, the would-be limits as text) of a NO_LIMIT_MEAN_OUTSIDE group."""
+    _n, _mu, _sd, lo, hi = lim
+    d = 2 if dec is None else dec
+    return d, f"{lo:.{d}f}-{hi:.{d}f}"
+
+
+def mean_outside_note(lim, dec) -> str:
+    """The step note of a group whose limits only the rounding makes cut the bulk of it (NO_LIMIT_MEAN_OUTSIDE)."""
+    _n, mu, sd, _lo, _hi = lim
+    d, lims = _cut_by_rounding(lim, dec)
+    return (f"constant or nearly constant (mean {mu:.6g}, SD {sd:.2g}): the limits rounded to {d} decimals "
+            f"({lims}) do not contain the mean or would remove more than half of the readings, so no limit")
+
+
+def mean_outside_warning(fid, label, unit, group, lim, dec) -> str:
+    """The warning of a group whose limits only the rounding makes cut the bulk of it: what the limits would have
+    been and that the group gets no limit on this attribute."""
+    _n, mu, sd, _lo, _hi = lim
+    d, lims = _cut_by_rounding(lim, dec)
+    u = f" {unit}" if unit else ""
+    return (f"SMS 3-sigma: {fid} ({label}), group {group}: the {label} readings are constant or nearly so (mean "
+            f"{mu:.6g}{u}, SD {sd:.2g}); the limits rounded to {d} decimals would be {lims}{u}, which do not contain "
+            f"the mean or would remove more than half of the readings, so this group gets no {label} limit")
 
 
 def _sd(values) -> float:
@@ -553,6 +625,25 @@ def dataset_machines(names):
     return None
 
 
+def no_machine_warning(ds, n_tasks: int, split_logs: bool) -> str:
+    """The warning of a file that does not say which combine logged each reading (group_by 'auto' then takes one
+    group): how many dataset names and logs (record-id restarts) it holds, and that 'task' filters each log, which
+    may be one combine on one day rather than one combine."""
+    n_names = int(ds.nunique()) if ds is not None else 0
+    held = f"{n_names} dataset name{'s' if n_names != 1 else ''}"
+    if split_logs:
+        held += f", {n_tasks} logs (the record id restarts)"
+    verb = "carries" if (n_names == 1 and not split_logs) else "carry"
+    what = (f"no machine column; its {held} {verb} no differing source, serial or VIN" if n_names else
+            "no machine column and no dataset column")
+    several = split_logs or n_names > 1
+    return (f"SMS 3-sigma: this file does not tell the combines apart ({what}), so the mean and SD are taken over "
+            "the whole file as for one combine: if several combines cut the field, they are cleaned as one group. To "
+            "clean per combine, clean the monitor data (it names each combine) or add a machine column"
+            + ("; 'task' filters each " + ("log" if split_logs else "dataset") + " on its own, which may be one "
+               "combine on one day, not one group per combine" if several else ""))
+
+
 def resolve_groups(g, C: dict, P: dict, src_format: str | None, session_keys=None, warnings=None) -> tuple:
     """(group key per record, info). info = {requested, mode (task | machine | field), basis, n_machines,
     machines_basis, n_groups, groups, rule}. session_keys (machine x day) is the task key of decoded John Deere logs,
@@ -581,6 +672,7 @@ def resolve_groups(g, C: dict, P: dict, src_format: str | None, session_keys=Non
     # tasks: the dataset as named (never its sort key, which keeps only the start time), split by the Ops Center
     # record-id restarts (' #log' of the processing key) and by combine when a machine column exists
     fmt = (src_format or "").lower()
+    split_logs = False
     if fmt in ("jd_jdl", "jd_gs3_rcd") and session_keys is not None:
         task_key, tbasis = np.asarray(session_keys, dtype=object), "machine x harvest day (Session)"
     elif ds is not None:
@@ -607,19 +699,19 @@ def resolve_groups(g, C: dict, P: dict, src_format: str | None, session_keys=Non
                        else "one mean and SD for the whole field (one combine)"))
         else:
             # the file does not tell the combines apart: never task by task (one combine that worked several days
-            # would get one filter per day), so one group, and the user is told when there are several tasks
+            # would get one filter per day), so one group, and the user is always told (a merged file of several
+            # combines with one dataset name and one record-id sequence is one task, and nothing else would say it)
             mode = "field"
             rule = (f"combines {mbasis}; {n_tasks} task(s): one mean and SD for the whole file")
-            if n_tasks > 1:
-                warnings.append(f"SMS 3-sigma: this file does not tell the combines apart (no machine column, and the "
-                                f"{n_tasks} dataset names carry no differing source, serial or VIN), so the mean and "
-                                "SD are taken over the whole file as for one combine. If several combines cut the "
-                                "field, add a machine column (or clean the monitor data, which has one), or choose "
-                                "'task' to filter each dataset on its own")
+            warnings.append(no_machine_warning(ds, n_tasks, split_logs))
     else:
         mode = requested
         rule = {"task": "one group per task (set in the settings)", "machine": "one group per combine (set in the "
                 "settings)", "field": "one pooled mean and SD for the whole operation (set in the settings)"}[mode]
+        if mode == "field" and n_machines is not None and n_machines > 1:
+            warnings.append(f"SMS 3-sigma: the {n_machines} combines of this file ({mbasis}) are cleaned as one group "
+                            "(group_by 'field', set in the settings): one mean and SD for all of them, so a combine "
+                            "that reads higher or lower than the others is cut by their limits")
     if mode == "task":
         key, basis = task_key, tbasis
     elif mode == "machine":
@@ -758,9 +850,11 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
     with np.errstate(invalid="ignore"):
         if my is not None:
             bad = bad | (y < my)
-            src0 = str(P.get("min_yield_source") or "SMS import")
-            crit0 += (f", or dry yield below {my:g} bu/ac ({src0 if src0.startswith('the ') else 'the ' + src0} "
-                      "minimum)")
+            src0 = P.get("min_yield_source")
+            crit0 += (f", or dry yield below {my:g} bu/ac ("
+                      + (f"{src0 if str(src0).startswith('the ') else 'the ' + str(src0)} minimum" if src0 else
+                         "sms3sigma.min_yield, the cleaning's own minimum: no import record")
+                      + ")")
         else:
             bad = bad | (y < 0)
             crit0 += (", or a negative dry yield (no minimum yield"
@@ -772,8 +866,7 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
     if P["clip"] and plan is not None:
         tol = float(P["clip_tolerance_m"])
         in_sms = aoi_mod.inside(plan, X, Y, utm, tol)
-        crit1 = (f"logged point outside the field of interest (a point within {100 * tol:g} cm of the edge counts as "
-                 "inside)")
+        crit1 = f"logged point outside the field of interest ({edge_rule_text(tol)})"
         hl = getattr(plan, "headland", None)
         if getattr(plan, "is_plan", False) and (hl is None or not np.asarray(hl, bool).any()):
             # SMS clips to the field boundary; a design of plots only would clip the alleys and the border away
@@ -1047,12 +1140,15 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                 sel = alive & (gkey == gname)
                 # speed and moisture cannot be negative: a negative lower limit is typed as 0 (as the SMS logs show
                 # it: 0.00), which keeps the same points
-                lim = sigma_limits(values[sel], k, floor if use_floor else 0.0, dec)
-                if lim is None:
+                lim, no_lim = sigma_limits_why(values[sel], k, floor if use_floor else 0.0, dec)
+                if no_lim:
                     steps.append(dict(group=gname, step=fid, attribute=label, unit=unit, n_before=int(sel.sum()),
                                       mean=None, sd=None, lo=None, hi=None, removed=0, n_after=int(sel.sum()),
                                       sd_after=None, sd_drop_pct=None, no_value=int((~np.isfinite(values[sel])).sum()),
-                                      note="fewer than 2 values or SD = 0: no limit"))
+                                      note=(mean_outside_note(lim, dec) if no_lim == NO_LIMIT_MEAN_OUTSIDE
+                                            else NO_LIMIT_NOTE)))
+                    if no_lim == NO_LIMIT_MEAN_OUTSIDE:
+                        warnings.append(mean_outside_warning(fid, label, unit, gname, lim, dec))
                     continue
                 nn, mu, sd, lo, hi = lim
                 v = values[sel]
@@ -1101,11 +1197,15 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
             ran, nxt = [], []
             for gname in active_groups:
                 sel = alive & (gkey == gname)
-                lim = sigma_limits(y_map[sel], k, floor, dec)
-                if lim is None:
+                lim, no_lim = sigma_limits_why(y_map[sel], k, floor, dec)
+                if no_lim:
                     steps.append(dict(group=gname, step=fid, attribute="dry yield", unit="bu/ac", n_before=int(sel.sum()),
                                       mean=None, sd=None, lo=None, hi=None, removed=0, n_after=int(sel.sum()),
-                                      sd_after=None, sd_drop_pct=None, note="fewer than 2 values or SD = 0: no limit"))
+                                      sd_after=None, sd_drop_pct=None,
+                                      note=(mean_outside_note(lim, dec) if no_lim == NO_LIMIT_MEAN_OUTSIDE
+                                            else NO_LIMIT_NOTE)))
+                    if no_lim == NO_LIMIT_MEAN_OUTSIDE:
+                        warnings.append(mean_outside_warning(fid, "dry yield", "bu/ac", gname, lim, dec))
                     continue
                 nn, mu, sd, lo, hi = lim
                 v = y_map[sel]

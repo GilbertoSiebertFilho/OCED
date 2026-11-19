@@ -77,6 +77,53 @@ def test_boundary_counts_are_those_of_the_boundary(field, tmp_path):
         assert "switched off" in text and "no boundary given" not in text
 
 
+def test_s1_edge_tolerance_is_the_harvest_cleanings(field, tmp_path):
+    """S1 on an as-applied file clips at the harvest cleaning's edge tolerance (0, as SMS's Clip To Field Boundary): a
+    reading 5 mm outside the boundary is removed by S1, one 5 mm inside is kept; clip_tolerance_m = 0.01 keeps both.
+    The tolerance used is recorded and named in the S1 criterion."""
+    import geopandas as gpd
+    import pandas as pd
+    import shapely
+    from engine.clean import sms3sigma as sms
+    assert a3.DEFAULTS["clip_tolerance_m"] == sms.DEFAULTS["clip_tolerance_m"] == 0.0
+    A = make_applied(str(tmp_path / "data"), "seeding")
+    bnd = gpd.read_file(field["boundary"])
+    utm = bnd.estimate_utm_crs()
+    U = bnd.to_crs(utm).geometry.union_all()
+    c = U.centroid
+    edge = shapely.LineString([(c.x, c.y), (c.x + 1e4, c.y)]).intersection(U.exterior)   # the east edge
+    pts = gpd.GeoSeries([shapely.Point(edge.x - 0.005, edge.y), shapely.Point(edge.x + 0.005, edge.y)],
+                        crs=utm).to_crs(4326)
+    back = pts.to_crs(utm)
+    d = shapely.distance(shapely.points(back.x.to_numpy(), back.y.to_numpy()), U.exterior)
+    assert np.all((d > 0.004) & (d < 0.006))                                     # 5 mm either side after the round trip
+    rate = A["rate"]
+
+    def add_two(g):
+        typical = g[(g[rate] - g[rate].median()).abs() < 1].iloc[[0, 0]].copy()
+        typical["Speed_mph_"] = float(g["Speed_mph_"].median())
+        typical["Obj__Id"] = [len(g) + 1, len(g) + 2]
+        typical = typical.set_geometry(list(pts), crs=4326)
+        return gpd.GeoDataFrame(pd.concat([g, typical], ignore_index=True), crs=4326)
+
+    shp = _rewrite(A["shp"], str(tmp_path / "edge" / "edge.shp"), add_two)
+    R0 = a3.run(shp, str(tmp_path / "o0"), {}, boundary=field["boundary"], tag="e0", log=_quiet)
+    R1 = a3.run(shp, str(tmp_path / "o1"), {"clip_tolerance_m": 0.01}, boundary=field["boundary"], tag="e1",
+                log=_quiet)
+    B0 = a3.run(A["shp"], str(tmp_path / "b0"), {}, boundary=field["boundary"], tag="b0", log=_quiet)
+    B1 = a3.run(A["shp"], str(tmp_path / "b1"), {"clip_tolerance_m": 0.01}, boundary=field["boundary"], tag="b1",
+                log=_quiet)
+    assert B0["n_outside"] == B1["n_outside"] == A["n"] - A["n_inside"]           # no other reading within 1 cm
+    assert R0["n_outside"] == B0["n_outside"] + 1 and R0["n_inside"] == B0["n_inside"] + 1   # 5 mm out: clipped
+    assert R1["n_outside"] == B1["n_outside"] and R1["n_inside"] == B1["n_inside"] + 2       # 1 cm: both inside
+    s1 = {r["filter"]: r for r in R0["cascade"]}["S1"]
+    assert s1["removed"] == {r["filter"]: r for r in B0["cascade"]}["S1"]["removed"] + 1
+    assert "no edge tolerance" in s1["criterion"] and "within 0 cm" not in s1["criterion"]
+    s1_wide = {r["filter"]: r for r in R1["cascade"]}["S1"]
+    assert "a point within 1 cm of the edge counts as inside" in s1_wide["criterion"]
+    assert R0["boundary"]["edge_tolerance_m"] == 0.0 and R1["boundary"]["edge_tolerance_m"] == 0.01
+
+
 def test_repeat_pass_per_group(tmp_path):
     """Two planters, the second without rate spikes: its main attribute is filtered again only when its own SD fell
     by more than 25 %, so it keeps what it keeps when cleaned alone."""

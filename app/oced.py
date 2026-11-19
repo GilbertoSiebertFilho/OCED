@@ -187,7 +187,7 @@ ATTR_INFO = {
     "Duration_s": ("Duration", "s", "viridis"), "Time": ("Time", "", "time"), "Obj__Id": ("Record", "", "viridis"),
     "Machine": ("Machine", "", "cat"), "Dataset": ("Dataset", "", "cat"), "Field": ("Field", "", "cat"),
     "Product": ("Product", "", "cat"), "Crop": ("Crop", "", "cat"), "Src_Fmt": ("Format", "", "cat"),
-    "Wdth_Raw": ("Width as logged", "ft", "viridis"), "Swath_Scl": ("Swath scale (old / new area)", "", "viridis"),
+    "Wdth_Raw": ("Width as imported (before Optimize Swath Widths)", "ft", "viridis"), "Swath_Scl": ("Swath scale (old / new area)", "", "viridis"),
     "Keep": ("Kept", "", "cat"), "Rem_By": ("Removed by step", "", "cat"),
     "Yld_Level": ("Dry yield adjusted to the grower's weight", "bu/ac", "RdYlGn"),
     "Yld_Lvl_Sy": ("Dry yield adjusted, symmetric shrink", "bu/ac", "RdYlGn"),
@@ -820,11 +820,14 @@ def legend(kind, cmap, lo, hi, unit, t0=None, cats=None, counts=None, note: str 
             + (f'<span>· {html.escape(note)}</span>' if note else "") + '</div>')
 
 
+SD_LABEL = "SD (population, as SMS)"                    # the map panel's SD: ddof 0, as SMS's Edit Legend
+
+
 def stats_of(v: np.ndarray) -> dict:
     f = v[np.isfinite(v)]
     if not len(f):
         return {"n": int(len(v)), "valid": 0}
-    m, sd = float(f.mean()), float(f.std(ddof=1)) if len(f) > 1 else 0.0
+    m, sd = float(f.mean()), float(f.std(ddof=0))     # the population SD, as SMS's Edit Legend and final_map.sd
     return {"n": int(len(v)), "valid": int(len(f)), "min": float(f.min()), "p2": float(np.percentile(f, 2)),
             "mean": m, "median": float(np.median(f)), "p98": float(np.percentile(f, 98)), "max": float(f.max()),
             "sd": sd, "cv": (100 * sd / m if m else None)}
@@ -1064,7 +1067,7 @@ def explorer(shp: str, key: str, height: int = 520, default: str | None = None, 
                      ("mean", fmt_value(S["mean"], unit, kind, t0)), ("median", fmt_value(S["median"], unit, kind, t0)),
                      ("98th percentile", fmt_value(S["p98"], unit, kind, t0)), ("maximum", fmt_value(S["max"], unit, kind, t0))]
             if kind == "num":
-                rows_ += [("SD", fmt_value(S["sd"], unit)), ("CV", f"{S['cv']:.2f} %" if S.get("cv") else "—")]
+                rows_ += [(SD_LABEL, fmt_value(S["sd"], unit)), ("CV", f"{S['cv']:.2f} %" if S.get("cv") else "—")]
                 av = avg_of(df, col) if per_area(unit) else None
                 if av is not None:
                     rows_.insert(4, ("average (SMS, area-weighted)", fmt_value(av, unit)))
@@ -1073,10 +1076,10 @@ def explorer(shp: str, key: str, height: int = 520, default: str | None = None, 
                 Sb = stats_of(vb)
                 ref = {"minimum": Sb.get("min"), "2nd percentile": Sb.get("p2"), "mean": Sb.get("mean"),
                        "median": Sb.get("median"), "98th percentile": Sb.get("p98"), "maximum": Sb.get("max"),
-                       "SD": Sb.get("sd"), "average (SMS, area-weighted)": avg_of(df, base_col)}
+                       SD_LABEL: Sb.get("sd"), "average (SMS, area-weighted)": avg_of(df, base_col)}
                 cur = {"minimum": S.get("min"), "2nd percentile": S.get("p2"), "mean": S.get("mean"),
                        "median": S.get("median"), "98th percentile": S.get("p98"), "maximum": S.get("max"),
-                       "SD": S.get("sd"), "average (SMS, area-weighted)": avg_of(df, col)}
+                       SD_LABEL: S.get("sd"), "average (SMS, area-weighted)": avg_of(df, col)}
 
                 def chg(k):
                     if k == "CV" and S.get("cv") and Sb.get("cv"):
@@ -1266,6 +1269,14 @@ def import_record_of(tag: str) -> dict | None:
     return IM if isinstance(IM, dict) and IM else None
 
 
+def import_readings_of(tag: str) -> str | None:
+    """Where the file of every reading of the file's import is (its record keeps the full path; a moved or copied work
+    finds it under its own folder), for the cleaning to count the grain of the readings the import left out (the
+    settings carry its file name only). None without an import record."""
+    p = (import_record_of(tag) or {}).get("all_readings")
+    return ew.resolve_moved(str(p), ss.workdir) if p else None
+
+
 def import_min_yield(tag: str):
     """(minimum, True) when the file was imported as SMS: the S0 minimum of its cleaning is the import's own (None =
     no minimum); (None, False) without an import record (S0 then takes the minimum of step 3)."""
@@ -1391,7 +1402,9 @@ def settings_of(tag: str, sset: dict) -> dict:
                       if CF["on"] else {"harmonise": False})}
     B = boundary_of(tag)
     if B is not None and clip:
-        S["aoi"] = {"file": B["path"], "buffer_m": float(sms.DEFAULTS["clip_tolerance_m"]), "clip_output": True,
+        tol = S3.get("clip_tolerance_m")                   # the pre-step cuts at S1's tolerance (None: the default)
+        S["aoi"] = {"file": B["path"],
+                    "buffer_m": float(sms.DEFAULTS["clip_tolerance_m"] if tol is None else tol), "clip_output": True,
                     "feature": er.feature_setting(B.get("feature"))}
     G = ss.grower.get(tag) or {}
     T = grower_ticket(G)
@@ -1792,7 +1805,7 @@ def _import_record(R: dict, rep: dict, src: str, monitor=None, fmt=None, crop=No
     recomputed, the notes, whether a point export of an unknown product keeps its own dry yields (own_yields); plus
     what is needed to import it again (the file of all readings, the monitor's crop definition, the format, the crop)
     and the revision of the import rules (sms_import.IMPORT_REVISION)."""
-    return {"resolved": {k: R.get(k) for k in si.DEFAULTS}, "settings": si.describe(R),
+    return {"resolved": {k: R.get(k) for k in si.DEFAULTS}, "settings": si.describe(R, rep),
             "sources": dict(R.get("sources") or {}), "defaults": dict(R.get("defaults") or {}),
             "sms_product": R.get("sms_product"), "family": R.get("family"), "sources_text": si.describe_sources(R),
             "monitor": dict(monitor) if isinstance(monitor, dict) else None, "fmt": fmt,
@@ -1801,6 +1814,7 @@ def _import_record(R: dict, rep: dict, src: str, monitor=None, fmt=None, crop=No
             "left_out_by_group": {k: dict(v) for k, v in (rep.get("left_out_by_group") or {}).items()},
             "applied": dict(rep.get("applied") or {}), "n_all": int(rep["n_in"]), "n_in": int(rep["n_out"]),
             "all_readings": src, "changed": list(rep["changed"]), "notes": list(rep["notes"]),
+            "warnings": list(rep.get("warnings") or []),
             "own_yields": bool(rep.get("own_yields")), "revision": si.IMPORT_REVISION}
 
 
@@ -4308,7 +4322,8 @@ def clean_one(tag: str, sset: dict, log=lambda m: None) -> dict:
         lg = guarded_log(log, lg_state)
         settings = settings_of(tag, sset)
         R = er.clean(D["shp"], out, settings, log=lg, source=D.get("source"),
-                     inputs_left_out=inputs_left_out_of(D))
+                     inputs_left_out=inputs_left_out_of(D),
+                     import_readings=import_readings_of(tag) if settings.get("sms_import") else None)
         F = R["files"]
         src = os.path.splitext(F["difm_ready_shp"])[0]
         stem = os.path.join(cdir, os.path.basename(src))     # <tag>_sms3s_clean, the name the report gives
@@ -6178,7 +6193,7 @@ A3_SEQ_HELP = ("S0: no position, or the main attribute missing or at or below th
                "the clip to the field boundary. Then one 3-sigma step per attribute, the speed first: the mean ± k SD "
                "of the points still alive; the main attribute again while its SD falls by more than 25 %.")
 SMS3S_TEXT = ("S0 import check (no position, no yield, dry yield below the SMS import minimum) · S1 Clip To Field "
-              "Boundary (the readings outside the boundary of the file; a point on the edge is inside) · S2 Optimize "
+              "Boundary (the readings outside the boundary of the file by any distance, or on its edge) · S2 Optimize "
               "Swath Widths (overlapping strips removed or narrowed, per-area values scaled) · S3 and S4, the moisture "
               "and the speed in the order of the filters (More settings), and S5 dry yield: keep the mean ± k SD of "
               "the points still alive (a reading without a moisture or a speed is not removed by that filter), "
@@ -6412,7 +6427,10 @@ def yield_path_box(tag: str, C: dict):
     if adjusted and X["gro_ac"] is not None:
         gap = L.get("yld_level_vs_ticket_pct")
         st.caption(f"Grower: {X['gro_ac']:,.2f} bu/ac over every reading processed",
-                   help="L = grower / monitor is set on the totals of every reading processed (the scale weighed all "
+                   help="L = grower / monitor is set on the totals of every reading processed"
+                        + (" and of the readings Import as SMS left out below its minimum"
+                           if (L.get("import_left_out") or {}).get("included_in_L") else "")
+                        + " (the scale weighed all "
                         f"the grain): the grower's bu/ac is that total over {X['area_y']:,.2f} ac ({X['area_src']}). "
                         "The final mean and average are over the kept readings only, so they differ from it"
                         + (f"; the adjusted column of every processed reading sums to {gap:+.2f} % of the weight "
@@ -7243,8 +7261,10 @@ def native_block(t: str, C: dict):
             widths = st.checkbox("Write the clean swath widths (after Optimize Swath Widths)", value=True,
                                  key=f"nw_w_{key}",
                                  help="On: each kept reading carries the width (and distance) the cleaning left it, so "
-                                      "its yield is the clean one. Off: the widths as logged (the narrowed readings "
-                                      "then read their logged, lower yield).")
+                                      "its yield is the clean one. Off: the widths before Optimize Swath Widths, "
+                                      "as the raw data logged them (an ISOXML file takes Wdth_Raw, the width the "
+                                      "file was imported with: the manual swath when the import used one); the "
+                                      "narrowed readings then read their lower yield.")
             # keyed by the cleaning it belongs to (the clean file's time and the factors): each new cleaning starts
             # from the default (on whenever step 3 applied something) instead of a state kept from an earlier one
             fkey = key_of(f"{mtime(C['shp'])}|{json.dumps(fac, sort_keys=True, default=str)}")
@@ -7683,6 +7703,8 @@ def import_details_box(V: dict):
                        + (f" Settings: {IM['settings']}." if IM.get("settings") else ""))
             if IM.get("sources"):
                 st.caption("Where the values came from: " + sources_line(IM) + ".")
+            for w_ in IM.get("warnings") or []:          # the file's units (sms_import.unit_checks)
+                st.warning(str(w_), icon=":material/warning:")
             for n_ in IM.get("notes") or []:
                 st.caption(str(n_))
             if V.get("kind") == "export":
@@ -8115,8 +8137,9 @@ def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
                        "expand_dry_moisture": bool(f_exp), "use_manual_swath": bool(f_ums),
                        "manual_swath_ft": f_msw if f_ums else RS.get("manual_swath_ft", 15.0),
                        "use_manual_moisture": bool(f_umm),
-                       # unticked: empty, so that the manual moisture follows the dry moisture of the product
-                       "manual_moisture_pct": f_mm if f_umm else None, "min_yield": f_min,
+                       # unticked: empty, so that the manual moisture follows the dry moisture of the product;
+                       # ticked: with the 2 decimals the box shows (a third one typed is not visible there)
+                       "manual_moisture_pct": si.round_manual_moisture(f_mm) if f_umm else None, "min_yield": f_min,
                        "max_yield": f_max, "start_delay_s": f_sd, "stop_delay_s": f_ed, "flow_shift_s": f_fs}
                 if f_prod is None and p_data and _crop(RP.get("product")) == p_data and not (
                         IM.get("product_from") or own_settings(D, R0).get("product")):
@@ -9287,9 +9310,12 @@ with st.container(border=True, key="oced_step_3"):
                 # the clip runs first (the readings outside the boundary are set aside before S0); the engine's own
                 # S1 then finds nothing left outside, so its empty row goes
                 steps_df = steps_df[~((steps_df["filter"] == "S1") & (steps_df["removed"] == 0))]
+                tol_m = ((R.get("sms3sigma") or {}).get("clip") or {}).get("edge_tolerance_m")
+                if tol_m is None:                    # a cleaning saved before the record named its tolerance
+                    tol_m = (R.get("aoi") or {}).get("buffer_m")
+                tol_txt = "" if tol_m is None else f" ({sms.edge_rule_text(tol_m)})"
                 steps_df = pd.concat([pd.DataFrame([{"filter": "S1", "name": "Clip To Field Boundary", "on": True,
-                                                     "criterion": "outside the field boundary (a point within 1 cm "
-                                                                  "of the edge is inside)",
+                                                     "criterion": "outside the field boundary" + tol_txt,
                                                      "removed": p["removed"], "remaining": p["remaining"]}
                                                     for p in pre]), steps_df], ignore_index=True)
             # the numbers before the long criterion, which wraps in its own width (rows taller than 4rem wrap)
@@ -9474,10 +9500,41 @@ with st.container(border=True, key="oced_step_3"):
                                   "clean again to add the adjusted column.")
                 lcol = "Yld_Lvl_Sy" if R.get("yield_column_for_difm") == "Yld_Lvl_Sy" else "Yld_Level"
                 gap = L.get("yld_lvl_sy_vs_ticket_pct" if lcol == "Yld_Lvl_Sy" else "yld_level_vs_ticket_pct")
+                lo_in_L = bool((L.get("import_left_out") or {}).get("included_in_L"))
+                pp = L.get("leveled_processed_vs_ticket_pct") if lo_in_L else None
+                # the part of the gap that is not the grain of the readings the import left out (in the monitor total
+                # L is built on): the shrink of a wet weight without its moisture
+                rest = (100 * ((1 + float(gap) / 100) / (1 + float(pp) / 100) - 1)
+                        if gap is not None and pp is not None else gap)
                 if C.get("adjusted") and gap is not None and abs(float(gap)) > 0.05:
+                    why_ = []
+                    if pp is not None:
+                        why_.append(f"the readings Import as SMS left out below its minimum, in the monitor total L "
+                                    f"is built on, carry {-float(pp):.2f} % of it")
+                    if rest is not None and abs(float(rest)) > 0.05:
+                        why_.append("a wet weight without its moisture is compared with the wet yield, while the dry "
+                                    "yield is leveled")
                     facts.append(f"{lcol} of every processed reading sums to {float(gap):+.2f} % of the weight "
-                                 "compared (a wet weight without its moisture is compared with the wet yield, while "
-                                 "the dry yield is leveled).")
+                                 "compared" + (f" ({'; '.join(why_)})" if why_ else "") + ".")
+                if (C.get("adjusted") and L.get("clean_file_level_vs_ticket_pct") is not None
+                        and L.get("clean_file_level_column") == lcol):
+                    facts.append(f"The clean file's {lcol} sums to {float(L['clean_file_level_sum_bu']):,.2f} bu, "
+                                 f"{float(L['clean_file_level_vs_ticket_pct']):+.2f} % of the weight compared (read "
+                                 "back from the file): the readings the cleaning removed carry "
+                                 f"{float(L.get('removed_share_of_leveled_pct') or 0):.2f} % of the leveled grain.")
+                LOg = L.get("import_left_out")
+                if isinstance(LOg, dict) and float(LOg.get("below_min_bu") or 0) > 0:
+                    n_lo = int(((LOg.get("steps") or {}).get("below the min. yield volume") or {}).get("n") or 0)
+                    facts.append(f"Import as SMS left out {n_lo:,} readings below its minimum yield inside the field: "
+                                 f"{float(LOg['below_min_bu']):,.2f} bu, "
+                                 f"{float(LOg.get('share_of_monitor_pct') or 0):.2f} % of the monitor total, grain "
+                                 "the scale weighed"
+                                 + ((f": they are in the monitor total L is built on (without them L would be "
+                                     f"{float(LOg['factor_processed_only']):.4f})."
+                                     if LOg.get("factor_processed_only") is not None else
+                                     ": they are in the monitor total L is built on.") if LOg.get("included_in_L") else
+                                    (f"; with them L would be {float(LOg['factor_with_below_min']):.4f}."
+                                     if LOg.get("factor_with_below_min") is not None else ".")))
                 CSg = L.get("card_summary")
                 if isinstance(CSg, dict) and CSg.get("readings_wet_lb") and CSg.get("summary_wet_lb"):
                     facts.append(f"Case IH / New Holland card: the readings hold {float(CSg['readings_wet_lb']):,.0f} "
@@ -9485,14 +9542,15 @@ with st.container(border=True, key="oced_step_3"):
                                  "SMS shows for it): L against the Summary about "
                                  f"{float(CSg.get('factor_against_summary') or 0):.4f} (an estimate: L x the card's "
                                  "readings / its Summary, the gap taken as even over the card, whose Summary also "
-                                 "holds the readings outside the boundary). L above is against the readings, so "
-                                 "Yld_Level sums to the grower's weight.")
+                                 "holds the readings outside the boundary). L above is against the readings: "
+                                 "over every processed reading the leveled comparison column sums to the grower's "
+                                 "weight (the clean file, without the readings the cleaning removed, sums less).")
                 st.caption(facts[0])
                 if len(facts) > 1:
                     with st.expander("How this works", type="compact"):
                         for f_ in facts[1:]:
                             st.caption(f_)
-                if C.get("adjusted") and gap is not None and abs(float(gap)) > 0.1:
+                if C.get("adjusted") and rest is not None and abs(float(rest)) > 0.1:
                     st.warning(f"{lcol} does not sum to the grower's weight: {float(gap):+.2f} % (give the grain "
                                "moisture of a wet weight, or the weight at the standard moisture, to level the dry "
                                "yield to it).", icon=":material/warning:")

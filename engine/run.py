@@ -31,8 +31,8 @@ would hold it after its import (Processing Settings of the product: weight to vo
 volume, expand dry moisture off; a point export as SMS's generic import holds it, every reading kept: min 0, no max)
 and returns the import record; sms_clean_defaults() then gives the cleaning the
 import's weight to volume, dry moisture and minimum (settings['sms_import'], so S0 takes the import's minimum) and,
-with a field of interest, the S1 clip of the SMS 3-sigma method (records outside the boundary by more than the 1 cm
-edge tolerance set aside, the clean file clipped). The command line does both by default (--no-sms-import to clean
+with a field of interest, the S1 clip of the SMS 3-sigma method (records outside the boundary by more than the S1
+edge tolerance, 0 by default, set aside, the clean file clipped). The command line does both by default (--no-sms-import to clean
 the file as it is); decoder_options_for_import() gives a raw dataset's decoder the product's weight and moisture, as
 the app's extract does. A point export that is not a harvest (planter, sprayer: detect.py marks it yield False) is
 cleaned by engine/clean/applied3s.py (--attributes), never by the yield cleaning.
@@ -92,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.2"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.3.3"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -698,6 +698,9 @@ def level_caption(R: dict) -> str:
     else:
         s = (f"monitor {float(mon):,.0f} bu vs scale {float(tick):,.0f} bu "
              f"({100 * (float(tick) / float(mon) - 1):+.2f} %")
+    if (L.get("import_left_out") or {}).get("included_in_L") and L.get("import_left_out_in_total_bu"):
+        s += (f"; the monitor holds {float(L['import_left_out_in_total_bu']):,.0f} bu of readings the import left out "
+              "below its minimum")
     if L.get("ticket_bu_at_standard") is not None and L.get("ticket_bu") is not None:
         ms = (R.get("moisture") or {}).get("standard_pct")
         s += (f"; {float(L['ticket_bu']):,.0f} bu at {float(L['ticket_moisture_pct']):g} % = {float(tick):,.0f} bu"
@@ -793,18 +796,21 @@ def compat_settings(settings: dict | None, shp: str | None = None) -> tuple[dict
 
 
 def clean(shp: str, out_dir: str, settings: dict | None = None, log=print, source: dict | None = None,
-          inputs_left_out=None) -> dict:
+          inputs_left_out=None, import_readings: str | None = None) -> dict:
     """The cleaning (engine/clean/yield_clean.run): returns its result dict; R['files']['difm_ready_zip'] is the
     clean file and R['yield_column_for_difm'] the column to map. R['advice'] lists the plain checks
     (yield_clean.advice; also in the JSON and PDF). source: decode()['source'] for a decoded raw dataset.
     inputs_left_out: the inputs left out when the data was opened (a candidate's 'inputs_left_out'; a decoded
     dataset's source carries them already): named in R['inputs_left_out'], the warnings, the JSON and the PDF.
+    import_readings: the path of the import's file of every reading when the settings' import record names it by its
+    file name only (the app's record), so the grain of the readings the import left out is counted on every route.
     The settings go through unchanged (compat_settings only translates them for an engine without the v2 keys and
     logs every translation as a warning, which is also appended to R['warnings'])."""
     S, notes = compat_settings(settings, shp=shp)
     for n in notes:
         log("WARNING: " + n)
-    R = yield_clean.run(shp, out_dir, S, log=log, source=source, inputs_left_out=inputs_left_out)
+    R = yield_clean.run(shp, out_dir, S, log=log, source=source, inputs_left_out=inputs_left_out,
+                        import_readings=import_readings)
     if notes:
         R.setdefault("warnings", []).extend(notes)
     enrich_level(R, settings, shp=shp)
@@ -856,7 +862,7 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
     when the import is off. The record is the one the app keeps per file and the one clean() takes as settings['sms_import']
     (S0 then takes its minimum): {resolved, settings (the line of sms_import.describe), sources, defaults,
     sms_product, family, sources_text, monitor, fmt, crop, left_out, left_out_by_group, applied, n_all, n_in,
-    all_readings, changed, notes, own_yields (a point export of an unknown product that keeps its own dry yields),
+    all_readings, changed, notes, warnings (the file's units: sms_import.unit_checks), own_yields (a point export of an unknown product that keeps its own dry yields),
     revision (sms_import.IMPORT_REVISION)}. A product not known is said on the log too (note / WARNING)."""
     from engine import sms_import as si
     S = si.settings(import_settings or {})
@@ -869,7 +875,7 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
     labels = (si.export_labels(shp, R, data_crop) if (S["product"] and R.get("family") == "point") else None)
     rep = si.apply(shp, os.path.join(folder, f"{yield_clean.sanitise_tag(tag) or 'run'}_imported.shp"), R,
                    labels=labels, keep_crop=si.crop_key(R.get("product")) if labels else None)
-    rec = {"resolved": {k: R.get(k) for k in si.DEFAULTS}, "settings": si.describe(R),
+    rec = {"resolved": {k: R.get(k) for k in si.DEFAULTS}, "settings": si.describe(R, rep),
            "sources": dict(R.get("sources") or {}), "defaults": dict(R.get("defaults") or {}),
            "sms_product": R.get("sms_product"), "family": R.get("family"), "sources_text": si.describe_sources(R),
            "monitor": dict(monitor) if isinstance(monitor, dict) else None, "fmt": fmt,
@@ -878,6 +884,7 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
            "left_out_by_group": {k: dict(v) for k, v in (rep.get("left_out_by_group") or {}).items()},
            "applied": dict(rep.get("applied") or {}), "n_all": int(rep["n_in"]), "n_in": int(rep["n_out"]),
            "all_readings": shp, "changed": list(rep["changed"]), "notes": list(rep["notes"]),
+           "warnings": list(rep.get("warnings") or []),
            "own_yields": bool(rep.get("own_yields")), "revision": si.IMPORT_REVISION}
     if rec["left_out"]:
         log(f"import as SMS: {rec['n_all'] - rec['n_in']:,} of {rec['n_all']:,} readings left out ("
@@ -890,6 +897,11 @@ def import_as_sms(shp: str, tag: str, folder: str, import_settings: dict | None 
             log("note: " + n + " (on the command line: --product)")
         elif n.startswith(si.UNKNOWN_PRODUCT_NOTE):
             log("WARNING: " + n + " (on the command line: --product)")
+    for w in rec["warnings"]:                            # the file's units (sms_import.unit_checks)
+        log("WARNING: import as SMS: " + w)
+    # a setting asked for that the import could not apply: said as a warning (the cleaning repeats it in its own)
+    for w in si.not_applied(R, rep).values():
+        log("WARNING: import as SMS: " + w)
     return rep["path"], int(rep["n_out"]), rec
 
 
@@ -923,7 +935,8 @@ def sms_clean_defaults(settings: dict, import_record: dict | None = None) -> dic
     """The cleaning settings the app gives the SMS 3-sigma method, added with setdefault (what the caller set wins):
     the import's weight to volume and dry moisture and the import record itself (settings['sms_import']: S0 takes the
     import's minimum yield), and, with a field of interest, the S1 clip: aoi.buffer_m = the clip's edge tolerance
-    (sms3sigma.DEFAULTS['clip_tolerance_m']) and clip_output True. A cleaning with another method keeps the engine's
+    (settings['sms3sigma']['clip_tolerance_m'] when given, else sms3sigma.DEFAULTS['clip_tolerance_m']) and
+    clip_output True. A cleaning with another method keeps the engine's
     defaults (the 50 m buffer of the OCCD cascade)."""
     from engine.clean import sms3sigma
     S = dict(settings or {})
@@ -938,7 +951,8 @@ def sms_clean_defaults(settings: dict, import_record: dict | None = None) -> dic
         S.setdefault("sms_import", import_record)
     if str(S.get("method") or "sms3sigma") == "sms3sigma" and isinstance(S.get("aoi"), dict) and S["aoi"].get("file"):
         A = dict(S["aoi"])
-        A.setdefault("buffer_m", float(sms3sigma.DEFAULTS["clip_tolerance_m"]))
+        tol = (S.get("sms3sigma") or {}).get("clip_tolerance_m")       # the S1 tolerance the caller set, if any
+        A.setdefault("buffer_m", float(sms3sigma.DEFAULTS["clip_tolerance_m"] if tol is None else tol))
         A.setdefault("clip_output", True)
         S["aoi"] = A
     return S
@@ -1076,9 +1090,19 @@ def leveled_column(R: dict) -> tuple[str, str] | None:
         reason = str(L["difm_note"]).split("=", 1)[1].strip() if "=" in str(L["difm_note"]) else str(L["difm_note"])
     else:
         gap = L.get("yld_lvl_sy_vs_ticket_pct") if col == sym else L.get("yld_level_vs_ticket_pct")
-        sums = ("the bu/ac now sum to the scale" if gap is not None and abs(float(gap)) <= 0.05 else
-                (f"the column sums to {float(gap):+.2f} % of the weight compared" if gap is not None else
-                 "its total against the weight was not measured"))
+        sums = ("over every processed reading the bu/ac now sum to the scale"
+                if gap is not None and abs(float(gap)) <= 0.05 else
+                (f"over every processed reading the column sums to {float(gap):+.2f} % of the weight compared"
+                 if gap is not None else "its total against the weight was not measured"))
+        if (gap is not None and abs(float(gap)) > 0.05 and (L.get("import_left_out") or {}).get("included_in_L")
+                and L.get("leveled_processed_vs_ticket_pct") is not None):
+            sums += (f" ({L.get('integral_column')} x L {float(L['leveled_processed_vs_ticket_pct']):+.2f} %: the "
+                     "readings Import as SMS left out below its minimum, in the monitor total L is built on, carry "
+                     "the rest)")
+        if L.get("clean_file_level_vs_ticket_pct") is not None and L.get("clean_file_level_column") == col:
+            sums += (f"; the clean file's {col} sums to {float(L['clean_file_level_vs_ticket_pct']):+.2f} % of it"
+                     + (f" (the removed readings carry {float(L['removed_share_of_leveled_pct']):.2f} % of the "
+                        "leveled grain)" if L.get("removed_share_of_leveled_pct") is not None else ""))
         reason = (f"leveled to the grower's weight {tick}"
                   + (f" (L = {float(f):.4f})" if f is not None else (" (per-machine L)" if L.get("per_machine") else ""))
                   + f": {sums}; {basis}")
@@ -1097,9 +1121,12 @@ def difm_note(R: dict) -> str:
               f"{level_factor_text(R['level'])})")
     elif leveled_column(R) is not None:
         L = R["level"]
-        mon = L.get("export_total_bu", L.get("export_integral_bu"))
+        mon = L.get("processed_set_integral_bu", L.get("export_total_bu", L.get("export_integral_bu")))
         s += (f". {col} is the real level: the file keeps the monitor's columns"
-              + (f" (monitor total {float(mon):,.0f} bu)" if mon is not None else "")
+              + (f" (monitor total {float(mon):,.0f} bu" + (
+                  f"; L is built on {float(L['export_total_bu']):,.0f} bu with the readings the import left out below "
+                  "its minimum" if (L.get("import_left_out") or {}).get("included_in_L") else "") + ")"
+                 if mon is not None else "")
               + " and adds the leveled ones (Yld_Level"
               + (", Yld_Lvl_Sy" if "Yld_Lvl_Sy" in (R.get("difm_ready_added_columns") or []) else "") + ")")
     if R.get("method") == "sms3sigma":
@@ -1107,7 +1134,7 @@ def difm_note(R: dict) -> str:
         wcol = ch.get("width_column") or "Wdth_Opt"
         added = R.get("difm_ready_added_columns") or ch.get("added") or []
         hw = (R.get("settings") or {}).get("harvester_width_ft")
-        raw = ("the original width is in Wdth_Raw" if "Wdth_Raw" in added else
+        raw = (f"{ch.get('wdth_raw') or 'the original width'} is in Wdth_Raw" if "Wdth_Raw" in added else
                "the export has no width column: the optimised width is the added column Wdth_Opt and the logged width "
                "was the constant harvester width" + (f" {float(hw):g} ft" if hw is not None else ""))
         n_nar, n_scl, n_sh = (int(ch.get(k) or 0) for k in ("n_narrowed_points", "n_scaled_points",
@@ -1119,7 +1146,9 @@ def difm_note(R: dict) -> str:
                   + (f" (the {n_sh:,} shortened ones also carry the new Distance and Speed)" if n_sh else "")
                   + f" (map {wcol} as the swath width; {raw})")
         else:
-            s += (f". Optimize Swath Widths changed no reading: {wcol} and the per-area columns are as logged (map "
+            as_ = ("as imported (a manual swath)" if str(ch.get("wdth_raw") or "").startswith(
+                "the width the file was imported") else "as logged")
+            s += (f". Optimize Swath Widths changed no reading: {wcol} and the per-area columns are {as_} (map "
                   f"{wcol} as the swath width; {raw})")
     extras = []
     if (R.get("sessions") or {}).get("table"):
@@ -1352,6 +1381,11 @@ def _read_plan_fallback(path, id_col=None, rate_col=None, headland_types=None, f
     if not len(gdf):
         raise ValueError(f"{os.path.basename(path)} holds no polygon")
     if gdf.crs is None:
+        x0, y0, x1, y1 = (float(v) for v in gdf.total_bounds)
+        if not (-180 <= x0 <= x1 <= 180 and -90 <= y0 <= y1 <= 90):        # as aoi.require_degrees
+            raise ValueError(f"{os.path.basename(path)} has no coordinate system (.prj) and its coordinates "
+                             f"({x0:,.0f} .. {x1:,.0f}, {y0:,.0f} .. {y1:,.0f}) are not degrees: add the file's .prj "
+                             "(e.g. its UTM zone) next to it and load it again")
         gdf = gdf.set_crs("EPSG:4326")
     gdf = gdf.reset_index(drop=True)
     utm = gdf.estimate_utm_crs()
@@ -1601,11 +1635,11 @@ def export_readings(shp: str) -> pd.DataFrame:
 
 
 def units_inside_aoi(candidate: dict, units, aoi_union, opts, workdir: str, buffer_m: float = AOI_BUFFER_M,
-                     log=_quiet, decoder_kwargs: dict | None = None) -> dict:
+                     log=_quiet, decoder_kwargs: dict | None = None, counts: dict | None = None) -> dict:
     """{unit_id: share of the unit's readings inside aoi_union (WGS 84) buffered by buffer_m} for the units of the
     latest season (Unit.default); a unit of another season gets None (not measured). Every measured unit is decoded
     once (positions cached per work folder and decoder options), so changing the AOI costs no second decode. A unit
-    with no decodable reading gets 0.0."""
+    with no decodable reading gets 0.0. counts (a dict, optional) receives {unit_id: (readings inside, readings)}."""
     import shapely
     opts = opts if opts is not None else detect.default_options(candidate["decoder"])
     poly = buffer_wgs84(aoi_union, buffer_m)
@@ -1621,8 +1655,19 @@ def units_inside_aoi(candidate: dict, units, aoi_union, opts, workdir: str, buff
             continue
         inside = shapely.contains_xy(poly, lon, lat)
         out[u.id] = float(inside.mean())
+        if counts is not None:
+            counts[u.id] = (int(inside.sum()), int(len(lon)))
         log(f"unit {u.id}: {100 * out[u.id]:.2f} % of {len(lon):,} readings inside the AOI + {buffer_m:g} m")
     return out
+
+
+def aoi_unit_left_out(unit, share: float, count=None) -> str:
+    """The sentence of a unit left out by the field of interest's pre-selection although some of its readings lie
+    inside (0 < share < AOI_PRESELECT_SHARE): the unit, its share and readings, and how to keep it."""
+    n = (f" ({count[0]:,} of {count[1]:,} readings)" if count else "")
+    return (f"unit {unit.id} ({unit.label}) left out: {100 * share:.2f} % of its readings{n} lie inside the field of "
+            f"interest + {AOI_BUFFER_M:g} m, under the {100 * AOI_PRESELECT_SHARE:.0f} % that pre-selects a unit; if "
+            "this combine harvested part of the field, choose the units with --units")
 
 
 def units_aoi_distance_m(candidate: dict, units, aoi_union, opts, workdir: str,
@@ -1753,7 +1798,7 @@ def main(argv=None) -> int:
     ap.add_argument("--boundary", default=None, help="field boundary polygon file (level diagnostics only; prefer --aoi)")
     ap.add_argument("--aoi", default=None, help="field of interest: boundary or trial-design polygon file (.shp, .zip, "
                     ".geojson, .gpkg, .kml, .kmz). SMS 3-sigma (the default method): the S1 clip, records outside it "
-                    "(beyond the 1 cm edge tolerance) set aside before the cleaning, as in the app; --method occd: "
+                    "(beyond the S1 edge tolerance, 0 by default) set aside before the cleaning, as in the app; --method occd: "
                     "records outside it + 50 m dropped before the cascade. The clean file is clipped to it, a design "
                     "adds Plot_Id / Tgt_Rate; with raw data the units are chosen by their share of readings inside it "
                     "(>= 20 %%) instead of the monitor's field name")
@@ -1791,8 +1836,10 @@ def main(argv=None) -> int:
                          "it cut (measured from its own back-and-forth passes): warn (default), auto (move the points "
                          "back before Optimize Swath Widths) or off")
     ap.add_argument("--sms-min-yield", type=float, default=None,
-                    help="SMS 3-sigma: the import minimum of S0 in bu/ac (default 5; 0 = no check on the yield, for a "
-                         "file that was already imported with another minimum)")
+                    help="SMS 3-sigma: the minimum dry yield of S0 in bu/ac for a file cleaned without the import "
+                         "(--no-sms-import; default 5; 0 = no check on the yield). With the import on (the default), "
+                         "S0 takes the import's own minimum (--min-yield), which already left out every reading below "
+                         "it: a different value here is not used and a warning names the minimum in force")
     ap.add_argument("--no-sms-import", action="store_true",
                     help="clean the file as it is, without the import as SMS (engine/sms_import.py) the app and this "
                          "command run by default")
@@ -1812,6 +1859,20 @@ def main(argv=None) -> int:
     ap.add_argument("--expand-dry-moisture", action="store_true",
                     help="import as SMS: Expand Dry Moisture on (grain drier than the dry moisture is raised to it; "
                          "SMS's default and the app's is off)")
+    # the values the app's step 1 / step 2 can type by hand (engine/sms_import.py DEFAULTS), one flag each
+    ap.add_argument("--manual-swath", type=float, default=None, metavar="FT",
+                    help="import as SMS: Use Manual Swath at this width (ft; the app's 'Manual swath'): the logged "
+                         "width is replaced and the per-area yields scaled by logged / manual, the grain mass kept")
+    ap.add_argument("--manual-moisture", type=float, default=None, metavar="PCT",
+                    help="import as SMS: Use Manual Moisture (%%, used with 2 decimals as the app's box; the app's "
+                         "'Manual moisture'): every reading at this moisture, the dry yield computed again from it")
+    ap.add_argument("--start-delay", type=float, default=None, metavar="S",
+                    help="import as SMS: Start Delay (s): the first seconds of every pass left out (default 0)")
+    ap.add_argument("--stop-delay", type=float, default=None, metavar="S",
+                    help="import as SMS: Stop Delay (s): the last seconds of every pass left out (default 0)")
+    ap.add_argument("--flow-shift", type=float, default=None, metavar="S",
+                    help="import as SMS: Flow Shift (s): the grain mass of a reading moved to the position logged that "
+                         "many seconds earlier (+) or later (-), within each run of continuous logging (default 0)")
     ap.add_argument("--attributes", default=None, metavar="A,B",
                     help="a planter / sprayer point file: the columns filtered with 3-sigma, in order "
                          "(engine/clean/applied3s.py; default: the applied rate found and the speed)")
@@ -1901,9 +1962,30 @@ def _cli(a) -> int:
             imp_set[k] = v
     if a.expand_dry_moisture:
         imp_set["expand_dry_moisture"] = True
+    # the manual values: the same keys the app's step 1 sets (sms_import.DEFAULTS)
+    if a.manual_swath is not None:
+        imp_set.update(use_manual_swath=True, manual_swath_ft=a.manual_swath)
+    if a.manual_moisture is not None:
+        imp_set.update(use_manual_moisture=True, manual_moisture_pct=a.manual_moisture)
+    for k, v in (("start_delay_s", a.start_delay), ("stop_delay_s", a.stop_delay), ("flow_shift_s", a.flow_shift)):
+        if v is not None:
+            imp_set[k] = v
+    manual = [f for f, v in (("--manual-swath", a.manual_swath), ("--manual-moisture", a.manual_moisture),
+                             ("--start-delay", a.start_delay), ("--stop-delay", a.stop_delay),
+                             ("--flow-shift", a.flow_shift)) if v is not None]
+    if manual and a.no_sms_import:
+        raise ValueError(f"{', '.join(manual)} set the import as SMS, which --no-sms-import switches off: drop one "
+                         "or the other")
+    if a.manual_moisture is not None:
+        from engine import sms_import as si
+        used = si.round_manual_moisture(a.manual_moisture)
+        if used != float(a.manual_moisture):
+            _print(f"  note: --manual-moisture {a.manual_moisture:g} % is used as {used:.2f} % (2 decimals, as the "
+                   "app's box)")
     imp_rec = None
     dec = None
     data_crop = None
+    aoi_left_out = []
     if cand["kind"] == "raw":
         everything = bool(a.units and a.units.strip().lower() == "all")
         ids = None
@@ -1918,10 +2000,18 @@ def _cli(a) -> int:
             # the field of interest chooses the units: >= 20 % of the readings inside the AOI + 50 m
             _print(f"\nMeasuring the share of every latest-season unit inside the field of interest + "
                    f"{AOI_BUFFER_M:g} m ...")
-            shares = units_inside_aoi(cand, units, plan_union_wgs84(plan), opts, work, log=lambda m: _print("  " + m))
+            n_in_aoi = {}
+            shares = units_inside_aoi(cand, units, plan_union_wgs84(plan), opts, work, log=lambda m: _print("  " + m),
+                                      counts=n_in_aoi)
             pool = [u for u in units if (shares.get(u.id) or 0.0) >= AOI_PRESELECT_SHARE]
             if a.year:
                 pool = [u for u in pool if u.year == a.year]
+            # a unit with some of its readings inside but under the share is left out: said, never silently
+            aoi_left_out = [aoi_unit_left_out(u, shares[u.id], n_in_aoi.get(u.id)) for u in units
+                            if shares.get(u.id) is not None and 0.0 < shares[u.id] < AOI_PRESELECT_SHARE
+                            and (not a.year or u.year == a.year)]
+            for w in aoi_left_out:
+                _print("  WARNING: " + w)
             if not pool:
                 dist = units_aoi_distance_m(cand, units, plan_union_wgs84(plan), opts, work)
                 near = min(dist.values()) if dist else float("nan")
@@ -2047,7 +2137,7 @@ def _cli(a) -> int:
     out = free_output_dir(work)
     _print("\nCleaning:")
     R = clean(shp, out, settings, log=lambda m: _print("  " + m), source=dec["source"] if dec else None,
-              inputs_left_out=cand.get("inputs_left_out"))
+              inputs_left_out=list(cand.get("inputs_left_out") or []) + aoi_left_out)
     _print("")
     _print(pd.DataFrame(R["cascade"])[["filter", "on", "removed", "remaining"]].to_string(index=False))
     f8 = R["f8"]
@@ -2060,8 +2150,9 @@ def _cli(a) -> int:
     if R.get("method") == "sms3sigma":
         M3 = R.get("sms3sigma") or {}
         sw, gr = M3.get("swath") or {}, M3.get("grouping") or {}
-        _print(f"  method           SMS 3-sigma, {gr.get('n_groups')} group(s) ({gr.get('mode')}); swath "
-               f"{sw.get('n_removed', 0):,} removed, {sw.get('n_narrowed', 0):,} narrowed")
+        _print(f"  method           SMS 3-sigma, {gr.get('n_groups')} group(s) ({gr.get('mode')}); swath step "
+               f"(before the 3-sigma filters) {sw.get('n_removed', 0):,} removed, {sw.get('n_narrowed', 0):,} "
+               "narrowed")
     else:
         _print(f"  F8 overlap       {f8['mode']}, threshold "
                f"{'-' if f8['threshold'] is None else format(100 * f8['threshold'], '.3g') + ' %'}")
@@ -2091,6 +2182,15 @@ def _cli(a) -> int:
         c = L.get("closure") or {}
         if c.get("verdict"):
             _print(f"  closure          {c['verdict']}")
+        lo = L.get("import_left_out") or {}
+        if lo.get("steps"):
+            _print("  import left out  " + "; ".join(f"{v['n']:,} {k}: {v['bu']:,.2f} bu over {v['area_ac']:,.2f} ac"
+                                                  for k, v in lo["steps"].items() if v.get("n"))
+                   + f" (inside the field, {lo.get('basis')} basis; below the minimum "
+                     f"{float(lo.get('share_of_monitor_pct') or 0):.2f} % of the monitor total"
+                   + ("; in the monitor total L is built on)" if lo.get("included_in_L") else
+                      (f"; with it L would be {float(lo['factor_with_below_min']):.4f})"
+                       if lo.get("factor_with_below_min") is not None else ")")))
         tt = (R.get("machines") or {}).get("ticket_test") or {}
         if tt and (tt.get("candidates") or tt.get("rejected")):
             # only a factor above the max is tested against the weight (machines.ticket_closure)
@@ -2106,7 +2206,11 @@ def _cli(a) -> int:
         _print(f"  seams            {se['text']}")
     fm = R.get("final_map") or {}
     if fm:
-        _print(f"  final map        {fm['column']}: mean {fm['mean']:,.2f} bu/ac over {fm['n_points']:,} points "
+        avg = fm.get("average_area_weighted")
+        _print(f"  final map        {fm['column']}: "
+               + (f"average {float(avg):,.2f} bu/ac (total / area, as the SMS Summary's Avg. Yield), plain point "
+                  if avg is not None else "")
+               + f"mean {fm['mean']:,.2f} bu/ac over {fm['n_points']:,} points "
                f"(fig_clean_final.png); " + "; ".join(fm.get("applied") or []))
     if imp_rec:
         _print(f"  import as SMS    {imp_rec['n_in']:,} of {imp_rec['n_all']:,} readings ({imp_rec['settings']})")

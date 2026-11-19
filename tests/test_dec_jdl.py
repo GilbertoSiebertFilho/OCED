@@ -218,3 +218,28 @@ def test_decode_keeps_the_offset_of_the_sections_on_through_import_and_s2(tmp_pa
     assert n_half_kept == int(half.sum())                        # every half-width reading kept at its width
     assert np.allclose(pd.to_numeric(c.Y_Offset_f), 0.0)         # SMS writes 0 once it moved the readings
     assert out["none"][1] < n_half_kept - 10                     # at the midpoint: narrowed / removed over pass 1
+
+
+def _monitor_check(rep):
+    return [w for w in rep["warnings"] if "of the monitor's own wet yield" in w]
+
+
+def test_the_calibration_check_compares_bushels_at_the_monitors_test_weight(tmp_path):
+    """The decoded wet yield is compared with the monitor's own (DDI 39) in bushels of the monitor's test weight (the
+    card's 60 lb/bu): a weight to volume typed for the import (48, 52) or another crop is no calibration difference
+    and gives no 'read wrong'; a monitor that reads 25 % above the decode still warns, at any test weight."""
+    import dataclasses
+    probe = S.make_card(str(tmp_path / "p"))
+    d0, _ = J.decode_detailed(probe["root"], None, None, log=QUIET)
+    y = float(np.median(d0.Yld_Vol_We[d0.Yld_Vol_We > 10]))          # the decode's own wet yield at 60 lb/bu
+    same = S.make_card(str(tmp_path / "same"), y39=y)
+    high = S.make_card(str(tmp_path / "high"), y39=1.25 * y)
+    for tw, crop in ((None, None), (48.0, None), (52.0, None), (None, "barley")):
+        o = dataclasses.replace(J.default_options(), test_weight_lb_bu=tw, crop=crop)
+        _, rep = J.decode_detailed(same["root"], None, o, log=QUIET)
+        r = rep["details"][0]["ratio_to_monitor_wet_yield_median"]
+        assert r == pytest.approx(1.0, abs=0.05) and _monitor_check(rep) == [], (tw, crop, r)
+        _, rep = J.decode_detailed(high["root"], None, o, log=QUIET)
+        assert rep["details"][0]["ratio_to_monitor_wet_yield_median"] == pytest.approx(0.8, abs=0.05)
+        w = _monitor_check(rep)
+        assert len(w) == 1 and "80 % of the monitor's own wet yield" in w[0] and "60.00 lb" in w[0], (tw, crop)

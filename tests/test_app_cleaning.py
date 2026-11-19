@@ -23,6 +23,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from tests.app_steps import _apply_import  # noqa: E402
 from tests.synthetic import make_field, make_two_combines  # noqa: E402
 
 APP = os.path.join(ROOT, "app", "oced.py")
@@ -328,3 +329,34 @@ def test_grower_ticket_carries_use_and_bushels():
     T = gt({"weight": 50.0, "unit": "bu/ac", "test_weight": 63.0, "bushels": "grower", "area_ac": 10.0,
             "bushel_from": "declared"})
     assert T["test_weight_lb_bu"] == 63.0 and T["area_ac"] == 10.0 and T["bushel_from"] == "declared"
+
+
+def test_app_counts_the_grain_the_import_left_out_as_the_command_line_does(field, tmp_path, monkeypatch):
+    """The app's cleaning record names the import's file of every reading by its file name only; the app hands the
+    engine its path, so the grain of the readings the import left out below a 5 bu/ac minimum is counted as on the
+    command line (a record with the full path): the same level.import_left_out and the same L, no 'is not there'
+    note, and the record still holds the file name only."""
+    from engine import run as er_
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, field["shp"])
+    _apply_import(at, min=5.0)
+    assert not at.exception, at.exception
+    t = at.session_state["active"]
+    IM = at.session_state["datasets"][t]["sms_import"]
+    assert IM["left_out"].get("below the min. yield volume", 0) > 0 and os.path.isabs(IM["all_readings"])
+    _by_key(at.number_input, "gw_w_").set_value(100_000.0).run()
+    R = _clean(at)["R"]
+    lo = R["level"].get("import_left_out")
+    assert lo is not None and lo["below_min_bu"] > 0 and lo["file"] == os.path.basename(IM["all_readings"])
+    assert not any("is not there" in x for x in R["notes"] + R["warnings"])
+    assert R["sms_import"]["all_readings"] == os.path.basename(IM["all_readings"])
+    assert R["settings"]["sms_import"]["all_readings"] == os.path.basename(IM["all_readings"])
+    # the command line's record: the same settings with the full path
+    S = json.loads(json.dumps(R["settings"]))
+    S["sms_import"]["all_readings"] = IM["all_readings"]
+    R2 = er_.clean(at.session_state["datasets"][t]["shp"], str(tmp_path / "cli"), S, log=lambda m: None)
+    lo2 = R2["level"]["import_left_out"]
+    assert lo2["below_min_bu"] == pytest.approx(lo["below_min_bu"], rel=1e-12)
+    assert lo2["steps"] == lo["steps"]
+    assert R2["level"]["factor"] == pytest.approx(R["level"]["factor"], rel=1e-12)
+    assert any("left out" in str(c.value) and "below its minimum" in str(c.value) for c in at.caption)

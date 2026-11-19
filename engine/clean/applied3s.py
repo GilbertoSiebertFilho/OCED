@@ -11,7 +11,9 @@ Steps (on every reading of the file, in this order):
   S0  import check: no position, or the main attribute (the first rate) missing or <= min_value ("auto": 0 when the
       main attribute is an applied rate - no product / no seed applied: sections off, the planter raised at the
       headland -, no minimum for other point data).
-  S1  Clip To Field Boundary (with a boundary file; a point within clip_tolerance_m of the edge is inside). The
+  S1  Clip To Field Boundary (with a boundary file; the edge tolerance clip_tolerance_m is the harvest cleaning's,
+      sms3sigma.DEFAULTS, 0 as in SMS: a reading whose point lies on the edge or outside it by any distance is
+      clipped; a tolerance above 0 counts a point within it of the edge as inside). The
       readings outside the boundary that S0 already removed stay counted under S0; the summary counts every reading
       outside (n_outside) and every reading inside (n_inside), so "kept of the readings inside the boundary" and
       "removed %" are those of the boundary.
@@ -43,6 +45,8 @@ import numpy as np
 import pandas as pd
 
 from engine.clean.sms3sigma import _sd, sigma_limits, round_half_up  # noqa: F401  (the SMS rule itself)
+from engine.clean.sms3sigma import DEFAULTS as _SMS_DEFAULTS, edge_rule_text
+from engine.clean.sms3sigma import NO_LIMIT_MEAN_OUTSIDE, mean_outside_note, mean_outside_warning, sigma_limits_why
 
 DEFAULTS = {
     "attributes": None,         # columns filtered with 3-sigma, in order (None = the rate found + the speed)
@@ -55,7 +59,7 @@ DEFAULTS = {
     "sd_drop_pct": 25.0,
     "group_by": "auto",         # auto | dataset | machine | none
     "clip": True,               # S1 (needs a boundary)
-    "clip_tolerance_m": 0.01,
+    "clip_tolerance_m": _SMS_DEFAULTS["clip_tolerance_m"],   # S1 edge tolerance: the harvest cleaning's (0, as SMS)
 }
 GROUP_MODES = ("auto", "dataset", "machine", "none")
 TAG_SUFFIX = "_3s"
@@ -289,11 +293,12 @@ def run(shp: str, out_dir: str, settings: dict | None = None, boundary: str | No
                                 float(S["clip_tolerance_m"]))
         outside = ~inside & ~pos_bad
         before_s0 = int((outside & ~alive).sum())            # outside, but already removed by S0
-        record("S1", "Clip To Field Boundary", "outside the field boundary (a point within "
-               f"{100 * float(S['clip_tolerance_m']):g} cm of the edge is inside)"
+        record("S1", "Clip To Field Boundary", "outside the field boundary ("
+               f"{edge_rule_text(S['clip_tolerance_m'])})"
                + (f"; {before_s0:,} more outside were already removed by S0" if before_s0 else ""), outside)
         bnd_R = {"file": os.path.abspath(boundary), "area_ac": float(P["area_ac"]), "feature": P.get("feature"),
-                 "n_outside": int(outside.sum()), "n_outside_s0": before_s0, "is_plan": bool(P.get("is_plan"))}
+                 "n_outside": int(outside.sum()), "n_outside_s0": before_s0, "is_plan": bool(P.get("is_plan")),
+                 "edge_tolerance_m": float(S["clip_tolerance_m"])}
         for w in P.get("warnings") or []:
             warnings.append(f"boundary: {w}")
     else:
@@ -321,12 +326,15 @@ def run(shp: str, out_dir: str, settings: dict | None = None, boundary: str | No
         n_miss = 0
         for gname in (ginfo["groups"] if groups is None else groups):
             sel = alive & (gkey == gname)
-            lim = sigma_limits(vals[a][sel], k, floor[a], dec)
-            if lim is None:
+            lim, no_lim = sigma_limits_why(vals[a][sel], k, floor[a], dec)
+            if no_lim:
                 steps.append(dict(group=gname, step=fid, attribute=a, unit=unit[a], n_before=int(sel.sum()),
                                   mean=None, sd=None, lo=None, hi=None, removed=0, n_missing=0,
                                   n_after=int(sel.sum()), sd_after=None, sd_drop_pct=None,
-                                  note="fewer than 2 values or SD = 0: no limit"))
+                                  note=(mean_outside_note(lim, dec) if no_lim == NO_LIMIT_MEAN_OUTSIDE else
+                                        "fewer than 2 values or SD = 0: no limit")))
+                if no_lim == NO_LIMIT_MEAN_OUTSIDE:
+                    warnings.append(mean_outside_warning(fid, a, unit[a], gname, lim, dec))
                 continue
             nn, mu, sd, lo, hi = lim
             v = vals[a][sel]

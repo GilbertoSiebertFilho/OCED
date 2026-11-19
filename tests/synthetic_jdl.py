@@ -9,7 +9,9 @@ and the states (default: on, off at the turn, on again); layout2 - the second fi
 (3 sections of 3 m in a work-state element of its own, as when another header profile is chosen on the display) and
 starts a new session (no carry of the section states); counts - the definitions carry fields 7 / 8 / 9 (sum of the
 block durations, number of blocks, GNSS samples); width2_s - the time of the second width channel's sample;
-states2=False - the second file logs no section states (its width is then the logged width DDI 12001)."""
+states2=False - the second file logs no section states (its width is then the logged width DDI 12001);
+logged=True - the GNSS records also log the receiver's own distance per fix (mm; anchor 8 / deltas 15) and ground
+speed (mm/s; anchor 5 / deltas 21), as Gen4 displays do (made-up values, not the antenna's steps)."""
 from __future__ import annotations
 
 import os
@@ -26,7 +28,7 @@ LAT0, LON0 = 52.0, -113.0
 M_PER_DEG_LAT = 111_250.0
 M_PER_DEG_LON = 68_500.0
 IDS = {"gnss": 11, "header": 12, "cws": 13, "flow": 21, "moist": 22, "width": 23, "tw": 24, "width2": 25,
-       "cws2": 14}
+       "cws2": 14, "y39": 26}
 SECTIONS = [(31 + k, 1.5, -3750.0 + 1500.0 * k) for k in range(6)]          # id, width m, y mm (left to right)
 SECTIONS2 = [(41 + k, 3.0, -3000.0 + 3000.0 * k) for k in range(3)]
 
@@ -47,7 +49,7 @@ def _name(f, text):
     return _ld(f, _ld(1, _s(2, text)))
 
 
-def definitions(guid, ref_ms, prev=None, nxt=None, width2=False, layout2=False, counts=None) -> bytes:
+def definitions(guid, ref_ms, prev=None, nxt=None, width2=False, layout2=False, counts=None, y39=False) -> bytes:
     sections, cws = (SECTIONS2, IDS["cws2"]) if layout2 else (SECTIONS, IDS["cws"])
     secs = b"".join(_ld(4, _v(1, sid) + _d(2, w) + _ld(3, _d(2, y)) + _v(7, cws) + _v(16, k))
                     for k, (sid, w, y) in enumerate(sections))
@@ -56,8 +58,10 @@ def definitions(guid, ref_ms, prev=None, nxt=None, width2=False, layout2=False, 
            (IDS["tw"], 8, "lb1bu-1", 1.0)]
     if width2:
         lst.append((IDS["width2"], 12001, "m", 1000.0))
+    if y39:                                                 # the monitor's own wet yield (bu/ac at its test weight)
+        lst.append((IDS["y39"], 39, "bu1ac-1", 1000.0))
     for cid, ddi, unit, fac in lst:
-        delay = -14.0 if ddi in (510, 6) else 0.0
+        delay = -14.0 if ddi in (510, 6, 39) else 0.0
         chans += _ld(5, _v(1, cid) + _v(2, ddi) + _d(3, 0.0) + _d(4, fac) + _s(5, unit) + _d(9, delay))
     element = _ld(7, _ld(3, _v(1, IDS["header"]) + _ld(3, _d(1, 4000.0) + _d(2, 0.0) + _d(3, 0.0))) + secs + chans)
     machine = _ld(2, _s(4, VIN) + _s(5, "S999") + _d(6, 9.0) + _v(26, IDS["gnss"]) + element)
@@ -111,6 +115,15 @@ class _Streams:
             body += _ld(10, _packed_zz(np.diff(np.r_[bs, tr["gt"][k]])))
             for f, x, b0 in zip((12, 13, 16), vals, base):
                 body += _ld(f, _packed_zz(np.diff(np.r_[b0, x])))
+            if "gdist" in tr:                          # the receiver's own distance (mm) and speed (mm/s)
+                xv = [tr["gdist"][k], tr["gspeed"][k]]
+                px = last.get("gnss_x")
+                xb = px if px is not None and not first_block else [0, 0]
+                if px is not None and not first_block:
+                    body += _d(8, xb[0]) + _d(5, xb[1])
+                for f, x, b0 in zip((15, 21), xv, xb):
+                    body += _ld(f, _packed_zz(np.diff(np.r_[b0, x])))
+                last["gnss_x"] = [int(x[-1]) for x in xv]
             recs.append((1, IDS["gnss"], body))
             last["gnss"] = (int(tr["gt"][k[-1]]), [int(x[-1]) for x in vals])
         # header end points (type 2): anchors 1-4 / deltas 17-20, time 15
@@ -130,7 +143,8 @@ class _Streams:
         # channels (type 3)
         for name, ts, vs in (("flow", tr["ft"], tr["flow"]), ("moist", tr["ft"], tr["moist"]),
                              ("width", tr["wt"], tr["width"]), ("tw", tr["twt"], tr["tw"]),
-                             ("width2", tr.get("w2t"), tr.get("width2"))):
+                             ("width2", tr.get("w2t"), tr.get("width2")),
+                             ("y39", tr["ft"] if "y39" in tr else None, tr.get("y39"))):
             if ts is None:
                 continue
             k = rng(ts)
@@ -166,8 +180,10 @@ class _Streams:
         return _v(1, 2) + _v(2, 161) + _ld(4, blk), n_gnss
 
 
-def track(seed=3, width2=False, state_times=(0.12, 60.1, 80.1), states=None, width2_s=20.5):
-    """Two 60 s passes 9 m apart joined by a 20 s header-up turn; 5 Hz positions, 1 Hz flow and moisture."""
+def track(seed=3, width2=False, state_times=(0.12, 60.1, 80.1), states=None, width2_s=20.5, y39=None,
+          logged=False):
+    """Two 60 s passes 9 m apart joined by a 20 s header-up turn; 5 Hz positions, 1 Hz flow and moisture; y39 (bu/ac):
+    the monitor's own wet yield logged with the flow while harvesting (DDI 39), none by default."""
     rng = np.random.default_rng(seed)
     t0 = REF_MS + 500
     et = t0 + np.arange(0, 140_000, 200, dtype=np.int64)
@@ -191,21 +207,28 @@ def track(seed=3, width2=False, state_times=(0.12, 60.1, 80.1), states=None, wid
     tr["width"] = np.array([9000, 0, 9000], np.int64)
     tr["twt"] = np.array([t0 + 50], np.int64)
     tr["tw"] = np.array([60], np.int64)
+    if y39 is not None:
+        tr["y39"] = np.where(work, int(round(float(y39) * 1000)), 0).astype(np.int64)
     if width2:
         tr["w2t"] = np.array([t0 + int(width2_s * 1000)], np.int64)    # a second DDI 12001 channel
         tr["width2"] = np.array([9000], np.int64)
     tr["st"] = t0 + np.round(np.array(state_times) * 1000).astype(np.int64)
     tr["states"] = [list(x) for x in states] if states is not None else [[1] * 6, [0] * 6, [1] * 6]
     tr["states2"] = [[1] * 3 if all(x) else [0] * 3 if not any(x) else [1, 1, 0] for x in tr["states"]]
+    if logged:                                         # 0.4 m +- 5 cm per fix, 1.8-2.2 m/s: not the antenna's steps
+        tr["gdist"] = np.round(400 + 50 * np.sin(s * 0.7)).astype(np.int64)
+        tr["gspeed"] = np.round(2000 + 200 * np.cos(s * 1.3)).astype(np.int64)
     return tr
 
 
 def make_card(folder: str, split_s: float = 70.0, seed: int = 3, width2: bool = False,
               state_times=(0.12, 60.1, 80.1), layout2: bool = False, counts: bool = False, states=None,
-              width2_s: float = 20.5, states2: bool = True) -> dict:
+              width2_s: float = 20.5, states2: bool = True, y39: float | None = None, logged: bool = False) -> dict:
     """Write the card under folder/<VIN>_<date>/ and return {root, files, guids}. states: the section states (one
-    list of 6 values per time of state_times; default all on, all off, all on)."""
-    tr = track(seed, width2=width2, state_times=state_times, states=states, width2_s=width2_s)
+    list of 6 values per time of state_times; default all on, all off, all on). y39: the monitor's own wet yield
+    (bu/ac at the card's 60 lb/bu) logged as DDI 39 while harvesting; None (default) logs no DDI 39."""
+    tr = track(seed, width2=width2, state_times=state_times, states=states, width2_s=width2_s, y39=y39,
+               logged=logged)
     root = os.path.join(folder, f"{VIN}_01012026")
     logd = os.path.join(root, "JD-Data", "log", "2026")
     os.makedirs(logd, exist_ok=True)
@@ -239,6 +262,8 @@ def make_card(folder: str, split_s: float = 70.0, seed: int = 3, width2: bool = 
             kw["layout2"] = True
         if counts:
             kw["counts"] = (dur, len(blocks), n_g)
+        if y39 is not None:
+            kw["y39"] = True
         out += _frame(definitions(g[k], ref, prev=g[k - 1] if k else None, nxt=g[k + 1] if k + 1 < 2 else None,
                                   **kw))
         out += b"".join(blocks)
