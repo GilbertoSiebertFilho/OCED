@@ -1,0 +1,2597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>__TITLE__ · OCED harvest replay</title>
+<style>
+/* OCED harvest replay: the app's palette (app/brand.py), the system sans-serif (no external font), light theme */
+:root {
+  --navy: #00358E; --navy-2: #00266B; --blue: #009CDE; --blue-text: #0077B6; --green: #00B373; --orange: #F5A623;
+  --text: #1F2937; --muted: #4B5563; --rule: #D7E3F2; --bg2: #F3F7FC; --glass: rgba(255,255,255,0.94);
+  --glass-edge: rgba(0,53,142,0.14); --shadow: 0 1px 2px rgba(16,24,40,0.06), 0 10px 30px rgba(0,38,107,0.16);
+  --radius: 14px; --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #E9EEF2; color: var(--text); font-family: var(--font);
+  -webkit-font-smoothing: antialiased; }
+.rp { position: relative; width: 100%; height: 100vh; overflow: hidden; background: #E6ECE6; user-select: none;
+  -webkit-user-select: none; touch-action: none; border-radius: 0; }
+.rp.embedded { border-radius: 12px; }
+.rp:fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
+.rp canvas.map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.rp canvas.map.drag { cursor: grabbing; }
+.glass { background: var(--glass); border: 1px solid var(--glass-edge); border-radius: var(--radius);
+  box-shadow: var(--shadow); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+
+/* ---- the title card and the clock (top left) */
+.rp-head { position: absolute; left: 14px; top: 14px; padding: 12px 16px 12px 14px; max-width: min(420px, 62%);
+  display: flex; gap: 12px; align-items: stretch; }
+.rp-head .bar { width: 5px; border-radius: 4px; background: linear-gradient(180deg, var(--navy), var(--blue)); }
+.rp-kicker { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--blue-text); }
+.rp-title { font-size: 15px; font-weight: 700; color: var(--navy); margin-top: 1px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; max-width: 360px; }
+.rp-clock { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; }
+.rp-time { font-size: 30px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .01em;
+  line-height: 1; }
+.rp-date { font-size: 13px; font-weight: 600; color: var(--muted); }
+.rp-zone { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.rp-note { margin-top: 7px; font-size: 11.5px; line-height: 1.35; color: #7A4A00; background: #FFF4DE; border: 1px solid #F5D49A;
+  border-radius: 8px; padding: 5px 8px; }
+.rp-note:empty { display: none; }
+.rp-idle-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--blue-text);
+  background: #E6F5FC; border-radius: 999px; padding: 2px 8px; margin-left: 2px; vertical-align: middle; }
+.rp-idle-chip[hidden] { display: none; }
+
+/* ---- map buttons (top right) */
+.rp-tools { position: absolute; right: 14px; top: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 3; }
+.rp-tools .grp { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.tbtn { width: 40px; height: 40px; border: 0; background: transparent; color: var(--navy); display: grid; place-items: center;
+  cursor: pointer; transition: background .15s, color .15s; }
+.tbtn + .tbtn { border-top: 1px solid var(--rule); }
+.tbtn:hover { background: #EAF2FC; }
+.tbtn:active { background: #D9E8FA; }
+.tbtn.on { background: var(--navy); color: #fff; }
+.tbtn svg { width: 20px; height: 20px; }
+.tbtn:focus-visible, .btn:focus-visible, .seg button:focus-visible, .chip:focus-visible, select:focus-visible {
+  outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* ---- the live panel (right) */
+.rp-panel { position: absolute; right: 66px; top: 14px; width: 292px; max-height: calc(100% - 196px); overflow: auto;
+  padding: 12px 12px 10px; z-index: 2; scrollbar-width: thin; }
+.rp-panel[hidden] { display: none; }
+.ph { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 800;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 2px 2px 8px; }
+.cmb { border: 1px solid var(--rule); border-radius: 11px; padding: 7px 9px 6px; margin-bottom: 6px; background: #fff;
+  transition: border-color .15s, box-shadow .15s; }
+.cmb.followed { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(0,156,222,.18); }
+.cmb .top { display: flex; align-items: center; gap: 8px; }
+.num { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px; font-weight: 800;
+  color: #0B1B33; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.25); flex: none; }
+.cname { font-weight: 700; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmake { display: block; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmake .swatch { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+.cmb .top > .cmid { flex: 1; min-width: 0; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; border: 1px solid rgba(0,0,0,.25); flex: none; }
+.state { margin-left: auto; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
+.state.work { color: #00663F; background: #DDF6EC; }
+.state.idle { color: #7A4A00; background: #FFF1D6; }
+.state.wait, .state.done { color: #4B5563; background: #EEF1F5; }
+.vals { display: flex; gap: 4px; margin-top: 6px; }
+.vals .val { flex: 1; display: flex; align-items: baseline; gap: 4px; padding: 3px 7px; }
+.val { background: var(--bg2); border-radius: 8px; padding: 4px 7px; min-width: 0; }
+.val b { display: block; font-size: 14px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums;
+  white-space: nowrap; }
+.vals .val b { display: inline; font-size: 13.5px; }
+.val span { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.cmb .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; font-size: 11.5px;
+  color: var(--muted); gap: 6px; }
+.linkbtn { border: 0; background: none; color: var(--blue-text); font-weight: 700; font-size: 11.5px; cursor: pointer;
+  padding: 2px 4px; border-radius: 6px; font-family: inherit; }
+.linkbtn:hover { background: #EAF2FC; }
+.tot { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 4px 0 8px; }
+.tot .val b { font-size: 16px; }
+.prog { height: 6px; background: #E5ECF5; border-radius: 99px; overflow: hidden; margin: 2px 0 10px; }
+.prog i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--navy), var(--blue)); border-radius: 99px; }
+.rp-legend { position: absolute; left: 14px; width: 270px; padding: 10px 13px 10px; z-index: 2; }
+.rp-legend .lt { font-size: 12.5px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.ramp { height: 10px; border-radius: 5px; border: 1px solid rgba(0,0,0,.12); }
+.ramp-l { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 3px;
+  font-variant-numeric: tabular-nums; }
+.lchips { display: flex; flex-direction: column; gap: 4px; }
+.lchip { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); }
+.lchip .swatch { width: 12px; height: 12px; border-radius: 50%; }
+.lchip em { font-style: normal; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+.small { font-size: 11px; color: var(--muted); line-height: 1.35; margin-top: 6px; }
+
+/* ---- the control bar (bottom) */
+.rp-bar { position: absolute; left: 14px; right: 14px; bottom: 14px; padding: 10px 14px 10px; z-index: 3; }
+.tl-wrap { position: relative; }
+canvas.tl { width: 100%; height: 58px; display: block; cursor: pointer; touch-action: none; }
+.tl-tip { position: absolute; top: -26px; transform: translateX(-50%); background: var(--navy); color: #fff; font-size: 11.5px;
+  font-weight: 700; padding: 3px 7px; border-radius: 6px; white-space: nowrap; pointer-events: none; opacity: 0;
+  transition: opacity .12s; font-variant-numeric: tabular-nums; }
+.tl-tip.show { opacity: 1; }
+.ctl { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; row-gap: 8px; }
+.btn { height: 36px; min-width: 36px; padding: 0 9px; border: 1px solid var(--rule); background: #fff; color: var(--navy);
+  border-radius: 10px; display: inline-grid; place-items: center; cursor: pointer; font-family: inherit; font-weight: 700;
+  transition: background .15s, transform .1s, box-shadow .15s; }
+.btn:hover { background: #EAF2FC; }
+.btn:active { transform: translateY(1px); }
+.btn svg { width: 18px; height: 18px; }
+.btn.play { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--navy); color: #fff;
+  box-shadow: 0 6px 16px rgba(0,53,142,.35); }
+.btn.play:hover { background: #0A47B3; box-shadow: 0 8px 20px rgba(0,53,142,.42); transform: translateY(-1px); }
+.btn.play svg { width: 22px; height: 22px; }
+.sep { width: 1px; height: 26px; background: var(--rule); }
+.seg { display: inline-flex; background: var(--bg2); border: 1px solid var(--rule); border-radius: 10px; padding: 2px; gap: 2px; }
+.seg button { border: 0; background: transparent; height: 30px; padding: 0 9px; border-radius: 8px; font-family: inherit;
+  font-size: 12.5px; font-weight: 700; color: var(--navy); cursor: pointer; white-space: nowrap; }
+.seg button:hover { background: #E2ECF8; }
+.seg button.on { background: var(--navy); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.lbl { font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid var(--rule); background: #fff; color: var(--text); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  font-family: inherit; white-space: nowrap; }
+.chip .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #9AA6B5; display: grid; place-items: center; }
+.chip.on { border-color: var(--blue); background: #EAF6FD; color: var(--navy); }
+.chip.on .dot { border-color: var(--blue); background: var(--blue); box-shadow: inset 0 0 0 2px #fff; }
+select.sel { height: 34px; border: 1px solid var(--rule); border-radius: 10px; background: #fff; color: var(--navy); font-weight: 700;
+  font-family: inherit; font-size: 12.5px; padding: 0 8px; cursor: pointer; max-width: 170px; }
+.spacer { flex: 1; }
+.grp-i { display: inline-flex; align-items: center; gap: 6px; }
+.only-narrow { display: none !important; }
+
+/* ---- small things on the map */
+.rp-attr { position: absolute; right: 14px; font-size: 10.5px; color: rgba(255,255,255,.92); text-shadow: 0 1px 2px rgba(0,0,0,.7);
+  pointer-events: none; z-index: 1; max-width: 60%; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-attr.plain { color: #5B6573; text-shadow: none; }
+.rp-scale { position: absolute; left: 14px; font-size: 11px; font-weight: 700; color: var(--text); pointer-events: none; z-index: 1;
+  background: rgba(255,255,255,.88); border-radius: 8px; padding: 3px 8px 5px; box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.rp-scale i { display: block; height: 5px; border: 2px solid var(--text); border-top: 0; margin-top: 2px; }
+.toast { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); background: rgba(17,24,39,.88); color: #fff;
+  font-size: 12.5px; padding: 7px 12px; border-radius: 9px; pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 5;
+  white-space: nowrap; }
+.toast.show { opacity: 1; }
+#rp-stats { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 80%;
+  background: #fff; border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px; font: 12px/1.4 var(--mono);
+  color: var(--text); white-space: pre-wrap; z-index: 9; box-shadow: var(--shadow); }
+.rp.gallery > :not(canvas.map) { display: none !important; }
+.rp [hidden] { display: none !important; }
+
+/* ---- management zones (only with an imported zone map) */
+.rp-zpanel { position: absolute; right: 368px; top: 14px; width: 272px; max-height: calc(100% - 196px); overflow: auto;
+  padding: 12px 12px 10px; z-index: 2; scrollbar-width: thin; }
+.rp-zpanel[hidden] { display: none; }
+.rp-zpanel .ph button { margin-left: auto; }
+.ptabs { display: none; }
+.lzchips { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.lzchips .lchip { font-size: 11.5px; gap: 5px; }
+.lzchips .swatch { width: 12px; height: 12px; border-radius: 3px; }
+.zsub { font-size: 11px; color: var(--muted); margin: -4px 2px 8px; line-height: 1.35; overflow-wrap: anywhere; }
+.zrow { border: 1px solid var(--rule); border-radius: 11px; padding: 6px 9px 6px; margin-bottom: 6px; background: #fff; }
+.zrow.outz { background: var(--bg2); }
+.ztop { display: flex; align-items: center; gap: 7px; }
+.zsw { display: inline-block; vertical-align: -2px; width: 14px; height: 14px; border-radius: 4px;
+  border: 1px solid rgba(0,0,0,.28); flex: none; }
+.zname { font-weight: 700; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0; }
+.zbadges { display: inline-flex; gap: 2px; }
+.zbadges .num { width: 18px; height: 18px; font-size: 10.5px; border-width: 1.5px; }
+.zy { margin-left: auto; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.zy b { font-size: 14.5px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.zbar { height: 5px; background: #E5ECF5; border-radius: 99px; overflow: hidden; margin: 5px 0 3px; }
+.zbar i { display: block; height: 100%; width: 0; border-radius: 99px; }
+.zfoot { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+canvas.zchart { width: 100%; height: 92px; display: block; margin: 2px 0 6px; }
+.zopts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 8px; }
+.zopts .chip { height: 28px; font-size: 11.5px; padding: 0 9px; }
+.btn.zask { height: 30px; font-size: 12px; padding: 0 10px; background: var(--navy); color: #fff; border: 0; }
+.btn.zask:hover { background: #0A47B3; }
+.czone { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.czone .zsw { width: 10px; height: 10px; border-radius: 3px; }
+.rp-zsheet-h { display: none; }
+#rp-zcard { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; background: rgba(15,23,42,.38); }
+#rp-zcard[hidden] { display: none; }
+.zcard { width: min(720px, calc(100% - 28px)); max-height: calc(100% - 28px); overflow: auto; padding: 16px 18px 14px;
+  background: #fff; border-radius: 16px; box-shadow: var(--shadow); border: 1px solid var(--glass-edge); user-select: text;
+  -webkit-user-select: text; }
+.zcard h2 { margin: 0; font-size: 17px; color: var(--navy); }
+.zcard .zsub { margin: 3px 0 10px; font-size: 12px; }
+.zcard .x { position: sticky; top: 0; float: right; margin: -4px -6px 0 8px; }
+.zcard table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; margin: 4px 0 10px; }
+.zcard th { text-align: right; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
+  padding: 4px 6px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.zcard td { text-align: right; padding: 5px 6px; border-bottom: 1px solid #EEF2F7; white-space: nowrap; }
+.zcard th:first-child, .zcard td:first-child { text-align: left; }
+.zcard tr.outz td { color: var(--muted); font-style: italic; }
+.zcard .big { font-size: 14px; line-height: 1.45; margin: 6px 0 8px; color: var(--text); }
+.zcard .big b { color: var(--navy); }
+.zcard .order { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; margin: 4px 0 10px; }
+.zcard .order span { display: inline-flex; align-items: center; gap: 4px; }
+.zcard ul { margin: 4px 0 0 0; padding-left: 18px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.zcard h3 { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 12px 0 2px; }
+.zcard .scroll { overflow-x: auto; }
+.zcard .yes { color: #00663F; font-weight: 700; } .zcard .no { color: #9A5B00; font-weight: 700; }
+.zcard td.wrap { white-space: normal; min-width: 92px; text-align: left; line-height: 1.25; }
+/* a medium screen (the app's frame on a laptop): the zones and the combines share the right panel, as two tabs */
+@media (min-width: 761px) and (max-width: 1179px) {
+  .rp-zpanel { right: 66px; top: 14px; width: 292px; }
+  .ptabs { display: flex; margin: 0 0 8px; }
+  .ptabs button { flex: 1; }
+}
+
+/* ---- narrow (a phone held upright) */
+@media (max-width: 760px) {
+  .rp-head { left: 10px; top: 10px; padding: 9px 11px 9px 10px; max-width: calc(100% - 70px); gap: 9px; }
+  .rp-title { max-width: 230px; font-size: 13.5px; }
+  .rp-time { font-size: 24px; }
+  .rp-tools { right: 10px; top: 10px; }
+  .tbtn { width: 38px; height: 38px; }
+  .rp-panel { right: 10px; left: 10px; width: auto; top: auto; bottom: 186px; max-height: 46%; }
+  .rp-bar { left: 8px; right: 8px; bottom: 8px; padding: 8px 10px; }
+  .rp-legend { left: 8px; width: 200px; padding: 7px 10px; }
+  .rp-attr { max-width: calc(100% - 226px); font-size: 9.5px; right: 10px; }
+  .rp-legend .lchips { display: none; }
+  .rp-legend .lt { font-size: 11.5px; margin-bottom: 4px; }
+  .only-wide { display: none !important; }
+  .only-narrow { display: inline-flex !important; }
+  .ctl { gap: 7px; }
+  .seg button { padding: 0 7px; font-size: 12px; }
+  canvas.tl { height: 50px; }
+  .btn.play { width: 44px; height: 44px; }
+  .rp-zpanel { right: 10px; left: 10px; width: auto; top: auto; bottom: 186px; max-height: 46%; padding: 0; }
+  .rp-zpanel .zbody { padding: 0 10px 8px; }
+  .rp-zpanel.closed .zbody { display: none; }
+  .rp-zsheet-h { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; padding: 9px 12px;
+    font-family: inherit; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--navy);
+    cursor: pointer; }
+  .rp-zsheet-h .chev { margin-left: auto; transition: transform .15s; }
+  .rp-zpanel:not(.closed) .rp-zsheet-h .chev { transform: rotate(180deg); }
+  .rp-zpanel .ph.zph { display: none; }
+  .rp-zpanel .zbody { display: flex; flex-direction: column; }
+  .rp-zpanel .zbody > * { flex: none; }
+  .rp-zpanel #zrows { order: -1; margin-top: 2px; }
+  .rp-legend .lzchips { display: flex; gap: 3px 8px; }
+}
+@media (max-width: 760px) and (max-height: 520px) { .rp-panel { bottom: 150px; max-height: 40%; } }
+/* ---- edits by hand: the switch, the panel, the card of a reading, the box */
+.chip.echip { font-weight: 800; margin-top: 8px; height: 30px; }
+.chip.echip.off { color: #8A94A3; border-style: dashed; }
+.rp.editing canvas.map { cursor: pointer; }
+.rp.editing.boxing canvas.map { cursor: crosshair; }
+.rp-card { position: absolute; z-index: 6; width: 312px; padding: 9px 11px 8px; font-size: 12px; line-height: 1.35;
+  pointer-events: none; }
+.rp-card[hidden], .rp-boxsel[hidden], .rp-boxmenu[hidden] { display: none; }
+.rp-card .ch { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; font-size: 12.5px; }
+.rp-card .ct { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-card .cr { display: grid; grid-template-columns: 82px 1fr; gap: 6px; padding: 3px 0; border-top: 1px solid var(--rule); }
+.rp-card .cr > span:first-child { color: var(--muted); font-weight: 600; }
+.rp-card .lim { color: var(--muted); font-size: 11px; display: block; }
+.rp-card .out { color: #B00020; }
+.rp-card i { color: var(--muted); font-style: normal; }
+.rp-card .num, .etab .num { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: 9px; font-size: 11px; font-weight: 800; color: #111827; }
+.sym { display: inline-flex; vertical-align: -2px; margin-right: 4px; }
+.ehelp { font-size: 11.5px; color: var(--muted); line-height: 1.38; margin: 0 2px 8px; }
+.erow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.erow .btn, .rp-boxmenu .btn { height: 32px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+.erow .btn svg { width: 15px; height: 15px; }
+.btn.on { background: #EAF6FD; border-color: var(--blue); }
+.btn[disabled] { opacity: .45; cursor: default; }
+.btn.primary { width: 100%; margin-top: 2px; background: var(--navy); color: #fff; border: 0; height: 38px; font-size: 13px; }
+.btn.primary:hover:not([disabled]) { background: #0A47B3; }
+.etab { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.etab th, .etab td { padding: 4px 3px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.etab th { font-size: 11px; color: var(--muted); }
+.etab th:first-child, .etab td:first-child { text-align: left; }
+.etab td:first-child { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.etab tfoot td { font-weight: 800; border-bottom: 0; }
+.rp-boxsel { position: absolute; z-index: 5; border: 2px dashed #111827; background: rgba(255,255,255,.2);
+  box-shadow: inset 0 0 0 1px #fff; pointer-events: none; }
+.rp-boxmenu { position: absolute; z-index: 7; width: 250px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.rp-boxmenu .btn { justify-content: flex-start; }
+.bmt { font-size: 12px; font-weight: 700; margin: 0 2px 2px; }
+@media (max-width: 760px) {
+  #epanel { max-height: 36%; }
+  .rp-card { width: calc(100% - 20px); }
+  .rp-legend .lchips.eds { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="rp" id="rp">
+  <canvas class="map" id="map" aria-label="Map of the harvest"></canvas>
+  <div class="rp-head glass">
+    <div class="bar"></div>
+    <div style="min-width:0">
+      <div class="rp-kicker" id="kicker">Harvest replay</div>
+      <div class="rp-title" id="title"></div>
+      <div class="rp-clock"><span class="rp-time" id="time">--:--:--</span><span class="rp-date" id="date"></span></div>
+      <div class="rp-zone"><span id="zone"></span> <span class="rp-idle-chip" id="idlechip" hidden>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 4l10 8-10 8zM19 5v14"/></svg>skipping idle time</span></div>
+      <div class="rp-note" id="note"></div>
+      <button class="chip echip" id="b-edit" hidden aria-pressed="false" title="Edit points: mark readings to remove or to keep, then reprocess the cleaning"><span class="dot"></span>Edit points</button>
+    </div>
+  </div>
+  <div class="rp-tools">
+    <div class="grp glass">
+      <button class="tbtn" id="b-full" title="Full screen (F)" aria-label="Full screen"></button>
+      <button class="tbtn" id="b-tall" title="Taller / shorter" aria-label="Taller or shorter"></button>
+      <button class="tbtn" id="b-panel" title="Combines and legend" aria-label="Combines and legend"></button>
+    </div>
+    <div class="grp glass">
+      <button class="tbtn" id="b-zin" title="Zoom in (+)" aria-label="Zoom in"></button>
+      <button class="tbtn" id="b-zout" title="Zoom out (-)" aria-label="Zoom out"></button>
+      <button class="tbtn" id="b-fit" title="Fit the field (0)" aria-label="Fit the field"></button>
+    </div>
+  </div>
+  <div class="rp-panel glass" id="panel">
+    <!--zones--><div class="seg ptabs" id="ptabs-c"><button data-t="combines" class="on">Combines</button><button data-t="zones">Zones</button></div><!--/zones-->
+    <div class="ph"><span>Combines</span><span id="ncomb"></span></div>
+    <div id="cmbs"></div>
+    <div class="ph" style="margin-top:10px"><span id="sofar-t">So far</span><span id="pct"></span></div>
+    <div class="prog"><i id="progbar"></i></div>
+    <div class="tot" id="tot"></div>
+    <div class="small" id="thinnote"></div>
+  </div>
+  <!--zones--><div class="rp-zpanel glass" id="zpanel" hidden>
+    <button class="rp-zsheet-h" id="zsheet-h" aria-expanded="false"><span>Management zones</span><span id="zsheet-y" style="font-weight:700;letter-spacing:0;text-transform:none;color:var(--muted)"></span><svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>
+    <div class="zbody">
+      <div class="seg ptabs" id="ptabs-z"><button data-t="combines">Combines</button><button data-t="zones" class="on">Zones</button></div>
+      <div class="ph zph"><span>Management zones</span><span id="nzones"></span></div>
+      <div class="zsub" id="zsub"></div>
+      <canvas class="zchart" id="zchart" aria-label="Running yield of each management zone"></canvas>
+      <div class="zopts"><button class="chip" id="t-zbd" title="Count the readings closer to a zone border than half their swath width"><span class="dot"></span>Border readings</button>
+        <button class="btn zask" id="b-zcard" title="The yield of each management zone, and whether the zones agree with it">Do the zones agree?</button></div>
+      <div id="zrows"></div>
+    </div>
+  </div><!--/zones-->
+  <div class="rp-bar glass">
+    <div class="tl-wrap"><canvas class="tl" id="tl" aria-label="Timeline"></canvas><div class="tl-tip" id="tltip"></div></div>
+    <div class="ctl">
+      <div class="grp-i">
+        <button class="btn" id="b-back" title="Back one second of playback (Left arrow)" aria-label="Step back"></button>
+        <button class="btn play" id="b-play" title="Play / pause (Space)" aria-label="Play"></button>
+        <button class="btn" id="b-fwd" title="Forward one second of playback (Right arrow)" aria-label="Step forward"></button>
+      </div>
+      <div class="sep only-wide"></div>
+      <div class="grp-i"><span class="lbl only-wide">Speed</span>
+        <div class="seg only-wide" id="speeds"></div>
+        <select class="sel only-narrow" id="speedsel" aria-label="Speed"></select>
+      </div>
+      <!--zones--><div class="sep only-wide" id="view-sep" hidden></div>
+      <div class="grp-i" id="view-grp" hidden><span class="lbl only-wide">View</span>
+        <div class="seg only-wide" id="views"></div>
+        <select class="sel only-narrow" id="viewsel" aria-label="View"></select>
+      </div><!--/zones-->
+      <div class="sep only-wide"></div>
+      <div class="grp-i"><span class="lbl only-wide">Colour</span>
+        <div class="seg only-wide" id="colours"></div>
+        <select class="sel only-narrow" id="coloursel" aria-label="Colour by"></select>
+      </div>
+      <div class="spacer only-wide"></div>
+      <button class="chip" id="t-idle" title="Skip the times when no combine works (nights, pauses)"><span class="dot"></span>Skip idle time</button>
+      <button class="chip" id="t-ahead" title="Show the whole track ahead, faint"><span class="dot"></span>Track ahead</button>
+      <!--zones--><button class="chip" id="t-zb" title="The borders of the management zones over the yield map" hidden><span class="dot"></span>Zone borders</button><!--/zones-->
+      <select class="sel" id="follow" aria-label="Follow a combine" title="The view travels with the combine"></select>
+    </div>
+  </div>
+  <div class="rp-panel glass" id="epanel" hidden></div>
+  <div class="rp-legend glass" id="legend"></div>
+  <div class="rp-boxsel" id="boxsel" hidden></div>
+  <div class="rp-boxmenu glass" id="boxmenu" hidden></div>
+  <div class="rp-card glass" id="rp-card" hidden role="status"></div>
+  <div class="rp-attr" id="attr"></div>
+  <div class="rp-scale" id="scale"><span id="scale-t"></span><i id="scale-i"></i></div>
+  <div class="toast" id="toast"></div>
+  <!--zones--><div id="rp-zcard" hidden role="dialog" aria-modal="true" aria-labelledby="zcard-t"><div class="zcard" id="zcard"></div></div><!--/zones-->
+  <pre id="rp-stats"></pre>
+</div>
+<script id="rp-data" type="application/json">__PAYLOAD__</script>
+<script>
+"use strict";
+window.addEventListener("error", (e) => {      // shown in place of a silent failure
+  const el = document.getElementById("rp-stats");
+  if (el) { el.textContent = "Replay error: " + e.message + " (line " + e.lineno + ")"; el.style.display = "block"; }
+});
+(function () {
+const CFG = /*__CONFIG__*/null || {};
+const SELF_HTML = "<!doctype html>\n" + document.documentElement.outerHTML;   // before the page is built: a new tab
+const P = JSON.parse(document.getElementById("rp-data").textContent);
+const $ = (id) => document.getElementById(id);
+const root = $("rp"), cv = $("map"), ctx = cv.getContext("2d");
+const R_EARTH = 6378137, TWO_PI_R = 2 * Math.PI * R_EARTH;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const EMBED = !!CFG.embedded;
+if (EMBED) root.classList.add("embedded");
+if (CFG.height) root.style.height = CFG.height + "px";
+
+/* ------------------------------------------------------------------ icons (inline SVG, no font) */
+const I = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.53.85l10.2-6.5a1 1 0 0 0 0-1.7L9.53 4.65A1 1 0 0 0 8 5.5z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-8 6 8 6V6zM6 6v12"/></svg>',
+  fwd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l8 6-8 6V6zM18 6v12"/></svg>',
+  zin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  zout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>',
+  fit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><path d="M8.5 15.5l2.2-6.2 3.4 2.6 1.9-3.4" /></svg>',
+  full: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+  unfull: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
+  tab: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  tall: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg>',
+  short: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v7M12 14v7M8 6l4 4 4-4M8 18l4-4 4 4"/></svg>',
+  panel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14.5 4.5v15M17 8.5h1M17 11.5h1"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>',
+  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-dasharray="3 3"><rect x="4" y="5" width="16" height="14" rx="1.5"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12h-2" transform="translate(0 -6)"/></svg>',
+};
+$("b-play").innerHTML = I.play; $("b-back").innerHTML = I.back; $("b-fwd").innerHTML = I.fwd;
+$("b-zin").innerHTML = I.zin; $("b-zout").innerHTML = I.zout; $("b-fit").innerHTML = I.fit;
+$("b-full").innerHTML = I.full; $("b-tall").innerHTML = I.tall; $("b-panel").innerHTML = I.panel;
+
+/* ------------------------------------------------------------------ the data */
+function decode(s, n) {
+  // zig-zag LEB128 varints of the deltas (engine/replay.py _varint), or "=v" for a constant column
+  const out = new Float64Array(n);
+  if (!s) return out;
+  if (s[0] === "=") { out.fill(+s.slice(1)); return out; }
+  const bin = atob(s);
+  let cur = 0, mul = 1, acc = 0, k = 0;
+  for (let i = 0; i < bin.length && k < n; i++) {
+    const b = bin.charCodeAt(i);
+    cur += (b & 127) * mul;
+    if (b & 128) { mul *= 128; continue; }
+    acc += (cur % 2) ? -(cur + 1) / 2 : cur / 2;
+    out[k++] = acc; cur = 0; mul = 1;
+  }
+  return out;
+}
+const LAT0 = P.center[1], LON0 = P.center[0];
+const K_GROUND = 1 / Math.cos(LAT0 * Math.PI / 180);          // ground metres -> Web Mercator metres
+const mx = (lon) => lon * Math.PI / 180 * R_EARTH;
+const my = (lat) => R_EARTH * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+const C = P.combines.map((c) => {
+  const n = c.n_shown;
+  const d = c.data;
+  const t = decode(d.t, n), lo = decode(d.lon, n), la = decode(d.lat, n), dir = decode(d.dir, n), w = decode(d.w, n),
+    dist = decode(d.d, n), off = decode(d.off, n), y = decode(d.y, n), m = decode(d.m, n), s = decode(d.s, n),
+    f = decode(d.f, n), zb = d.zb ? decode(d.zb, n) : null;   // zb: management zone x 2 + border flag
+  const X = new Float64Array(n), Y = new Float64Array(n), Q = new Float64Array(n * 8), A = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    t[i] *= 0.1; dir[i] *= 0.1; w[i] *= 0.01; dist[i] *= 0.01; off[i] *= 0.01;
+    y[i] = y[i] < 0 ? NaN : y[i] * 0.1; m[i] = m[i] < 0 ? NaN : m[i] * 0.01; s[i] = s[i] < 0 ? NaN : s[i] * 0.01;
+    X[i] = mx(LON0 + lo[i] * 1e-7); Y[i] = my(LAT0 + la[i] * 1e-7);
+  }
+  // the strip of each reading (engine/clean/yield_clean.swept_strips; an SMS output: swath_quads), in mercator metres
+  for (let i = 0; i < n; i++) {
+    const a = dir[i] * Math.PI / 180, tx = Math.sin(a), ty = Math.cos(a), nx = ty, ny = -tx;   // right of travel
+    const hw = w[i] / 2, o = off[i], lo_ = (o - hw) * K_GROUND, hi_ = (o + hw) * K_GROUND, dd = dist[i] * K_GROUND;
+    const j = i * 8;
+    let bx0, by0, bx1, by1;
+    if ((f[i] & 1) && i > 0) {
+      const ap = dir[i - 1] * Math.PI / 180, pnx = Math.cos(ap), pny = -Math.sin(ap);
+      bx0 = X[i - 1] + pnx * lo_; by0 = Y[i - 1] + pny * lo_; bx1 = X[i - 1] + pnx * hi_; by1 = Y[i - 1] + pny * hi_;
+    } else {
+      const bx = X[i] - tx * dd, by = Y[i] - ty * dd;
+      bx0 = bx + nx * lo_; by0 = by + ny * lo_; bx1 = bx + nx * hi_; by1 = by + ny * hi_;
+    }
+    if (!(w[i] > 0) || (!(f[i] & 1) && !(dist[i] > 0))) { Q[j] = NaN; }
+    Q[j] = Q[j] === Q[j] ? bx0 : NaN; Q[j + 1] = by0; Q[j + 2] = bx1; Q[j + 3] = by1;
+    Q[j + 4] = X[i] + nx * hi_; Q[j + 5] = Y[i] + ny * hi_; Q[j + 6] = X[i] + nx * lo_; Q[j + 7] = Y[i] + ny * lo_;
+    A[i] = w[i] * dist[i] / 4046.8564224;
+  }
+  // chunks of 256 readings with their bounding boxes (culling)
+  const CH = 256, nch = Math.ceil(n / CH), bb = new Float64Array(nch * 4);
+  for (let k = 0; k < nch; k++) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = k * CH; i < Math.min(n, (k + 1) * CH); i++) {
+      const j = i * 8;
+      if (Q[j] !== Q[j]) continue;
+      for (let q = 0; q < 8; q += 2) {
+        if (Q[j + q] < x0) x0 = Q[j + q]; if (Q[j + q] > x1) x1 = Q[j + q];
+        if (Q[j + q + 1] < y0) y0 = Q[j + q + 1]; if (Q[j + q + 1] > y1) y1 = Q[j + q + 1];
+      }
+    }
+    bb[k * 4] = x0; bb[k * 4 + 1] = y0; bb[k * 4 + 2] = x1; bb[k * 4 + 3] = y1;
+  }
+  // cumulative area and bushels (the live totals): kept readings only in a cleaning
+  const cumA = new Float64Array(n + 1), cumB = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    const kept = !(f[i] & 2);
+    cumA[i + 1] = cumA[i] + (kept ? A[i] : 0);
+    cumB[i + 1] = cumB[i] + (kept && y[i] === y[i] ? y[i] * A[i] : 0);
+  }
+  // the header as built: the width it cuts most of the time (95th percentile of the logged widths), whatever sections
+  // are off at a reading
+  const ws = Array.from(w).filter((v) => v > 0).sort((p, q) => p - q);
+  const hdrW = ws.length ? ws[Math.min(ws.length - 1, Math.floor(ws.length * 0.95))] : 9.1;
+  return Object.assign({}, c, { n, t, X, Y, Q, hdrW, dir, w, dist, off, y, m, s, f, zb, A, bb, CH, nch, cumA, cumB,
+    painted: -1, idx: -1, ang: null, px: NaN, py: NaN, reel: Math.random() * 6, steer: 0, lastWork: false });
+});
+const MAKES = P.makes;
+const T_END = P.t_end || 0;
+const IDLE = (P.idle || []).slice().sort((a, b) => a[0] - b[0]);
+const KIND = P.kind;
+const FONT = getComputedStyle(document.documentElement).getPropertyValue("--font") || "sans-serif";
+const FORCE_RASTER = /raster=1/.test(location.hash);
+
+/* ------------------------------------------------------------------ management zones (P.zones: an imported zone map)
+   The zone map is the user's own (OCED never builds one). Each reading carries its management zone and whether it is
+   on a border (zb). The running numbers of each zone are prefix sums over the readings of that zone, combine by
+   combine, read at the reading each combine has reached: right after any seek, at any speed. Their columns are rounded
+   (1 cm, 0.1 bu/ac), so each combine-zone sum is scaled by its exact total over the timeline (P.zones.cells): at the
+   end they are the final statistics computed in Python. */
+const ZM = P.zones || null, HAS_Z = !!(ZM && ZM.classes && ZM.classes.length);
+const ZK = HAS_Z ? ZM.classes.length : 0;
+const Z_OUT = "#AEB6BF", Z_BORDER = "#F4F6FA";   // Z_BORDER: a reading on a zone border, left out of the numbers
+function mixWhite(hex, k) { const c = hex2rgb(hex).map((v) => Math.round(v + (255 - v) * k)); return `rgb(${c[0]},${c[1]},${c[2]})`; }
+const ZCLS = !HAS_Z ? [] : ZM.classes.map((z, k) => {
+  const r = z.rings || {}, ns = r.n || [], tot = ns.reduce((a, b) => a + b, 0);
+  const xs = decode(r.x, tot), ys = decode(r.y, tot), rings = [];
+  let o = 0;
+  for (const m of ns) {
+    const R = new Float64Array(m * 2);
+    for (let i = 0; i < m; i++) { R[2 * i] = mx(LON0 + xs[o + i] * 1e-7); R[2 * i + 1] = my(LAT0 + ys[o + i] * 1e-7); }
+    rings.push(R); o += m;
+  }
+  const name = ZM.numeric ? "Zone " + z.label : String(z.label);
+  return { k, label: String(z.label), name, colour: z.colour, light: mixWhite(z.colour, 0.55), map_ac: z.map_ac, rings,
+    chips: (z.chips || []).map(([lo, la]) => [mx(lo), my(la)]) };
+});
+function zoneOf(k) { return k < ZK ? ZCLS[k] : { k, label: ZM ? ZM.outside : "outside the zones", name: ZM ? ZM.outside : "", colour: Z_OUT, light: mixWhite(Z_OUT, 0.5), map_ac: null }; }
+if (HAS_Z) {
+  const cells = {};
+  for (const r of ZM.cells || []) cells[r[0] + "/" + r[1] + "/" + r[2]] = r;
+  C.forEach((c, ci) => {
+    if (!c.zb) return;
+    const G = 2 * (ZK + 1), cnt = new Int32Array(G);
+    for (let i = 0; i < c.n; i++) if (!(c.f[i] & 2)) cnt[c.zb[i]]++;
+    const zg = [];
+    for (let q = 0; q < G; q++) {
+      const m = cnt[q];
+      zg.push({ m: 0, idx: new Int32Array(m), A: new Float64Array(m + 1), B: new Float64Array(m + 1), NY: new Float64Array(m + 1),
+        SY: new Float64Array(m + 1), SY2: new Float64Array(m + 1), kN: 1, kA: 1, kB: 1, kNY: 1, kSY: 1, kSY2: 1 });
+    }
+    for (let i = 0; i < c.n; i++) {
+      if (c.f[i] & 2) continue;                       // removed by the cleaning: not counted
+      const g = zg[c.zb[i]], p = g.m++, a = c.A[i], y = c.y[i], fy = y === y;
+      g.idx[p] = i; g.A[p + 1] = g.A[p] + a; g.B[p + 1] = g.B[p] + (fy ? y * a : 0); g.NY[p + 1] = g.NY[p] + (fy ? 1 : 0);
+      g.SY[p + 1] = g.SY[p] + (fy ? y : 0); g.SY2[p + 1] = g.SY2[p] + (fy ? y * y : 0);
+    }
+    zg.forEach((g, q) => {
+      const r = cells[ci + "/" + (q >> 1) + "/" + (q & 1)]; if (!r) return;
+      if (!g.m) {           // every reading of this cell thinned away: its exact total joins at the combine's last reading
+        if (c.n > 0) zg[q] = { m: 1, idx: Int32Array.of(c.n - 1), A: Float64Array.of(0, r[4]), B: Float64Array.of(0, r[5]),
+          NY: Float64Array.of(0, r[6]), SY: Float64Array.of(0, r[7]), SY2: Float64Array.of(0, r[8]), kN: r[3], kA: 1, kB: 1, kNY: 1, kSY: 1, kSY2: 1 };
+        return;
+      }
+      const k = (exact, here) => (here > 0 ? exact / here : 1);
+      g.kN = r[3] / g.m; g.kA = k(r[4], g.A[g.m]); g.kB = k(r[5], g.B[g.m]); g.kNY = k(r[6], g.NY[g.m]);
+      g.kSY = k(r[7], g.SY[g.m]); g.kSY2 = k(r[8], g.SY2[g.m]);
+    });
+    c.zg = zg;
+  });
+}
+function upperB(a, m, i) { let lo = 0, hi = m; while (lo < hi) { const h = (lo + hi) >> 1; if (a[h] <= i) lo = h + 1; else hi = h; } return lo; }
+// the running sums of each management zone (k = ZK: outside the zones) at the readings the combines have reached
+function zoneRun(withBorder, upto) {
+  const out = [];
+  for (let k = 0; k <= ZK; k++) out.push({ n: 0, A: 0, B: 0, ny: 0, sy: 0, sy2: 0, nb: 0 });
+  C.forEach((c, ci) => {
+    const last = upto ? upto(c, ci) : c.idx;
+    if (!c.zg || last < 0) return;
+    for (let q = 0; q < c.zg.length; q++) {
+      const g = c.zg[q]; if (!g.m) continue;
+      const p = upperB(g.idx, g.m, last); if (!p) continue;
+      const o = out[q >> 1];
+      if (q & 1) { o.nb += p * g.kN; if (!withBorder) continue; }
+      o.n += p * g.kN; o.A += g.A[p] * g.kA; o.B += g.B[p] * g.kB; o.ny += g.NY[p] * g.kNY; o.sy += g.SY[p] * g.kSY; o.sy2 += g.SY2[p] * g.kSY2;
+    }
+  });
+  for (const o of out) {
+    o.yield = o.A > 0 ? o.B / o.A : NaN; o.mean = o.ny > 0 ? o.sy / o.ny : NaN;
+    o.sd = o.ny > 0 ? Math.sqrt(Math.max(0, o.sy2 / o.ny - o.mean * o.mean)) : NaN;
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ colours */
+function hex2rgb(h) { const v = parseInt(h.slice(1), 16); return [(v >> 16) & 255, (v >> 8) & 255, v & 255]; }
+function lut(stops, n) {
+  const rgb = stops.map(hex2rgb), out = [];
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1) * (rgb.length - 1), k = Math.min(Math.floor(x), rgb.length - 2), f = x - k;
+    const c = [0, 1, 2].map((q) => Math.round(rgb[k][q] + (rgb[k + 1][q] - rgb[k][q]) * f));
+    out.push(`rgb(${c[0]},${c[1]},${c[2]})`);
+  }
+  return out;
+}
+const NB = 48;
+const SCALES = {};
+for (const k of ["yield", "moisture", "speed"]) {
+  const s = P.scales[k];
+  if (s) SCALES[k] = { lo: s.lo, hi: s.hi, stops: s.stops, lut: lut(s.stops, NB) };
+}
+const GREY = "#5E6B79", NOVAL = "rgba(176,184,192,0.85)", KEPT = "#00B373";
+const MODES = [["yield", "Yield"], ["moisture", "Moisture"], ["speed", "Speed"], ["combine", "Combine"]];
+if (KIND === "clean") MODES.push(["kept", "Kept / removed"]);
+if (HAS_Z) MODES.push(["zone", "Zone"]);
+// bucket of each reading for a mode: 0..NB-1 ramp, NB+ci combine, 100+2*zone+border management zone, 200 kept,
+// 201 removed / no value
+function bucketsOf(mode) {
+  for (const c of C) {
+    if (!c.bk) c.bk = {};
+    if (c.bk[mode]) continue;
+    const b = new Uint8Array(c.n);
+    const arr = mode === "yield" ? c.y : mode === "moisture" ? c.m : mode === "speed" ? c.s : null;
+    const sc = SCALES[mode];
+    for (let i = 0; i < c.n; i++) {
+      const rem = (c.f[i] & 2) !== 0;
+      if (mode === "combine") { b[i] = NB + ((c.num - 1) % 40); continue; }
+      if (mode === "kept") { b[i] = rem ? 201 : 200; continue; }
+      if (rem) { b[i] = 201; continue; }
+      if (mode === "zone") { b[i] = c.zb ? 100 + c.zb[i] : 202; continue; }
+      const v = arr[i];
+      if (v !== v || !sc) { b[i] = 202; continue; }
+      let q = Math.round((v - sc.lo) / (sc.hi - sc.lo || 1) * (NB - 1));
+      b[i] = q < 0 ? 0 : q > NB - 1 ? NB - 1 : q;
+    }
+    c.bk[mode] = b;
+  }
+}
+function bucketColour(b, mode) {
+  if (b < NB) return SCALES[mode] ? SCALES[mode].lut[b] : NOVAL;
+  if (b >= 100 && b < 200) { const z = zoneOf((b - 100) >> 1); return (b - 100) & 1 && !S.zborder ? Z_BORDER : z.colour; }
+  if (b < 200) { const c = C.find((q) => (q.num - 1) % 40 === b - NB); return c ? c.color : "#fff"; }
+  if (b === 200) return KEPT;
+  if (b === 201) return GREY;
+  return NOVAL;
+}
+
+/* ------------------------------------------------------------------ state */
+const S = {
+  t: 0, playing: false, speed: 60, mode: "yield", skipIdle: true, ahead: false, follow: 0, panel: true,
+  cx: 0, cy: 0, z: 15, W: 0, H: 0, tall: false, dirty: true, groundDirty: true, interacting: 0,
+  view: HAS_Z ? "zones" : "yield", zborders: false, zborder: false, zsheet: false, zcardShown: false,
+};
+const SPEEDS = [[1, "1×"], [10, "10×"], [60, "60×"], [300, "300×"], [1200, "1200×"], ["min", "1 min"]];
+let workTotal = 0;
+{ // working time (the union of the runs) and the play rate of 'whole harvest in one minute'
+  const iv = []; C.forEach((c) => c.runs.forEach((r) => iv.push(r))); iv.sort((a, b) => a[0] - b[0]);
+  let cur = null;
+  for (const [a, b] of iv) { if (!cur || a > cur[1]) { if (cur) workTotal += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b); }
+  if (cur) workTotal += cur[1] - cur[0];
+  if (!(workTotal > 0)) workTotal = Math.max(T_END, 1);
+}
+function rate() { return S.speed === "min" ? workTotal / 60 : S.speed; }
+
+/* ------------------------------------------------------------------ the view (Web Mercator) */
+const scaleAt = (z) => 256 * Math.pow(2, z) / TWO_PI_R;      // css px per mercator metre
+function fit(animate) {
+  const bb = P.bbox; if (!bb) return;
+  let x0 = mx(bb[0]), x1 = mx(bb[2]), y0 = my(bb[1]), y1 = my(bb[3]);
+  if (P.outline && P.outline.length) {
+    for (const ring of P.outline) for (const [lo, la] of ring) {
+      x0 = Math.min(x0, mx(lo)); x1 = Math.max(x1, mx(lo)); y0 = Math.min(y0, my(la)); y1 = Math.max(y1, my(la));
+    }
+  }
+  // the free part of the map: the largest rectangle that no card, panel, legend, button or bar covers, among the
+  // rectangles the edges of those boxes make; the field goes in the middle of it, as large as it fits
+  const fw = (x1 - x0) || 1, fh = (y1 - y0) || 1, M = 10, IN = 6, obs = overlayRects().map((o) => [o[0] - M, o[1] - M, o[2] + M, o[3] + M]);
+  const xs = [...new Set([M, S.W - M, ...obs.flatMap((o) => [o[0], o[2]])].filter((v) => v >= M && v <= S.W - M))].sort((a, b) => a - b);
+  const ys = [...new Set([M, S.H - M, ...obs.flatMap((o) => [o[1], o[3]])].filter((v) => v >= M && v <= S.H - M))].sort((a, b) => a - b);
+  let best = null;
+  for (let a = 0; a < xs.length; a++) for (let b = a + 1; b < xs.length; b++) {
+    const xl = xs[a], xr = xs[b]; if (xr - xl < 60) continue;
+    for (let c = 0; c < ys.length; c++) for (let d = c + 1; d < ys.length; d++) {
+      const yt = ys[c], yb = ys[d]; if (yb - yt < 60) continue;
+      if (obs.some((o) => o[0] < xr && o[2] > xl && o[1] < yb && o[3] > yt)) continue;
+      const sc = Math.min((xr - xl - 2 * IN) / fw, (yb - yt - 2 * IN) / fh);
+      if (!best || sc > best.sc + 1e-12) best = { sc, cx: (xl + xr) / 2, cy: (yt + yb) / 2 };
+    }
+  }
+  if (!best) best = { sc: Math.min((S.W - 40) / fw, (S.H - 40) / fh), cx: S.W / 2, cy: S.H / 2 };
+  const z = Math.log2(Math.max(1e-12, best.sc) * TWO_PI_R / 256);
+  const tz = Math.max(3, Math.min(20.5, z));
+  const s = scaleAt(tz);
+  const tcx = (x0 + x1) / 2 - (best.cx - S.W / 2) / s, tcy = (y0 + y1) / 2 + (best.cy - S.H / 2) / s;
+  if (animate) flyTo(tcx, tcy, tz); else { S.cx = tcx; S.cy = tcy; S.z = tz; viewChanged(); }
+}
+// the boxes over the map (px from the player's top left): what fit keeps the field away from
+function overlayRects() {
+  const r = root.getBoundingClientRect(), out = [];
+  for (const sel of [".rp-head", ".rp-tools", "#panel", "#zpanel", "#epanel", "#legend", ".rp-bar", "#scale"]) {
+    const e = root.querySelector(sel);
+    if (!e || e.hidden || e.style.visibility === "hidden" || getComputedStyle(e).display === "none") continue;
+    const b = e.getBoundingClientRect(); if (!(b.width > 0 && b.height > 0)) continue;
+    out.push([b.left - r.left, b.top - r.top, b.right - r.left, b.bottom - r.top]);
+  }
+  return out;
+}
+let fly = null;
+function flyTo(cx, cy, z, ms) {
+  fly = { a: { cx: S.cx, cy: S.cy, z: S.z }, b: { cx, cy, z }, t0: performance.now(), ms: ms || 450 };
+  wake();
+}
+function zoomAt(dz, px, py) {
+  const s0 = scaleAt(S.z);
+  const wx = S.cx + (px - S.W / 2) / s0, wy = S.cy - (py - S.H / 2) / s0;
+  S.z = Math.max(3, Math.min(23, S.z + dz));
+  const s1 = scaleAt(S.z);
+  S.cx = wx - (px - S.W / 2) / s1; S.cy = wy + (py - S.H / 2) / s1;
+  viewChanged(true);
+}
+function viewChanged(interactive) {
+  S.dirty = true;
+  if (interactive) { S.interacting = performance.now(); }
+  wake();
+}
+
+/* ------------------------------------------------------------------ layers: base (tiles, boundary), ahead, ground */
+function mkLayer() { const c = document.createElement("canvas"); return { c, g: c.getContext("2d"), cx: 0, cy: 0, z: -99, w: 0, h: 0, ok: false }; }
+const L = { base: mkLayer(), ahead: mkLayer(), ground: mkLayer() };
+const MARGIN = 0.5;                                     // the layers reach half a screen beyond each side
+function layerFits(l) {
+  if (!l.ok || Math.abs(l.z - S.z) > 1e-9) return false;
+  const s = scaleAt(S.z);
+  const dx = (S.cx - l.cx) * s, dy = (S.cy - l.cy) * s;
+  return Math.abs(dx) <= (l.w - S.W) / 2 - 2 && Math.abs(dy) <= (l.h - S.H) / 2 - 2;
+}
+function prepLayer(l) {
+  const w = Math.round(S.W * (1 + 2 * MARGIN)), h = Math.round(S.H * (1 + 2 * MARGIN));
+  if (l.c.width !== Math.round(w * DPR) || l.c.height !== Math.round(h * DPR)) { l.c.width = Math.round(w * DPR); l.c.height = Math.round(h * DPR); }
+  l.w = w; l.h = h; l.cx = S.cx; l.cy = S.cy; l.z = S.z; l.ok = true;
+  l.g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  l.g.clearRect(0, 0, w, h);
+}
+// world -> layer px
+function lx(l, X) { return (X - l.cx) * scaleAt(l.z) + l.w / 2; }
+function ly(l, Y) { return (l.cy - Y) * scaleAt(l.z) + l.h / 2; }
+function drawLayer(l, alpha) {
+  if (!l.ok) return;
+  const s = scaleAt(S.z), sl = scaleAt(l.z), k = s / sl;
+  // the layer's centre lands at the screen centre moved by the view's offset from the layer's centre; only the part
+  // of the layer on the screen is copied (a pixel copy at the layer's own zoom)
+  let ox = S.W / 2 - (S.cx - l.cx) * s - (l.w / 2) * k, oy = S.H / 2 + (S.cy - l.cy) * s - (l.h / 2) * k;
+  if (alpha !== undefined) ctx.globalAlpha = alpha;
+  if (Math.abs(k - 1) < 1e-9) {
+    ox = Math.round(ox * DPR) / DPR; oy = Math.round(oy * DPR) / DPR;
+    const sx = Math.max(0, -ox), sy = Math.max(0, -oy), sw = Math.min(l.w - sx, S.W - Math.max(0, ox)), sh = Math.min(l.h - sy, S.H - Math.max(0, oy));
+    if (sw > 0 && sh > 0) ctx.drawImage(l.c, sx * DPR, sy * DPR, sw * DPR, sh * DPR, Math.max(0, ox), Math.max(0, oy), sw, sh);
+  } else ctx.drawImage(l.c, ox, oy, l.w * k, l.h * k);
+  ctx.globalAlpha = 1;
+}
+
+/* tiles: Esri World Imagery, the app's satellite image; a plain background when they do not load */
+const tiles = new Map();
+let tilesOk = 0, tilesFail = 0, tilesAsked = 0, TILE_CAP = 19;
+const TILE_MAX = 19;
+function placeholderTile(img) {
+  // Esri serves a grey "Map data not yet available" tile where it has no imagery at a zoom: read 16 x 16 pixels
+  try {
+    const c = document.createElement("canvas"); c.width = c.height = 16; const g = c.getContext("2d");
+    g.drawImage(img, 0, 0, 16, 16); const d = g.getImageData(0, 0, 16, 16).data; let grey = 0;
+    for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - d[i + 1]) < 7 && Math.abs(d[i + 1] - d[i + 2]) < 7 && d[i] > 165) grey++;
+    return grey > 0.8 * 256;
+  } catch (e) { return false; }              // a tile without CORS cannot be read: taken as imagery
+}
+function tile(z, x, y) {
+  const key = z + "/" + x + "/" + y;
+  let t = tiles.get(key);
+  if (t) return t;
+  t = { img: new Image(), ok: false, bad: false, z };
+  tiles.set(key, t);
+  if (!CFG.tiles || tilesFail > 12 && tilesOk === 0) { t.bad = true; return t; }
+  tilesAsked++;
+  const url = CFG.tiles.replace("{z}", z).replace("{y}", y).replace("{x}", x);
+  t.img.crossOrigin = "anonymous";
+  t.img.onload = () => {
+    if (z > 12 && placeholderTile(t.img)) { t.bad = true; if (z - 1 < TILE_CAP) { TILE_CAP = z - 1; } }
+    else { t.ok = true; tilesOk++; }
+    L.base.ok = false; S.dirty = true; wake();
+  };
+  t.img.onerror = () => {
+    if (!t.retried) { t.retried = true; t.img.removeAttribute("crossorigin"); t.img.src = url + "?nocors=1"; return; }
+    t.bad = true; tilesFail++; if (tilesFail === 13 && tilesOk === 0) { L.base.ok = false; S.dirty = true; wake(); }
+  };
+  t.img.src = url;
+  return t;
+}
+function paintBase() {
+  const l = L.base; prepLayer(l); const g = l.g;
+  // calm plain ground first (it stays where a tile is missing)
+  const grd = g.createLinearGradient(0, 0, 0, l.h);
+  grd.addColorStop(0, "#EEF2EC"); grd.addColorStop(1, "#E1E8DF");
+  g.fillStyle = grd; g.fillRect(0, 0, l.w, l.h);
+  const tz = Math.max(0, Math.min(TILE_MAX, TILE_CAP, Math.round(S.z)));
+  const n = Math.pow(2, tz), tileM = TWO_PI_R / n, s = scaleAt(l.z), size = tileM * s;
+  const X0 = l.cx - (l.w / 2) / s, X1 = l.cx + (l.w / 2) / s, Y0 = l.cy - (l.h / 2) / s, Y1 = l.cy + (l.h / 2) / s;
+  const tx0 = Math.floor((X0 + TWO_PI_R / 2) / tileM), tx1 = Math.floor((X1 + TWO_PI_R / 2) / tileM);
+  const ty0 = Math.floor((TWO_PI_R / 2 - Y1) / tileM), ty1 = Math.floor((TWO_PI_R / 2 - Y0) / tileM);
+  let drawn = 0;
+  if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) < 400) {
+    for (let ty = Math.max(0, ty0); ty <= Math.min(n - 1, ty1); ty++) for (let tx = tx0; tx <= tx1; tx++) {
+      const xx = ((tx % n) + n) % n;
+      const t = tile(tz, xx, ty);
+      const px = lx(l, tx * tileM - TWO_PI_R / 2), py = ly(l, TWO_PI_R / 2 - ty * tileM);
+      if (t.ok) { g.drawImage(t.img, px, py, size + 0.6, size + 0.6); drawn++; }
+      else if (tz > 0) {      // a parent tile, enlarged, while this one loads (or where it has no imagery)
+        for (let up = 1; up <= 3 && tz - up >= 0; up++) {
+          const p = tiles.get((tz - up) + "/" + (xx >> up) + "/" + (ty >> up));
+          if (p && p.ok) {
+            const k = 256 >> up, sx = (xx & ((1 << up) - 1)) * k, sy = (ty & ((1 << up) - 1)) * k;
+            g.drawImage(p.img, sx, sy, k, k, px, py, size + 0.6, size + 0.6); drawn++; break;
+          }
+        }
+      }
+    }
+  }
+  const plain = drawn === 0;
+  if (!plain) { g.fillStyle = "rgba(10,20,30,0.10)"; g.fillRect(0, 0, l.w, l.h); }   // a slight veil: colours read better
+  $("attr").textContent = plain ? (tilesFail > 12 && tilesOk === 0 ? "Satellite image not available: plain background" : "") : CFG.attribution || "";
+  $("attr").classList.toggle("plain", plain);
+  $("scale").classList.toggle("plain", plain);
+  // the management zones in their colours, under the trail (zone map view)
+  if (HAS_Z && S.view === "zones") {
+    g.globalAlpha = 0.55;
+    for (const z of ZCLS) { g.fillStyle = z.colour; g.fill(zonePath(l, z), "evenodd"); }
+    g.globalAlpha = 1;
+  }
+  // the field boundary: the app's outline colour (cyan) over a dark halo
+  if (P.outline && P.outline.length) {
+    g.lineJoin = "round";
+    for (const pass of [["rgba(0,30,50,0.55)", 4.5], ["#00E5FF", 2.2]]) {
+      g.strokeStyle = pass[0]; g.lineWidth = pass[1]; g.beginPath();
+      for (const ring of P.outline) ring.forEach(([lo, la], i) => { const x = lx(l, mx(lo)), y = ly(l, my(la)); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+      g.stroke();
+    }
+  }
+}
+function zonePath(l, z) {           // the rings of one management zone in a layer's px
+  const p = new Path2D(), s = scaleAt(l.z), ox = l.w / 2 - l.cx * s, oy = l.h / 2 + l.cy * s;
+  for (const R of z.rings) {
+    for (let i = 0; i < R.length; i += 2) { const x = R[i] * s + ox, y = oy - R[i + 1] * s; if (i) p.lineTo(x, y); else p.moveTo(x, y); }
+    p.closePath();
+  }
+  return p;
+}
+/* the zone borders (and, in the zone map view, a label chip on each zone) painted INTO the trail's layer, over the
+   strips: a dark line on a light halo, so a border stays visible where the field is harvested. The strips painted
+   later are followed, a few times a second and at every pause, by the borders and chips of that piece of ground
+   again (chunks of 12 segments with their boxes), so the borders cost little per frame. */
+const ZCH = [];
+if (HAS_Z) for (const z of ZCLS) for (const R of z.rings) {
+  const n = R.length / 2;
+  for (let a = 0; a < n; a += 12) {
+    const m = Math.min(12, n - a), p = new Float64Array((m + 1) * 2), bb = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let j = 0; j <= m; j++) {
+      const i = (a + j) % n, x = R[2 * i], y = R[2 * i + 1];
+      p[2 * j] = x; p[2 * j + 1] = y;
+      if (x < bb[0]) bb[0] = x; if (x > bb[2]) bb[2] = x; if (y < bb[1]) bb[1] = y; if (y > bb[3]) bb[3] = y;
+    }
+    ZCH.push({ p, bb });
+  }
+}
+const zlOn = () => HAS_Z && (S.view === "zones" || S.zborders);
+let zFlush = 0;
+function flushBorders(now_) {      // the borders over the strips painted since the last time (all at once when paused)
+  const t = performance.now();
+  if (!now_ && S.playing && t - zFlush < 200) return;
+  zFlush = t;
+  for (const c of C) if (c.zdirty && c.zdirty[0] <= c.zdirty[2]) { paintBorders(L.ground, c.zdirty); c.zdirty = null; }
+}
+function paintBorders(l, box) {      // box: [X0, Y0, X1, Y1] (mercator m) of the ground just painted; none: all visible
+  const g = l.g, s = scaleAt(l.z), ox = l.w / 2 - l.cx * s, oy = l.h / 2 + l.cy * s, pad = 3 / s;
+  const V = box ? [box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad] :
+    [l.cx - l.w / 2 / s, l.cy - l.h / 2 / s, l.cx + l.w / 2 / s, l.cy + l.h / 2 / s];
+  const path = new Path2D(); let any = false;
+  for (const ch of ZCH) {
+    const b = ch.bb; if (b[0] > V[2] || b[2] < V[0] || b[1] > V[3] || b[3] < V[1]) continue;
+    const q = ch.p; any = true; path.moveTo(q[0] * s + ox, oy - q[1] * s);
+    for (let i = 2; i < q.length; i += 2) path.lineTo(q[i] * s + ox, oy - q[i + 1] * s);
+  }
+  // the label chips this piece of ground touches (their text width measured once)
+  const chips = [];
+  if (S.view === "zones") for (const z of ZCLS) {
+    if (z.chipTxt === undefined) { const txt = z.name.length > 24 ? z.name.slice(0, 23) + "…" : z.name; g.font = `700 12px ${FONT}`; z.chipTxt = txt; z.chipW = g.measureText(txt).width + 28; }
+    for (const [X, Y] of z.chips) {
+      const x = X * s + ox, y = oy - Y * s, w = z.chipW;
+      if (box && (x + w / 2 + 8 < V[0] * s + ox || x - w / 2 - 8 > V[2] * s + ox || y + 19 < oy - V[3] * s || y - 19 > oy - V[1] * s)) continue;
+      chips.push([z, x, y]);
+    }
+  }
+  if (!any && !chips.length) return;
+  g.save();
+  if (box) { g.beginPath(); g.rect(V[0] * s + ox, oy - V[3] * s, (V[2] - V[0]) * s, (V[3] - V[1]) * s); g.clip(); }
+  if (any) {
+    g.lineJoin = "round"; g.lineCap = "round";
+    g.strokeStyle = "#F2F4F7"; g.lineWidth = 3.4; g.stroke(path);
+    g.strokeStyle = "#141A26"; g.lineWidth = 1.4; g.stroke(path);
+  }
+  if (chips.length) {
+    g.font = `700 12px ${FONT}`; g.textBaseline = "middle";
+    for (const [z, x, y] of chips) {
+      const txt = z.chipTxt, w = z.chipW, h = 22;
+      g.shadowColor = "rgba(0,0,0,0.3)"; g.shadowBlur = 6; g.fillStyle = "#FFFFFF";
+      rr(g, x - w / 2, y - h / 2, w, h, 11); g.fill(); g.shadowBlur = 0; g.shadowColor = "transparent";
+      g.strokeStyle = "rgba(17,24,39,0.35)"; g.lineWidth = 1; g.stroke();
+      g.fillStyle = z.colour; g.beginPath(); g.arc(x - w / 2 + 12, y, 5.5, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "rgba(0,0,0,0.35)"; g.stroke();
+      g.fillStyle = "#1F2937"; g.textAlign = "left"; g.fillText(txt, x - w / 2 + 21, y + 0.5);
+    }
+  }
+  g.restore();
+}
+function forEachVisible(c, l, upto, fn) {
+  const s = scaleAt(l.z), X0 = l.cx - (l.w / 2) / s, X1 = l.cx + (l.w / 2) / s, Y0 = l.cy - (l.h / 2) / s, Y1 = l.cy + (l.h / 2) / s;
+  for (let k = 0; k < c.nch; k++) {
+    const a = k * c.CH; if (a > upto) break;
+    if (c.bb[k * 4] > X1 || c.bb[k * 4 + 2] < X0 || c.bb[k * 4 + 1] > Y1 || c.bb[k * 4 + 3] < Y0) continue;
+    const b = Math.min(c.n - 1, (k + 1) * c.CH - 1, upto);
+    for (let i = a; i <= b; i++) fn(i);
+  }
+}
+function quad(path, l, c, i) {
+  const Q = c.Q, j = i * 8;
+  if (Q[j] !== Q[j]) return false;
+  const s = scaleAt(l.z), ox = l.w / 2 - l.cx * s, oy = l.h / 2 + l.cy * s;
+  path.moveTo(Q[j] * s + ox, oy - Q[j + 1] * s); path.lineTo(Q[j + 2] * s + ox, oy - Q[j + 3] * s);
+  path.lineTo(Q[j + 4] * s + ox, oy - Q[j + 5] * s); path.lineTo(Q[j + 6] * s + ox, oy - Q[j + 7] * s); path.closePath();
+  return true;
+}
+/* Many strips (zoomed out, a large file): a scanline fill of the quads straight into the layer's pixels (a canvas
+   path of 100,000 anti-aliased polygons takes seconds on a laptop without a GPU); few strips (zoomed in): canvas
+   paths, anti-aliased. Strips of less than a pixel still leave their pixel. */
+const RASTER_MIN = 6000;
+let RB = null;
+function rasterBuf(w, h) {
+  if (!RB || RB.w !== w || RB.h !== h) { const img = new ImageData(w, h); RB = { w, h, img, u32: new Uint32Array(img.data.buffer) }; }
+  else RB.u32.fill(0);
+  return RB;
+}
+const PACK = new Map();
+function packColour(css) {
+  let v = PACK.get(css);
+  if (v !== undefined) return v;
+  let r = 0, g = 0, b = 0, a = 255, m;
+  if (css[0] === "#") { const x = parseInt(css.slice(1, 7), 16); r = (x >> 16) & 255; g = (x >> 8) & 255; b = x & 255; }
+  else if ((m = css.match(/rgba?\(([^)]+)\)/))) { const q = m[1].split(",").map(Number); r = q[0]; g = q[1]; b = q[2]; if (q.length > 3) a = Math.round(q[3] * 255); }
+  v = ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+  PACK.set(css, v);
+  return v;
+}
+const QX = new Float64Array(4), QY = new Float64Array(4), XI = new Float64Array(4);
+function fillQuadPx(u32, W, H, col) {
+  let x0 = QX[0], x1 = QX[0], y0 = QY[0], y1 = QY[0];
+  for (let k = 1; k < 4; k++) { if (QX[k] < x0) x0 = QX[k]; if (QX[k] > x1) x1 = QX[k]; if (QY[k] < y0) y0 = QY[k]; if (QY[k] > y1) y1 = QY[k]; }
+  if (x1 < 0 || y1 < 0 || x0 >= W || y0 >= H) return;
+  if (x1 - x0 < 1.2 || y1 - y0 < 1.2) {            // smaller than a pixel: its pixel
+    const cx = ((x0 + x1) / 2) | 0, cy = ((y0 + y1) / 2) | 0;
+    if (cx >= 0 && cy >= 0 && cx < W && cy < H) u32[cy * W + cx] = col;
+    if (x1 - x0 >= 1.2 || y1 - y0 >= 1.2) { /* a thin long strip: fall through to the scanlines */ } else return;
+  }
+  const ya = Math.max(0, Math.ceil(y0 - 0.5)), yb = Math.min(H - 1, Math.ceil(y1 - 0.5) - 1);
+  for (let y = ya; y <= yb; y++) {
+    const yc = y + 0.5; let n = 0;
+    for (let e = 0; e < 4; e++) {
+      const f = (e + 1) & 3, ay = QY[e], by = QY[f];
+      if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) XI[n++] = QX[e] + (yc - ay) * (QX[f] - QX[e]) / (by - ay);
+    }
+    if (n < 2) continue;
+    if (n === 2) { if (XI[0] > XI[1]) { const t = XI[0]; XI[0] = XI[1]; XI[1] = t; } }
+    else { for (let i = 1; i < n; i++) { const v = XI[i]; let j = i - 1; while (j >= 0 && XI[j] > v) { XI[j + 1] = XI[j]; j--; } XI[j + 1] = v; } }
+    const row = y * W;
+    for (let k = 0; k + 1 < n; k += 2) {
+      let xa = Math.ceil(XI[k] - 0.5), xb = Math.ceil(XI[k + 1] - 0.5);
+      if (xb <= xa) { xb = xa + 1; }                 // a sliver: one pixel
+      if (xa < 0) xa = 0; if (xb > W) xb = W;
+      if (xb > xa) u32.fill(col, row + xa, row + xb);
+    }
+  }
+}
+function quadPx(l, c, i) {          // the corners of a strip in the layer's device pixels (QX, QY); false: no strip
+  const Q = c.Q, j = i * 8;
+  if (Q[j] !== Q[j]) return false;
+  const s = scaleAt(l.z) * DPR, ox = (l.w / 2) * DPR - l.cx * s, oy = (l.h / 2) * DPR + l.cy * s;
+  for (let k = 0; k < 4; k++) { QX[k] = Q[j + 2 * k] * s + ox; QY[k] = oy - Q[j + 2 * k + 1] * s; }
+  return true;
+}
+function visibleCount(l, upto) {
+  let n = 0;
+  const s = scaleAt(l.z), X0 = l.cx - (l.w / 2) / s, X1 = l.cx + (l.w / 2) / s, Y0 = l.cy - (l.h / 2) / s, Y1 = l.cy + (l.h / 2) / s;
+  for (const c of C) {
+    const up = upto === undefined ? c.idx : upto(c);
+    for (let k = 0; k < c.nch; k++) {
+      const a = k * c.CH; if (a > up) break;
+      if (c.bb[k * 4] > X1 || c.bb[k * 4 + 2] < X0 || c.bb[k * 4 + 1] > Y1 || c.bb[k * 4 + 3] < Y0) continue;
+      n += Math.min(c.n - 1, (k + 1) * c.CH - 1, up) - a + 1;
+    }
+  }
+  return n;
+}
+function paintGround() {
+  const l = L.ground; prepLayer(l); bucketsOf(S.mode);
+  const nVis = visibleCount(l);
+  stats.lastVisible = nVis;
+  if (nVis >= RASTER_MIN || FORCE_RASTER) {
+    const W = l.c.width, H = l.c.height, B = rasterBuf(W, H), u32 = B.u32;
+    const pal = new Map();
+    // readings without a value first, the coloured ones, the removed ones over them (a cleaning shows what went)
+    for (const pass of [0, 1, 2]) for (const c of C) {
+      const up = c.idx; if (up < 0) continue;
+      const bk = c.bk[S.mode];
+      forEachVisible(c, l, up, (i) => {
+        const b = bk[i], ps = b === 202 ? 0 : b === 201 ? 2 : 1;
+        if (ps !== pass) return;
+        if (!quadPx(l, c, i)) return;
+        let col = pal.get(b); if (col === undefined) { col = packColour(bucketColour(b, S.mode)); pal.set(b, col); }
+        fillQuadPx(u32, W, H, col);
+      });
+    }
+    l.g.putImageData(B.img, 0, 0);
+    stats.lastPaint = "raster";
+  } else {
+    const paths = new Map();
+    for (const c of C) {
+      const up = c.idx; if (up < 0) continue;
+      const bk = c.bk[S.mode];
+      forEachVisible(c, l, up, (i) => {
+        let p = paths.get(bk[i]); if (!p) { p = new Path2D(); paths.set(bk[i], p); }
+        quad(p, l, c, i);
+      });
+    }
+    const g = l.g; g.lineJoin = "round"; g.lineWidth = 0.6;
+    const rank = (b) => (b === 202 ? 0 : b === 201 ? 2 : 1);
+    const order = [...paths.keys()].sort((a, b) => rank(a) - rank(b));
+    for (const b of order) { const col = bucketColour(b, S.mode); g.fillStyle = col; g.strokeStyle = col; const p = paths.get(b); g.fill(p); g.stroke(p); }
+    stats.lastPaint = "paths";
+  }
+  if (zlOn()) paintBorders(l);
+  for (const c of C) { c.painted = c.idx; c.zdirty = null; }
+  S.groundDirty = false;
+}
+function paintGroundIncrement() {
+  const l = L.ground; if (!l.ok) return;
+  let fresh = 0;
+  for (const c of C) fresh += Math.max(0, c.idx - c.painted);
+  if (fresh > 2500) { paintGround(); return; }       // a jump ahead (the timeline dragged): one repaint
+  const g = l.g; g.lineJoin = "round"; g.lineWidth = 0.6;
+  const zb_ = zlOn();
+  for (const c of C) {
+    if (c.idx <= c.painted) continue;
+    const bk = c.bk[S.mode], box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (let i = c.painted + 1; i <= c.idx; i++) {
+      const p = new Path2D(); if (!quad(p, l, c, i)) continue;
+      const col = bucketColour(bk[i], S.mode); g.fillStyle = col; g.strokeStyle = col; g.fill(p); g.stroke(p);
+      if (zb_) { const j = i * 8; for (let q = 0; q < 8; q += 2) { const x = c.Q[j + q], y = c.Q[j + q + 1]; if (x < box[0]) box[0] = x; if (x > box[2]) box[2] = x; if (y < box[1]) box[1] = y; if (y > box[3]) box[3] = y; } }
+    }
+    c.painted = c.idx;
+    if (zb_ && box[0] <= box[2]) {             // the borders of this ground: painted again a few times a second
+      const d = c.zdirty || (c.zdirty = [Infinity, Infinity, -Infinity, -Infinity]);
+      d[0] = Math.min(d[0], box[0]); d[1] = Math.min(d[1], box[1]); d[2] = Math.max(d[2], box[2]); d[3] = Math.max(d[3], box[3]);
+    }
+  }
+  if (zb_) flushBorders(false);
+}
+function paintAhead() {
+  const l = L.ahead; prepLayer(l);
+  const col = "rgba(255,255,255,0.55)";
+  if (visibleCount(l, (c) => c.n - 1) >= RASTER_MIN || FORCE_RASTER) {
+    const W = l.c.width, H = l.c.height, B = rasterBuf(W, H), u32 = B.u32, v = packColour(col);
+    for (const c of C) forEachVisible(c, l, c.n - 1, (i) => { if (quadPx(l, c, i)) fillQuadPx(u32, W, H, v); });
+    l.g.putImageData(B.img, 0, 0);
+  } else {
+    const p = new Path2D();
+    for (const c of C) forEachVisible(c, l, c.n - 1, (i) => quad(p, l, c, i));
+    l.g.fillStyle = col; l.g.strokeStyle = col; l.g.lineWidth = 0.6; l.g.fill(p); l.g.stroke(p);
+  }
+}
+
+/* ------------------------------------------------------------------ time */
+function searchT(c, t) {           // the last reading with time <= t (-1 before the first)
+  const a = c.t; let lo = 0, hi = c.n - 1;
+  if (!c.n || t < a[0]) return -1;
+  if (t >= a[hi]) return hi;
+  if (c.idx >= 0 && c.idx < hi && a[c.idx] <= t && a[c.idx + 1] > t) return c.idx;
+  if (c.idx >= 0 && c.idx + 1 < hi && a[c.idx + 1] <= t && a[c.idx + 2] > t) return c.idx + 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (a[m] <= t) lo = m; else hi = m - 1; }
+  return lo;
+}
+function idleAt(t) { for (const g of IDLE) { if (t >= g[0] && t < g[1]) return g; if (g[0] > t) break; } return null; }
+// the timeline: work at its length, an idle gap squeezed while 'skip idle time' is on
+let SEGS = [], EFF = 1;
+function buildSegs() {
+  SEGS = []; let t = 0, e = 0;
+  const squeeze = Math.max(workTotal * 0.012, 30);
+  for (const g of IDLE) {
+    if (g[0] > t) { SEGS.push({ a: t, b: g[0], e0: e, e1: e + (g[0] - t), idle: false }); e += g[0] - t; }
+    const len = S.skipIdle ? Math.min(g[1] - g[0], squeeze) : g[1] - g[0];
+    SEGS.push({ a: g[0], b: g[1], e0: e, e1: e + len, idle: true }); e += len; t = g[1];
+  }
+  if (T_END > t) { SEGS.push({ a: t, b: T_END, e0: e, e1: e + (T_END - t), idle: false }); e += T_END - t; }
+  EFF = e || 1;
+}
+function tToU(t) { for (const s of SEGS) if (t <= s.b) return (s.e0 + (s.b > s.a ? (t - s.a) / (s.b - s.a) : 0) * (s.e1 - s.e0)) / EFF; return 1; }
+function uToT(u) { const e = u * EFF; for (const s of SEGS) if (e <= s.e1) return s.a + (s.e1 > s.e0 ? (e - s.e0) / (s.e1 - s.e0) : 0) * (s.b - s.a); return T_END; }
+function seek(t, keepPlaying) {
+  t = Math.max(0, Math.min(T_END, t));
+  const back = t < S.t;
+  S.t = t;
+  for (const c of C) c.idx = searchT(c, t);
+  if (back) S.groundDirty = true;
+  S.dirty = true; if (!keepPlaying) wake();
+}
+
+/* ------------------------------------------------------------------ clock and labels */
+const pad = (v) => String(v).padStart(2, "0");
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const HAS_CLOCK = P.basis.kind !== "order";
+function clockParts(t) {
+  if (!HAS_CLOCK) {
+    const s = Math.floor(t), h = Math.floor(s / 3600);
+    return { time: `${pad(h)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`, date: "elapsed logged time", day: Math.floor(s / 86400) };
+  }
+  const d = new Date((P.t0 + t) * 1000);       // the clock's seconds, written as UTC so no zone is added
+  return { time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`,
+    date: `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`, day: Math.floor((P.t0 + t) / 86400) };
+}
+function shortClock(t) { const c = clockParts(t); return HAS_CLOCK ? `${c.date.split(" ").slice(0, 3).join(" ")} · ${c.time.slice(0, 5)}` : c.time; }
+const fmt = (v, d) => (v === v && v !== null && v !== undefined) ? v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "—";
+
+/* ------------------------------------------------------------------ the combine (top view, metres, forward = up) */
+function shade(hex, k) {
+  const [r, g, b] = hex2rgb(hex);
+  const f = (v) => Math.max(0, Math.min(255, Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k)));
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+function rr(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function drawCombine(g, c, M, W, detail, working, phase, alpha, steer, night) {
+  // Top view of a combine harvester, in metres; forward = -y; the reading's point (the centre of the cutter bar) at the
+  // origin; W = the header width (the swath on the ground). Colours of the make only: no logo, no lettering.
+  const hw = W / 2, body = M.body, hd = M.header;
+  g.globalAlpha = alpha;
+  // ---- the work lights at night: two soft beams ahead of the header
+  if (night && detail) {
+    const lg = g.createRadialGradient(0, -1.2, 0.5, 0, -6, hw + 4);
+    lg.addColorStop(0, "rgba(255,246,214,0.42)"); lg.addColorStop(1, "rgba(255,246,214,0)");
+    g.fillStyle = lg; g.beginPath(); g.moveTo(-hw + 0.5, -1.3); g.lineTo(-hw - 2.5, -9); g.lineTo(hw + 2.5, -9); g.lineTo(hw - 0.5, -1.3); g.closePath(); g.fill();
+  }
+  // ---- the soft shadow on the ground (the sun at the upper left)
+  g.save(); g.translate(0.75, 0.95);
+  g.shadowColor = "rgba(0,0,0,0.45)"; g.shadowBlur = detail ? 22 : 8; g.fillStyle = "rgba(0,0,0,0.20)";
+  g.beginPath(); g.rect(-hw, -1.2, W, 2.5); rr(g, -1.75, 1.3, 3.5, 9.1, 0.6); g.rect(-2.6, 2.3, 5.2, 2.0); g.rect(-2.0, 7.9, 4.0, 1.3); g.fill();
+  g.restore();
+  g.shadowBlur = 0; g.shadowColor = "transparent";
+  // ---- wheels: the small rear steering wheels and the big front drive wheels
+  wheel(g, -2.02, 7.85, 0.58, 1.38, M, -steer, detail, -1);
+  wheel(g, 1.44, 7.85, 0.58, 1.38, M, -steer, detail, 1);
+  wheel(g, -2.62, 2.2, 0.92, 2.15, M, 0, detail, -1);
+  wheel(g, 1.70, 2.2, 0.92, 2.15, M, 0, detail, 1);
+  // ---- the feeder house
+  const fg = g.createLinearGradient(-0.8, 0, 0.8, 0); fg.addColorStop(0, shade(body, -0.42)); fg.addColorStop(0.5, shade(body, -0.18)); fg.addColorStop(1, shade(body, -0.45));
+  g.fillStyle = fg; rr(g, -0.8, 0.95, 1.6, 1.75, 0.14); g.fill();
+  if (detail) { g.strokeStyle = "rgba(0,0,0,0.28)"; g.lineWidth = 0.045; g.beginPath(); for (let k = 0; k < 5; k++) { g.moveTo(-0.7, 1.2 + k * 0.32); g.lineTo(0.7, 1.2 + k * 0.32); } g.stroke(); }
+  // ---- the header
+  const hg = g.createLinearGradient(0, -0.7, 0, 1.4); hg.addColorStop(0, shade(hd, 0.16)); hg.addColorStop(0.55, hd); hg.addColorStop(1, shade(hd, -0.3));
+  g.fillStyle = hg; rr(g, -hw, -0.62, W, 1.98, 0.22); g.fill();
+  g.strokeStyle = shade(hd, -0.45); g.lineWidth = 0.05; g.stroke();
+  g.fillStyle = shade(hd, -0.38); g.fillRect(-hw + 0.25, 1.02, W - 0.5, 0.3);                // the back wall
+  g.fillStyle = M.accent; g.fillRect(-hw + 0.3, 1.08, W - 0.6, 0.07);                         // the make's line on it
+  if (detail) {                                                                                // draper belts moving to the centre
+    const belt = "#4B5258", slat = "rgba(255,255,255,0.20)";
+    g.fillStyle = belt; g.fillRect(-hw + 0.38, -0.46, hw - 1.36, 1.32); g.fillRect(0.98, -0.46, hw - 1.36, 1.32);
+    g.fillStyle = "#5C646B"; g.fillRect(-0.95, -0.2, 1.9, 1.06);
+    g.strokeStyle = slat; g.lineWidth = 0.05; g.beginPath();
+    const sh = (phase * 0.35) % 0.42;
+    for (let x = -hw + 0.4 + sh; x < -1.0; x += 0.42) { g.moveTo(x, -0.44); g.lineTo(x, 0.84); }
+    for (let x = hw - 0.4 - sh; x > 1.0; x -= 0.42) { g.moveTo(x, -0.44); g.lineTo(x, 0.84); }
+    for (let y = 0.82 - ((phase * 0.35) % 0.3); y > -0.18; y -= 0.3) { g.moveTo(-0.9, y); g.lineTo(0.9, y); }
+    g.stroke();
+  }
+  g.fillStyle = "#3F454B"; g.fillRect(-hw + 0.12, -0.7, W - 0.24, 0.2);                       // the cutter bar
+  if (detail) {                                                                                // the knife guards
+    g.fillStyle = "#D5DADF"; g.beginPath();
+    for (let x = -hw + 0.2; x < hw - 0.2; x += 0.152) { g.moveTo(x, -0.7); g.lineTo(x + 0.055, -0.86); g.lineTo(x + 0.11, -0.7); }
+    g.fill();
+  }
+  for (const sg of [-1, 1]) {                                                                  // the end panels and crop dividers
+    const xe = sg * hw;
+    g.fillStyle = shade(hd, -0.22); g.beginPath(); g.moveTo(xe, -0.62); g.lineTo(xe, 1.36); g.lineTo(xe - sg * 0.34, 1.36); g.lineTo(xe - sg * 0.34, -0.62); g.closePath(); g.fill();
+    g.fillStyle = shade(hd, 0.05); g.beginPath(); g.moveTo(xe, -0.62); g.lineTo(xe - sg * 0.06, -1.62); g.lineTo(xe - sg * 0.4, -0.62); g.closePath(); g.fill();
+    g.fillStyle = M.accent; g.beginPath(); g.moveTo(xe - sg * 0.06, -1.62); g.lineTo(xe - sg * 0.13, -1.2); g.lineTo(xe - sg * 0.27, -1.24); g.closePath(); g.fill();
+    if (detail) { g.fillStyle = M.accent; g.fillRect(sg > 0 ? xe - 0.3 : xe + 0.04, 0.2, 0.26, 0.09); }
+  }
+  // the reel: a turning cylinder over the cutter bar (from above its bats sweep from the front to the back)
+  const rc = -0.12, rad = 0.88, x0r = -hw + 0.42, wr = W - 0.84;
+  if (detail) {
+    const cyl = g.createLinearGradient(0, rc - rad, 0, rc + rad);
+    cyl.addColorStop(0, "rgba(0,0,0,0.05)"); cyl.addColorStop(0.5, "rgba(255,255,255,0.12)"); cyl.addColorStop(1, "rgba(0,0,0,0.08)");
+    g.fillStyle = cyl; g.fillRect(x0r, rc - rad, wr, 2 * rad);
+  }
+  g.fillStyle = shade(hd, -0.5); g.fillRect(x0r, rc - 0.07, wr, 0.14);                         // the reel tube
+  const nb = 6;
+  for (let k = 0; k < nb; k++) {
+    const a = phase + k * 2 * Math.PI / nb, up = Math.sin(a), yy = rc - Math.cos(a) * rad;
+    if (up < 0 && !detail) continue;
+    g.globalAlpha = alpha * (up >= 0 ? 1 : 0.38);
+    g.fillStyle = up >= 0 ? M.reel : shade(M.reel, -0.4);
+    g.fillRect(x0r + 0.05, yy - 0.055, wr - 0.1, 0.11);
+    if (detail && up >= 0) {
+      g.strokeStyle = "rgba(25,25,25,0.55)"; g.lineWidth = 0.028; g.beginPath();
+      for (let x = x0r + 0.2; x < x0r + wr - 0.1; x += 0.3) { g.moveTo(x, yy + 0.04); g.lineTo(x, yy + 0.04 + 0.2 * up); }
+      g.stroke();
+    }
+  }
+  g.globalAlpha = alpha;
+  const arms = [x0r, x0r + wr];
+  for (let x = x0r + 4.6; x < x0r + wr - 2.0; x += 4.6) arms.push(x);
+  for (const x of arms) { g.fillStyle = shade(hd, -0.3); rr(g, x - 0.06, rc - rad - 0.05, 0.12, 2 * rad + 0.75, 0.05); g.fill(); }
+  // ---- the unloading auger, folded along the left side, with its spout
+  if (detail) {
+    const ag = g.createLinearGradient(-2.12, 0, -1.66, 0); ag.addColorStop(0, shade(body, -0.35)); ag.addColorStop(0.45, shade(body, 0.18)); ag.addColorStop(1, shade(body, -0.4));
+    g.fillStyle = ag; rr(g, -2.12, 2.85, 0.46, 6.5, 0.22); g.fill();
+    g.strokeStyle = "rgba(0,0,0,0.3)"; g.lineWidth = 0.035; g.beginPath(); for (const y of [4.5, 6.2, 7.9]) { g.moveTo(-2.12, y); g.lineTo(-1.66, y); } g.stroke();
+    g.fillStyle = "#2A2E33"; g.beginPath(); g.moveTo(-2.16, 2.9); g.lineTo(-1.62, 2.9); g.lineTo(-1.74, 2.35); g.lineTo(-2.04, 2.35); g.closePath(); g.fill();
+  } else { g.fillStyle = shade(body, -0.3); g.fillRect(-2.08, 3.0, 0.38, 6.2); }
+  // ---- the body
+  const bg = g.createLinearGradient(-1.65, 0, 1.65, 0);
+  bg.addColorStop(0, shade(body, -0.28)); bg.addColorStop(0.18, shade(body, 0.04)); bg.addColorStop(0.5, shade(body, 0.14)); bg.addColorStop(0.82, shade(body, 0.0)); bg.addColorStop(1, shade(body, -0.32));
+  g.fillStyle = bg; g.beginPath();
+  g.moveTo(-1.5, 2.35); g.lineTo(1.5, 2.35); g.quadraticCurveTo(1.66, 2.35, 1.66, 2.6); g.lineTo(1.62, 9.0); g.quadraticCurveTo(1.6, 9.45, 1.3, 9.45);
+  g.lineTo(-1.3, 9.45); g.quadraticCurveTo(-1.6, 9.45, -1.62, 9.0); g.lineTo(-1.66, 2.6); g.quadraticCurveTo(-1.66, 2.35, -1.5, 2.35); g.closePath(); g.fill();
+  g.strokeStyle = shade(body, -0.5); g.lineWidth = 0.05; g.stroke();
+  if (detail) {
+    g.strokeStyle = "rgba(0,0,0,0.2)"; g.lineWidth = 0.035; g.beginPath();
+    g.moveTo(-1.6, 4.0); g.lineTo(1.6, 4.0); g.moveTo(-1.6, 7.45); g.lineTo(1.6, 7.45); g.stroke();
+    g.fillStyle = M.accent; g.fillRect(1.5, 4.1, 0.1, 5.1); g.fillRect(-1.6, 4.1, 0.1, 5.1);   // the make's side lines
+  }
+  // ---- the grain tank: its extensions (folded up, they flare beyond the body) and the grain
+  const tg = g.createLinearGradient(0, 4.05, 0, 7.45); tg.addColorStop(0, shade(body, 0.1)); tg.addColorStop(1, shade(body, -0.16));
+  g.fillStyle = tg; rr(g, -1.88, 4.05, 3.76, 3.4, 0.3); g.fill();
+  g.strokeStyle = shade(body, -0.5); g.lineWidth = 0.05; g.stroke();
+  if (detail) {
+    g.strokeStyle = "rgba(0,0,0,0.25)"; g.lineWidth = 0.04; g.beginPath();                  // the extension panels' folds
+    g.moveTo(-1.88, 4.4); g.lineTo(-1.5, 4.6); g.moveTo(1.88, 4.4); g.lineTo(1.5, 4.6); g.moveTo(-1.88, 7.1); g.lineTo(-1.5, 6.9); g.moveTo(1.88, 7.1); g.lineTo(1.5, 6.9);
+    g.stroke();
+  }
+  g.fillStyle = "#2E271C"; rr(g, -1.5, 4.42, 3.0, 2.62, 0.22); g.fill();                        // inside the tank
+  const gr = g.createRadialGradient(-0.25, 5.55, 0.15, 0, 5.75, 1.75);
+  gr.addColorStop(0, "#FBE7A1"); gr.addColorStop(0.45, "#E9C463"); gr.addColorStop(0.85, "#C99A3B"); gr.addColorStop(1, "#A97D2C");
+  g.fillStyle = gr; rr(g, -1.44, 4.48, 2.88, 2.5, 0.5); g.fill();
+  if (detail) {                                                                                // the kernels catching the light
+    for (let k = 0; k < 46; k++) {
+      const a = k * 2.399, r2 = 0.12 + Math.sqrt(k / 46) * 1.05;
+      const x = Math.cos(a) * r2 * 1.15, y = 5.73 + Math.sin(a) * r2 * 0.95;
+      g.fillStyle = k % 3 ? "rgba(255,250,225,0.55)" : "rgba(140,98,30,0.45)";
+      g.fillRect(x, y, 0.06, 0.06);
+    }
+    if (working) { g.fillStyle = "rgba(255,240,190,0.35)"; g.beginPath(); g.arc(-1.2, 4.75, 0.16 + 0.05 * Math.sin(phase * 4), 0, Math.PI * 2); g.fill(); }   // grain coming in
+  }
+  // ---- the engine deck: grille, pre-cleaner, exhaust
+  g.fillStyle = shade(body, -0.12); rr(g, -1.48, 7.55, 2.96, 1.55, 0.2); g.fill();
+  if (detail) {
+    g.fillStyle = "#24272A"; rr(g, -1.22, 7.72, 1.62, 1.2, 0.12); g.fill();
+    g.strokeStyle = "#62686E"; g.lineWidth = 0.045; g.beginPath(); for (let y = 7.84; y < 8.88; y += 0.14) { g.moveTo(-1.14, y); g.lineTo(0.32, y); } g.stroke();
+    g.fillStyle = shade(body, -0.3); g.beginPath(); g.arc(0.95, 7.95, 0.24, 0, Math.PI * 2); g.fill();       // the pre-cleaner
+    g.fillStyle = "#1B1D1F"; g.beginPath(); g.arc(0.95, 7.95, 0.12, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#3C4045"; g.beginPath(); g.arc(0.9, 8.6, 0.27, 0, Math.PI * 2); g.fill();         // the exhaust stack
+    g.fillStyle = "#0E0F10"; g.beginPath(); g.arc(0.9, 8.6, 0.15, 0, Math.PI * 2); g.fill();
+    if (working) { g.fillStyle = "rgba(80,80,80,0.16)"; g.beginPath(); g.arc(1.15, 9.15, 0.5 + 0.08 * Math.sin(phase * 3), 0, Math.PI * 2); g.fill(); }
+  }
+  // ---- the straw chopper and the spreader at the rear
+  g.fillStyle = shade(body, -0.34); rr(g, -1.46, 9.1, 2.92, 1.22, 0.28); g.fill();
+  if (detail) {
+    g.fillStyle = "#1F2225"; rr(g, -1.3, 9.62, 2.6, 0.62, 0.18); g.fill();
+    for (const sx of [-0.63, 0.63]) {
+      g.save(); g.translate(sx, 9.93); g.rotate((sx < 0 ? 1 : -1) * phase * 3.4);
+      g.fillStyle = "#70767C"; g.beginPath(); g.arc(0, 0, 0.36, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#D2D6DA"; g.lineWidth = 0.07; g.beginPath();
+      for (let k = 0; k < 5; k++) { const a = k * 2 * Math.PI / 5; g.moveTo(Math.cos(a) * 0.08, Math.sin(a) * 0.08); g.lineTo(Math.cos(a + 0.5) * 0.34, Math.sin(a + 0.5) * 0.34); }
+      g.stroke(); g.restore();
+    }
+    g.fillStyle = "rgba(255,90,40,0.9)"; g.fillRect(-1.4, 10.18, 0.22, 0.1); g.fillRect(1.18, 10.18, 0.22, 0.1);   // the tail lights
+  }
+  // ---- the ladder and the platform at the front left
+  if (detail) {
+    g.fillStyle = "#6A7076"; rr(g, -2.08, 2.5, 0.5, 1.75, 0.06); g.fill();
+    g.strokeStyle = "#B6BCC2"; g.lineWidth = 0.05; g.beginPath(); for (let y = 2.68; y < 4.2; y += 0.25) { g.moveTo(-2.05, y); g.lineTo(-1.62, y); } g.stroke();
+    g.strokeStyle = "#202326"; g.lineWidth = 0.06; g.beginPath(); g.moveTo(-2.1, 2.45); g.lineTo(-2.1, 4.3); g.lineTo(-1.62, 4.3); g.stroke();
+  }
+  // ---- the cab: tinted glass all round, the roof, lights, the beacon and the mirrors
+  const gl = g.createLinearGradient(-1.1, 1.7, 1.1, 4.0); gl.addColorStop(0, "#26516B"); gl.addColorStop(0.5, "#14334A"); gl.addColorStop(1, "#0A1824");
+  g.fillStyle = gl; rr(g, -1.1, 1.72, 2.2, 2.38, 0.42); g.fill();
+  g.strokeStyle = "rgba(0,0,0,0.5)"; g.lineWidth = 0.05; g.stroke();
+  if (detail) { g.fillStyle = "rgba(190,230,250,0.35)"; g.beginPath(); g.moveTo(-0.95, 1.86); g.lineTo(0.3, 1.86); g.lineTo(-0.5, 2.55); g.lineTo(-1.0, 2.55); g.closePath(); g.fill(); }
+  const rg = g.createLinearGradient(0, 1.95, 0, 3.95); rg.addColorStop(0, shade(M.roof, 0.2)); rg.addColorStop(0.6, M.roof); rg.addColorStop(1, shade(M.roof, -0.18));
+  g.fillStyle = rg; rr(g, -0.98, 1.98, 1.96, 1.92, 0.34); g.fill();
+  g.strokeStyle = "rgba(0,0,0,0.28)"; g.lineWidth = 0.04; g.stroke();
+  if (detail) {
+    g.fillStyle = night ? "#FFFBE6" : "rgba(255,255,255,0.9)";
+    for (const x of [-0.62, -0.21, 0.21, 0.62]) rr(g, x - 0.13, 2.02, 0.26, 0.11, 0.04), g.fill();       // the work lights
+    const blink = working ? (Math.sin(phase * 6) > 0 ? 1 : 0.35) : 0.35;
+    g.fillStyle = `rgba(255,170,0,${blink})`; g.beginPath(); g.arc(0.66, 3.66, 0.12, 0, Math.PI * 2); g.fill();   // the beacon
+    for (const sg of [-1, 1]) {
+      g.strokeStyle = "#1F2225"; g.lineWidth = 0.07; g.beginPath(); g.moveTo(sg * 1.02, 2.05); g.lineTo(sg * 1.52, 1.78); g.stroke();
+      g.fillStyle = "#1F2225"; rr(g, sg > 0 ? 1.44 : -1.7, 1.55, 0.26, 0.46, 0.07); g.fill();
+      g.fillStyle = "rgba(170,210,235,0.6)"; rr(g, sg > 0 ? 1.48 : -1.66, 1.6, 0.18, 0.36, 0.05); g.fill();
+    }
+  }
+  g.globalAlpha = 1;
+}
+function wheel(g, x, y, w, h, M, steer, detail, side) {
+  g.save(); g.translate(x + w / 2, y + h / 2); if (steer) g.rotate(steer);
+  const tg = g.createLinearGradient(-w / 2, 0, w / 2, 0); tg.addColorStop(0, "#111315"); tg.addColorStop(0.5, "#2B2F33"); tg.addColorStop(1, "#111315");
+  g.fillStyle = tg; rr(g, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.3); g.fill();
+  if (detail) {                         // the lugs of the tread
+    g.strokeStyle = "#454A4F"; g.lineWidth = 0.075; g.beginPath();
+    const n = Math.round(h / 0.2);
+    for (let k = 1; k < n; k++) { const yy = -h / 2 + k * h / n; g.moveTo(-w / 2 + 0.06, yy - 0.06); g.lineTo(-0.04, yy + 0.04); g.moveTo(0.04, yy + 0.04 - 0.1); g.lineTo(w / 2 - 0.06, yy - 0.06 - 0.1); }
+    g.stroke();
+  }
+  // the rim and the hub, seen on the outer side of the wheel
+  g.fillStyle = M.rim; rr(g, side * (w / 2) - (side > 0 ? 0.16 : 0), -h * 0.3, 0.16, h * 0.6, 0.05); g.fill();
+  g.fillStyle = shade(M.rim, -0.35); g.beginPath(); g.arc(side * (w / 2) + side * 0.02, 0, Math.min(0.14, w * 0.2), 0, Math.PI * 2); g.fill();
+  g.restore();
+}
+function drawBadge(g, x, y, r, c, alpha) {
+  g.globalAlpha = alpha;
+  g.fillStyle = "rgba(0,0,0,0.35)"; g.beginPath(); g.arc(x + 0.6, y + 1, r + 1.5, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#fff"; g.beginPath(); g.arc(x, y, r + 1.6, 0, Math.PI * 2); g.fill();
+  g.fillStyle = c.color; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#0B1B33"; g.font = `800 ${Math.round(r * 1.25)}px ${getComputedStyle(root).getPropertyValue("--font")}`;
+  g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(c.num), x, y + 0.5);
+  g.globalAlpha = 1;
+}
+function drawTag(g, x, y, c, alpha) {
+  const txt = c.name, font = `700 12px ${getComputedStyle(root).getPropertyValue("--font")}`;
+  g.font = font; const w = g.measureText(txt).width + 26, h = 21;
+  g.globalAlpha = alpha;
+  g.fillStyle = "rgba(255,255,255,0.95)"; rr(g, x, y - h / 2, w, h, 10.5); g.fill();
+  g.strokeStyle = c.color; g.lineWidth = 2; g.stroke();
+  g.fillStyle = c.color; g.beginPath(); g.arc(x + 10, y, 5, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "rgba(0,0,0,0.35)"; g.lineWidth = 1; g.stroke();
+  g.fillStyle = "#1F2937"; g.textAlign = "left"; g.textBaseline = "middle"; g.fillText(txt, x + 19, y + 0.5);
+  g.globalAlpha = 1;
+}
+
+/* chaff behind the spreader (world coordinates, so it stays where it fell) */
+const chaff = [];
+function emitChaff(c, X, Y, a, dt) {
+  if (chaff.length > 900) return;
+  const n = Math.min(6, Math.ceil(dt * 60 * 1.4));
+  const fx = Math.sin(a), fy = Math.cos(a);
+  for (let k = 0; k < n; k++) {
+    const side = (Math.random() - 0.5) * 2;
+    const back = 10.4 * K_GROUND, spread = 3.2 * K_GROUND;
+    chaff.push({ x: X - fx * back + fy * side * 0.8 * K_GROUND, y: Y - fy * back - fx * side * 0.8 * K_GROUND,
+      vx: (-fx * 1.2 + fy * side * spread) * 0.8, vy: (-fy * 1.2 - fx * side * spread) * 0.8, life: 0, max: 0.9 + Math.random() * 0.8,
+      r: 0.06 + Math.random() * 0.1 });
+  }
+}
+function drawChaff(dt, s) {
+  ctx.fillStyle = "rgb(236,222,178)";
+  for (let k = chaff.length - 1; k >= 0; k--) {
+    const p = chaff[k]; p.life += dt;
+    if (p.life > p.max) { chaff.splice(k, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.93; p.vy *= 0.93;
+    const sx = (p.x - S.cx) * s + S.W / 2, sy = (S.cy - p.y) * s + S.H / 2;
+    const r = Math.max(0.9, p.r * K_GROUND * s * (1 + p.life));
+    ctx.globalAlpha = 0.55 * (1 - p.life / p.max);
+    ctx.fillRect(sx - r / 2, sy - r / 2, r, r);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ------------------------------------------------------------------ the gallery of the makes (#gallery=1) */
+function drawGallery(now) {
+  const keys = Object.keys(MAKES), n = keys.length;
+  const cols = S.W >= S.H ? Math.min(4, n) : 2, rows = Math.ceil(n / cols);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const bg = ctx.createLinearGradient(0, 0, 0, S.H); bg.addColorStop(0, "#DCCF9E"); bg.addColorStop(1, "#C9BB86"); ctx.fillStyle = bg; ctx.fillRect(0, 0, S.W, S.H);
+  for (let x = -40; x < S.W + 40; x += 34) { ctx.fillStyle = Math.round(x / 34) % 2 ? "rgba(255,250,230,0.16)" : "rgba(110,90,40,0.07)"; ctx.fillRect(x, 0, 34, S.H); }
+  const font = getComputedStyle(root).getPropertyValue("--font");
+  ctx.fillStyle = "#00358E"; ctx.font = `800 ${S.W < 600 ? 17 : 22}px ${font}`; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText("The colours of each make", 18, 16);
+  ctx.fillStyle = "#4B5563"; ctx.font = `500 ${S.W < 600 ? 12 : 13.5}px ${font}`;
+  ctx.fillText(S.W < 600 ? "Colours only: no logo, no name." : "Colours only: no logo, no name on the machine. A 40 ft header, true proportions.", 18, S.W < 600 ? 40 : 46);
+  const top = S.W < 600 ? 66 : 80, cw = S.W / cols, ch = (S.H - top - 8) / rows;
+  const ph = now / 1000 * 4.2;
+  keys.forEach((k, i) => {
+    const cx = (i % cols + 0.5) * cw, cy = top + (Math.floor(i / cols) + 0.5) * ch;
+    const sc = Math.min((cw - 24) / 13.0, (ch - 58) / 12.6);
+    const M = MAKES[k], fake = { num: i + 1, color: PALETTE[i % PALETTE.length] };
+    const y0 = cy - ch / 2 + 10 + 1.7 * sc;                     // the cutter bar: the divider tips 10 px below the cell top
+    ctx.save(); ctx.translate(cx, y0); ctx.scale(sc, sc);
+    drawCombine(ctx, fake, M, 12.19, true, true, ph + i, 1, 0.12 * Math.sin(ph * 0.3 + i), false);
+    ctx.restore();
+    drawBadge(ctx, cx, y0 + 2.95 * sc, Math.max(7, Math.min(13, 0.62 * sc)), fake, 1);
+    ctx.fillStyle = "rgba(255,255,255,0.94)"; const lab = M.label;
+    ctx.font = `800 ${S.W < 600 ? 12.5 : 14}px ${font}`; const tw = ctx.measureText(lab).width + 46;
+    rr(ctx, cx - tw / 2, cy + ch / 2 - 34, tw, 26, 13); ctx.fill(); ctx.strokeStyle = "rgba(0,53,142,0.18)"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = M.body; ctx.beginPath(); ctx.arc(cx - tw / 2 + 15, cy + ch / 2 - 21, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = M.accent; ctx.beginPath(); ctx.arc(cx - tw / 2 + 15, cy + ch / 2 - 21, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#1F2937"; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(lab, cx - tw / 2 + 28, cy + ch / 2 - 20.5);
+  });
+}
+const PALETTE = ["#FFC20E", "#00E5FF", "#FF4FA3", "#76FF03", "#FF8F00", "#B388FF", "#FFFFFF", "#00B373", "#FF5252", "#90A4AE", "#1DE9B6", "#F4FF81"];
+
+/* ------------------------------------------------------------------ one frame */
+const LEN_M = 12.2;            // cutter bar to the spreader
+const MIN_PX = 40;
+let lastFrame = 0, raf = 0, frames = 0;
+const stats = { frames: 0, drawMs: 0, maxDraw: 0, fps: 0, groundRepaints: 0, lastRepaintMs: 0, n: C.reduce((a, c) => a + c.n, 0) };
+function machineState(c, t) {
+  const i = c.idx;
+  if (i < 0) return { show: false };
+  const last = i >= c.n - 1;
+  let X = c.X[i], Y = c.Y[i], a = c.dir[i], w = c.w[i], working = false, frac = 0;
+  if (!last) {
+    const gap = c.t[i + 1] - c.t[i];
+    if (gap <= P.idle_gap_s && gap > 0) {
+      frac = Math.min(1, Math.max(0, (t - c.t[i]) / gap));
+      X = c.X[i] + (c.X[i + 1] - c.X[i]) * frac; Y = c.Y[i] + (c.Y[i + 1] - c.Y[i]) * frac;
+      let da = ((c.dir[i + 1] - c.dir[i] + 540) % 360) - 180; a = c.dir[i] + da * frac;
+      w = c.w[i] + (c.w[i + 1] - c.w[i]) * frac;
+      working = true;
+    }
+  }
+  if (!(w > 0)) w = c.w.find((v) => v > 0) || 9;
+  return { show: true, X, Y, a, w, working, frac, done: last && t > c.t[i] + 2, i };
+}
+function frame(now) {
+  raf = 0;
+  if (S.gallery) { if (!S.W) resize(); drawGallery(now); if (S.galleryAnim) raf = requestAnimationFrame(frame); return; }
+  const t0 = performance.now();
+  const dt = lastFrame ? Math.min(0.25, (now - lastFrame) / 1000) : 0.016;
+  lastFrame = now;
+  if (fly) {
+    const k = Math.min(1, (now - fly.t0) / fly.ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    S.cx = fly.a.cx + (fly.b.cx - fly.a.cx) * e; S.cy = fly.a.cy + (fly.b.cy - fly.a.cy) * e; S.z = fly.a.z + (fly.b.z - fly.a.z) * e;
+    S.dirty = true; S.interacting = now; if (k >= 1) { fly = null; S.interacting = 0; }
+  }
+  // time
+  if (S.playing) {
+    let t = S.t;
+    const gap = S.skipIdle ? idleAt(t) : null;
+    if (gap) t = Math.min(gap[1], t + (gap[1] - gap[0]) * dt / 0.6);
+    else t += dt * rate();
+    if (t >= T_END) { t = T_END; S.playing = false; setPlayIcon(); if (HAS_Z && !S.bench) setTimeout(() => openZoneCard(), 400); }
+    S.t = t;
+    for (const c of C) c.idx = searchT(c, t);
+    S.dirty = true;
+  }
+  // follow
+  if (S.follow > 0) {
+    const c = C[S.follow - 1], m = machineState(c, S.t);
+    if (m.show && !fly) {
+      const s = scaleAt(S.z), k = 1 - Math.pow(0.0015, dt);
+      const [tx, ty] = followTarget(m);
+      S.cx += (tx - S.cx) * k; S.cy += (ty - S.cy) * k;
+      if (Math.abs(tx - S.cx) * s > 0.3 || Math.abs(ty - S.cy) * s > 0.3) S.dirty = true;
+    }
+  }
+  const settled = !S.interacting || now - S.interacting > 160;
+  if (S.interacting && settled) S.interacting = 0;
+  if (!S.W) resize();
+  // layers: repainted when the view left them and the hand stopped
+  if (settled) {
+    if (!layerFits(L.base)) paintBase();
+    if (S.ahead && !layerFits(L.ahead)) paintAhead();
+    if (S.groundDirty || !layerFits(L.ground)) { const r0 = performance.now(); paintGround(); stats.lastRepaintMs = performance.now() - r0; stats.groundRepaints++; }
+    else paintGroundIncrement();
+  } else if (S.playing) paintGroundIncrement();
+  // compose
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = "#E6ECE6"; ctx.fillRect(0, 0, S.W, S.H);
+  drawLayer(L.base);
+  if (S.ahead) drawLayer(L.ahead, 0.55);
+  drawLayer(L.ground);
+  const s = scaleAt(S.z), pxPerM = s * K_GROUND;
+  drawMarks(s);
+  // the strip each combine is cutting now, up to its header
+  for (const c of C) {
+    const m = machineState(c, S.t); c.ms = m;
+    if (!m.show || !m.working || m.i + 1 >= c.n) continue;
+    const i = m.i + 1, Q = c.Q, j = i * 8;
+    if (Q[j] !== Q[j]) continue;
+    const b = c.bk[S.mode] ? c.bk[S.mode][i] : 0, f = m.frac;
+    const pts = [[Q[j], Q[j + 1]], [Q[j + 2], Q[j + 3]], [Q[j + 2] + (Q[j + 4] - Q[j + 2]) * f, Q[j + 3] + (Q[j + 5] - Q[j + 3]) * f],
+      [Q[j] + (Q[j + 6] - Q[j]) * f, Q[j + 1] + (Q[j + 7] - Q[j + 1]) * f]];
+    ctx.beginPath(); pts.forEach(([x, y], k) => { const px = (x - S.cx) * s + S.W / 2, py = (S.cy - y) * s + S.H / 2; if (k) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+    ctx.closePath(); ctx.fillStyle = bucketColour(b, S.mode); ctx.fill();
+  }
+  drawChaff(S.frozen ? 0 : dt, s);                         // the chaff settles also while paused (then the frames stop)
+  // the machines
+  const hour = HAS_CLOCK ? new Date((P.t0 + S.t) * 1000).getUTCHours() : 12, night = hour >= 20 || hour < 6;
+  const order = C.slice().sort((a, b) => (a.ms && a.ms.working ? 1 : 0) - (b.ms && b.ms.working ? 1 : 0));
+  const placed = [];
+  for (const c of order) {
+    const m = c.ms; if (!m || !m.show || S.edit) continue;
+    const M = MAKES[c.make] || MAKES.generic;
+    // heading: eased towards the travel direction, never jumping
+    if (c.ang === null || !S.playing) c.ang = m.a;
+    else { const da = ((m.a - c.ang + 540) % 360) - 180; c.ang += da * Math.min(1, dt * 7); }
+    const target = (m.working ? (((m.a - (c.prevA ?? m.a) + 540) % 360) - 180) : 0);
+    c.prevA = m.a; c.steer += (Math.max(-0.5, Math.min(0.5, target * 0.25)) - c.steer) * Math.min(1, dt * 4);
+    if (S.playing && m.working) { c.reel += dt * 4.2; emitChaff(c, m.X, m.Y, c.ang * Math.PI / 180, dt); }
+    const sx = (m.X - S.cx) * s + S.W / 2, sy = (S.cy - m.Y) * s + S.H / 2;
+    if (sx < -200 || sy < -200 || sx > S.W + 200 || sy > S.H + 200) continue;
+    const trueLen = LEN_M * pxPerM, k = trueLen < MIN_PX ? MIN_PX / trueLen : 1;
+    const detail = trueLen * k >= 64;
+    const alpha = m.done ? 0.55 : 1;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(c.ang * Math.PI / 180); ctx.scale(pxPerM * k, pxPerM * k);
+    const Wm = c.hdrW;
+    drawCombine(ctx, c, M, Wm, detail, m.working && S.playing, c.reel, alpha, c.steer, night);
+    ctx.restore();
+    // the badge on the cab roof and the name tag, upright
+    const roof = 2.9 * pxPerM * k, a = c.ang * Math.PI / 180;
+    const bx = sx - Math.sin(a) * roof, by = sy + Math.cos(a) * roof;     // behind the cutter bar
+    const br = Math.max(7, Math.min(13, 0.62 * pxPerM * k));
+    if (C.length > 1 || trueLen * k > 60) {
+      // the name tag outside the machine (top right of the circle around it), joined to the badge by a line
+      const cxm = sx - Math.sin(a) * 4.4 * pxPerM * k, cym = sy + Math.cos(a) * 4.4 * pxPerM * k;
+      const Rm = Math.max(Math.min(c.hdrW, 14) / 2 + 0.6, 6.4) * pxPerM * k * 0.92;
+      const tx = cxm + Rm * 0.72;
+      let ty = cym - Rm * 0.72 - 6;
+      // tags of machines close together: moved up until they no longer cover one another
+      ctx.font = `700 12px ${FONT}`; const tw = ctx.measureText(c.name).width + 26;
+      for (let guard = 0; guard < 12 && placed.some((r) => tx < r[0] + r[2] && tx + tw > r[0] && ty - 12 < r[1] + 12 && ty + 12 > r[1] - 12); guard++) ty -= 25;
+      placed.push([tx, ty, tw]);
+      ctx.globalAlpha = alpha * 0.9; ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke(); ctx.globalAlpha = 1;
+      drawTag(ctx, tx, ty, c, alpha);
+    }
+    drawBadge(ctx, bx, by, br, c, alpha);
+  }
+  ctx.globalAlpha = 1;
+  // the scale bar
+  scaleBar(pxPerM);
+  const t1 = performance.now();
+  stats.frames++; const ms = t1 - t0; stats.drawMs = stats.drawMs ? stats.drawMs * 0.9 + ms * 0.1 : ms; stats.maxDraw = Math.max(stats.maxDraw, ms);
+  if (dt > 0) stats.fps = stats.fps ? stats.fps * 0.9 + (1 / dt) * 0.1 : 1 / dt;
+  S.dirty = false;
+  uiTick(now);
+  if (S.playing || fly || S.interacting || (chaff.length && !S.frozen)) wake();
+}
+function wake() { if (!raf) raf = requestAnimationFrame(frame); }
+function scaleBar(pxPerM) {
+  const target = Math.min(140, S.W * 0.22) / pxPerM, p = Math.pow(10, Math.floor(Math.log10(target)));
+  const nice = [1, 2, 5, 10].map((k) => k * p).filter((v) => v <= target).pop() || p;
+  $("scale-i").style.width = Math.round(nice * pxPerM) + "px";
+  $("scale-t").textContent = nice >= 1000 ? (nice / 1000) + " km" : nice + " m";
+}
+
+/* ------------------------------------------------------------------ the timeline */
+const tl = $("tl"), tg = tl.getContext("2d");
+function drawTimeline() {
+  const w = tl.clientWidth, h = tl.clientHeight;
+  if (tl.width !== Math.round(w * DPR)) { tl.width = Math.round(w * DPR); tl.height = Math.round(h * DPR); }
+  tg.setTransform(DPR, 0, 0, DPR, 0, 0); tg.clearRect(0, 0, w, h);
+  const x0 = 6, x1 = w - 6, X = (u) => x0 + u * (x1 - x0);
+  const laneTop = 17, laneH = Math.max(3, Math.min(7, (h - laneTop - 8) / Math.max(1, C.length) - 1.5));
+  // day marks
+  tg.font = `700 10.5px ${getComputedStyle(root).getPropertyValue("--font")}`; tg.textBaseline = "top";
+  if (HAS_CLOCK) {
+    const first = Math.floor(P.t0 / 86400), last = Math.floor((P.t0 + T_END) / 86400);
+    let lastLabel = -1e9;
+    for (let d = first; d <= last; d++) {
+      const t = Math.max(0, d * 86400 - P.t0), x = X(tToU(t));
+      if (x - lastLabel < 70) { tg.fillStyle = "#93A4B8"; tg.fillRect(x, 12, 1, h - 12); continue; }   // a squeezed night: no room for its label
+      lastLabel = x;
+      tg.fillStyle = "#93A4B8"; tg.fillRect(x, 0, 1, h);
+      const dd = new Date(d * 86400 * 1000);
+      tg.fillStyle = "#4B5563"; tg.textAlign = "left";
+      tg.fillText(`${DAYS[dd.getUTCDay()]} ${dd.getUTCDate()} ${MON[dd.getUTCMonth()]}`, x + 4, 1);
+    }
+  } else { tg.fillStyle = "#4B5563"; tg.textAlign = "left"; tg.fillText("file order", x0, 1); }
+  // the track and the idle gaps
+  tg.fillStyle = "#E8EEF6"; rr(tg, x0, laneTop - 3, x1 - x0, h - laneTop - 2, 6); tg.fill();
+  for (const sg of SEGS) if (sg.idle) {
+    const a = X(sg.e0 / EFF), b = X(sg.e1 / EFF);
+    tg.fillStyle = "#D5DEEA"; tg.fillRect(a, laneTop - 3, Math.max(1.5, b - a), h - laneTop - 2);
+    if (S.skipIdle && b - a >= 3) { tg.strokeStyle = "#AEBBCD"; tg.lineWidth = 1; tg.beginPath(); for (let y = laneTop - 3; y < h; y += 5) { tg.moveTo(a, y + 4); tg.lineTo(b, y); } tg.stroke(); }
+  }
+  // one lane per combine: who worked when
+  C.forEach((c, k) => {
+    const y = laneTop + k * (laneH + 1.5);
+    tg.fillStyle = c.color;
+    for (const [a, b] of c.runs) { const xa = X(tToU(a)), xb = X(tToU(b)); tg.fillRect(xa, y, Math.max(1.2, xb - xa), laneH); }
+  });
+  // played part and the playhead
+  const xp = X(tToU(S.t));
+  tg.fillStyle = "rgba(0,53,142,0.10)"; tg.fillRect(x0, laneTop - 3, xp - x0, h - laneTop - 2);
+  tg.fillStyle = "#00358E"; tg.fillRect(xp - 1, 12, 2, h - 12);
+  tg.beginPath(); tg.arc(xp, 12, 6, 0, Math.PI * 2); tg.fillStyle = "#fff"; tg.fill(); tg.lineWidth = 3; tg.strokeStyle = "#00358E"; tg.stroke();
+}
+let tlDrag = false;
+function tlU(ev) { const r = tl.getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX - r.left - 6) / (r.width - 12))); }
+tl.addEventListener("pointerdown", (ev) => { tlDrag = true; tl.setPointerCapture(ev.pointerId); seek(uToT(tlU(ev))); tip(ev); });
+tl.addEventListener("pointermove", (ev) => { if (tlDrag) seek(uToT(tlU(ev))); tip(ev); });
+tl.addEventListener("pointerup", () => { tlDrag = false; });
+tl.addEventListener("pointerleave", () => { if (!tlDrag) $("tltip").classList.remove("show"); });
+function tip(ev) {
+  const u = tlU(ev), r = tl.getBoundingClientRect(), el = $("tltip");
+  el.textContent = shortClock(uToT(u)); el.style.left = Math.max(60, Math.min(r.width - 60, ev.clientX - r.left)) + "px"; el.classList.add("show");
+}
+
+/* ------------------------------------------------------------------ the panel, the legend, the clock */
+function makeChip(M) { return `<span class="swatch" style="background:${M.body};box-shadow:inset -4px 0 0 ${M.accent}"></span>`; }
+function buildPanel() {
+  $("ncomb").textContent = C.length + (C.length === 1 ? " combine" : " combines");
+  $("cmbs").innerHTML = C.map((c) => {
+    const M = MAKES[c.make] || MAKES.generic;
+    const mk = c.make === "generic" ? "Make not known" : M.label;
+    return `<div class="cmb" id="cmb${c.num}" title="${esc(c.id)}: ${esc(mk)} (${esc(c.make_why)})">
+      <div class="top"><span class="num" style="background:${c.color}">${c.num}</span>
+        <div class="cmid"><div class="cname">${esc(c.name)}</div><div class="cmake" title="${esc(mk)}${c.model ? " · " + esc(c.model) : ""}">${makeChip(M)}${esc(mk)}${c.model ? " · " + esc(c.model) : ""}</div></div>
+        <span class="state wait" id="st${c.num}">Waiting</span></div>
+      <div class="vals"><div class="val" title="Dry yield now"><b id="y${c.num}">—</b><span>bu/ac</span></div><div class="val" title="Moisture now"><b id="m${c.num}">—</b><span>%</span></div><div class="val" title="Speed now"><b id="s${c.num}">—</b><span>mph</span></div></div>
+      <div class="foot"><span id="a${c.num}">0.0 ac</span>${HAS_Z ? `<span class="czone" id="cz${c.num}"></span>` : ""}<button class="linkbtn" data-f="${c.num}">Follow</button></div></div>`;
+  }).join("");
+  $("cmbs").querySelectorAll("[data-f]").forEach((b) => b.addEventListener("click", () => setFollow(S.follow === +b.dataset.f ? 0 : +b.dataset.f)));
+  const tn = [];
+  if (P.thin > 1) tn.push(`Showing 1 in ${P.thin} readings (${fmt(C.reduce((a, c) => a + c.n, 0), 0)} of ${fmt(P.n, 0)}): the file is too large to carry every one.`);
+  if (P.sms_rect) tn.push("Drawn as SMS draws a cleaned file: each reading a rectangle of its distance and width.");
+  if (MAN && MAN.summary) tn.push("This cleaning includes edits by hand: " + manLine());
+  $("thinnote").textContent = tn.join(" ");
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch])); }
+function buildLegend() {
+  const el = $("legend"), m = S.mode;
+  if (HAS_Z && (m === "zone" || S.view === "zones")) {
+    let extra = "";
+    if (m !== "zone") { buildLegendOf(el, m); extra = `<div style="margin-top:8px">${el.innerHTML}</div>`; }
+    el.innerHTML = zoneLegend() + extra + editLegend();
+    return;
+  }
+  buildLegendOf(el, m);
+  el.insertAdjacentHTML("beforeend", editLegend());
+}
+function buildLegendOf(el, m) {
+  if (SCALES[m]) {
+    const sc = SCALES[m], unit = P.units[m];
+    el.innerHTML = `<div class="lt">${m === "yield" ? "Dry yield" : m === "moisture" ? "Moisture" : "Speed"} <span style="font-weight:500;color:var(--muted)">· ${unit}</span></div>
+      <div class="ramp" style="background:linear-gradient(90deg,${sc.stops.join(",")})"></div>
+      <div class="ramp-l"><span>${fmt(sc.lo, 1)}</span><span>2nd to 98th percentile</span><span>${fmt(sc.hi, 1)}</span></div>` +
+      (KIND === "clean" ? `<div class="lchips" style="margin-top:7px"><div class="lchip"><span class="swatch" style="background:${GREY}"></span>Removed by the cleaning</div></div>` : "");
+  } else if (m === "combine") {
+    el.innerHTML = `<div class="lt">Combine</div><div class="lchips">` + C.map((c) => `<div class="lchip"><span class="swatch" style="background:${c.color}"></span>${c.num} · ${esc(c.name)}<em>${fmt(c.n, 0)}</em></div>`).join("") + "</div>";
+  } else {
+    el.innerHTML = `<div class="lt">Kept / removed</div><div class="lchips"><div class="lchip"><span class="swatch" style="background:${KEPT}"></span>Kept<em>${fmt(P.totals.kept, 0)}</em></div>` +
+      (P.steps || []).map((s) => `<div class="lchip"><span class="swatch" style="background:${GREY}"></span>${esc(s.name)}<em>${fmt(s.n, 0)}</em></div>`).join("") + "</div>";
+  }
+}
+let lastUi = 0;
+function uiTick(now) {
+  const cp = clockParts(S.t);
+  $("time").textContent = cp.time; $("date").textContent = cp.date;
+  $("idlechip").hidden = !(S.playing && S.skipIdle && idleAt(S.t));
+  drawTimeline();
+  if (now - lastUi < 220 && S.playing) return;
+  lastUi = now;
+  let A = 0, B = 0, ATOT = 0;
+  for (const c of C) {
+    const m = c.ms || machineState(c, S.t), i = c.idx;
+    A += c.cumA[i + 1]; B += c.cumB[i + 1]; ATOT += c.cumA[c.n];
+    const st = $("st" + c.num);
+    const state = !m.show ? ["wait", "Waiting"] : m.done ? ["done", "Done"] : m.working ? ["work", "Working"] : ["idle", "Idle"];
+    st.className = "state " + state[0]; st.textContent = state[1];
+    const j = Math.max(0, i), ok = i >= 0;
+    $("y" + c.num).textContent = ok ? fmt(c.y[j], 1) : "—"; $("m" + c.num).textContent = ok ? fmt(c.m[j], 1) : "—"; $("s" + c.num).textContent = ok ? fmt(c.s[j], 1) : "—";
+    $("a" + c.num).textContent = `${fmt(c.cumA[i + 1], 1)} ac · ${fmt(c.cumB[i + 1], 0)} bu`;
+  }
+  const pct = ATOT > 0 ? 100 * A / ATOT : 0;
+  $("pct").textContent = fmt(pct, 1) + " %";
+  $("progbar").style.width = pct.toFixed(2) + "%";
+  $("sofar-t").textContent = KIND === "clean" ? "So far (kept readings)" : "So far";
+  $("tot").innerHTML = `<div class="val"><b>${fmt(A, 1)}</b><span>acres harvested</span></div><div class="val"><b>${fmt(B, 0)}</b><span>bushels (dry)</span></div>` +
+    `<div class="val"><b>${A > 0 ? fmt(B / A, 1) : "—"}</b><span>bu/ac so far</span></div><div class="val"><b>${fmt(pct, 1)} %</b><span>of the harvest</span></div>`;
+  if (HAS_Z) updateZones();
+  if (!S.benched) $("rp-stats").textContent = JSON.stringify(stats);
+}
+
+/* ------------------------------------------------------------------ the management zones panel, chart and closing card */
+const zfmt = (v, d) => (v === null || v === undefined || v !== v) ? "—" : fmt(v, d);
+function zoneVersion() { return S.zborder ? "all" : "interior"; }
+function finalZones() { return HAS_Z ? ZM.stats[zoneVersion()].zones : []; }
+function zSwatch(z) { return `<span class="zsw" style="background:${esc(z.colour)}"></span>`; }
+function zoneLegend() {
+  return `<div class="lt">Management zones <span style="font-weight:500;color:var(--muted)">· ${esc(ZM.column)}</span></div><div class="lzchips">` +
+    ZCLS.map((z) => `<div class="lchip" title="${esc(z.name)}: ${fmt(z.map_ac, 1)} ac in the zone map"><span class="swatch" style="background:${esc(z.colour)}"></span>${esc(z.name)}</div>`).join("") +
+    (S.mode === "zone" && !S.zborder ? `<div class="lchip" title="Readings closer to a zone border than half their swath width: left out of the zone numbers"><span class="swatch" style="background:${Z_BORDER}"></span>on a border, left out</div>` : "") + "</div>";
+}
+function hasOutside() { return HAS_Z && ZM.stats.all.zones[ZK] && ZM.stats.all.zones[ZK].n > 0; }
+function buildZonePanel() {
+  if (!HAS_Z) return;
+  $("nzones").textContent = ZK + (ZK === 1 ? " zone" : " zones");
+  $("zsub").innerHTML = `Zone map ${esc(ZM.file)} · classes from ${esc(ZM.column)} · ` +
+    (ZM.raw ? "<b>raw readings, not cleaned</b>" : "the readings the cleaning kept");
+  const ks = [...Array(ZK).keys()]; if (hasOutside()) ks.push(ZK);
+  $("zrows").innerHTML = ks.map((k) => {
+    const z = zoneOf(k), out = k === ZK;
+    return `<div class="zrow${out ? " outz" : ""}" title="${esc(z.name)}"><div class="ztop">${zSwatch(z)}<span class="zname">${esc(out ? "Outside the zones" : z.name)}</span>
+      <span class="zbadges" id="zbg${k}"></span><span class="zy"><b id="zy${k}">—</b> bu/ac</span></div>` +
+      (out ? "" : `<div class="zbar" title="Share of the zone's map area harvested"><i id="zp${k}" style="background:${esc(z.colour)}"></i></div>`) +
+      `<div class="zfoot"><span id="za${k}">0.0 ac</span><span id="zbu${k}">0 bu</span></div></div>`;
+  }).join("");
+  setChip("t-zbd", S.zborder);
+}
+function drawZoneChart(R, fieldY) {
+  const cvz = $("zchart"); if (!cvz || !cvz.clientWidth) return;
+  const w = cvz.clientWidth, h = cvz.clientHeight, g = cvz.getContext("2d");
+  if (cvz.width !== Math.round(w * DPR)) { cvz.width = Math.round(w * DPR); cvz.height = Math.round(h * DPR); }
+  g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, w, h);
+  const fin = finalZones();
+  let top = 0; for (let k = 0; k < ZK; k++) top = Math.max(top, (fin[k] && fin[k].yield) || 0, R[k].yield || 0);
+  if (!(top > 0)) top = 1; top *= 1.12;
+  const x0 = 4, x1 = w - 4, base = h - 16, H_ = base - 6, bw = (x1 - x0) / ZK;
+  g.font = `600 10.5px ${FONT}`; g.textAlign = "center"; g.textBaseline = "top";
+  for (let k = 0; k < ZK; k++) {
+    const z = ZCLS[k], v = R[k].yield, x = x0 + k * bw + bw * 0.16, ww = bw * 0.68;
+    g.fillStyle = "#F3F5F9"; g.fillRect(x, 6, ww, H_);
+    if (v === v) { const hh = Math.max(1, H_ * v / top); g.fillStyle = z.colour; g.fillRect(x, base - hh, ww, hh); g.strokeStyle = "rgba(20,26,38,0.55)"; g.lineWidth = 1; g.strokeRect(x + 0.5, base - hh + 0.5, ww - 1, hh - 1); }
+    g.fillStyle = "#4B5563"; const lab = z.label.length > 8 ? z.label.slice(0, 7) + "…" : z.label; g.fillText(lab, x + ww / 2, base + 3);
+  }
+  if (fieldY === fieldY) {
+    const y = base - H_ * fieldY / top;
+    g.strokeStyle = "#00358E"; g.lineWidth = 1.6; g.setLineDash([5, 3]); g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
+    const t = `all zones ${fmt(fieldY, 1)}`; g.font = `700 10.5px ${FONT}`;
+    const tw = g.measureText(t).width + 6, ty = y - 3 > 13 ? y - 3 : y + 15;
+    g.fillStyle = "rgba(255,255,255,0.92)"; g.fillRect(x1 - tw, ty - 12, tw, 13);
+    g.fillStyle = "#00358E"; g.textAlign = "right"; g.textBaseline = "bottom"; g.fillText(t, x1 - 3, ty);
+  }
+}
+function updateZones() {
+  if (!HAS_Z) return;
+  const R = zoneRun(S.zborder);
+  let fa = 0, fb = 0, nb = 0;
+  for (let k = 0; k < ZK; k++) { fa += R[k].A; fb += R[k].B; }
+  for (let k = 0; k <= ZK; k++) nb += R[k].nb;
+  const fieldY = fa > 0 ? fb / fa : NaN;
+  const here = {};
+  for (const c of C) {
+    const el = $("cz" + c.num), m = c.ms || machineState(c, S.t);
+    if (!c.zb || !m.show || m.done) { if (el) el.innerHTML = ""; continue; }
+    const k = c.zb[c.idx] >> 1, z = zoneOf(k);
+    if (m.working) (here[k] = here[k] || []).push(c);
+    if (el) el.innerHTML = `${zSwatch(z)}${esc(k === ZK ? "Outside the zones" : "In " + z.name)}`;
+  }
+  const ks = [...Array(ZK).keys()]; if (hasOutside()) ks.push(ZK);
+  for (const k of ks) {
+    const r = R[k], z = zoneOf(k);
+    $("zy" + k).textContent = zfmt(r.yield, 1);
+    $("za" + k).textContent = k < ZK ? `${fmt(r.A, 1)} of ${fmt(z.map_ac, 1)} ac` : `${fmt(r.A, 1)} ac`;
+    $("zbu" + k).textContent = `${fmt(r.B, 0)} bu · ${fmt(r.n, 0)} rdg`;
+    if (k < ZK) $("zp" + k).style.width = (z.map_ac > 0 ? Math.min(100, 100 * r.A / z.map_ac) : 0).toFixed(1) + "%";
+    $("zbg" + k).innerHTML = (here[k] || []).map((c) => `<span class="num" style="background:${esc(c.color)}" title="${esc(c.name)} is harvesting here">${c.num}</span>`).join("");
+  }
+  $("zsheet-y").textContent = fieldY === fieldY ? `· ${fmt(fieldY, 1)} bu/ac in the zones` : "";
+  $("t-zbd").title = (S.zborder ? "Border readings counted" : `Border readings left out (${fmt(nb, 0)} so far)`) + ": readings closer to a zone border than half their swath width";
+  $("t-zbd").lastChild.textContent = S.zborder ? "Border readings counted" : `Border readings left out: ${fmt(nb, 0)}`;
+  drawZoneChart(R, fieldY);
+}
+function openZoneCard() {
+  if (!HAS_Z) return;
+  S.zcardShown = true;
+  const ver = zoneVersion(), V = ZM.stats[ver], AG = ZM.agreement || {}, Z = V.zones, raw = ZM.raw;
+  const nbAll = ZM.stats.interior.zones.reduce((a, r) => a + (r.n_border || 0), 0);
+  const rows = Z.filter((r) => r.zone < ZK || r.n > 0).map((r) => {
+    const out = r.zone === ZK, z = zoneOf(r.zone);
+    return `<tr${out ? ' class="outz"' : ""}><td>${zSwatch(z)} ${esc(out ? "Outside the zones" : z.name)}</td><td><b>${zfmt(r.yield, 1)}</b></td><td>${zfmt(r.sd, 1)}</td>` +
+      `<td>${fmt(r.acres, 1)}${out ? "" : ` <span style="color:var(--muted)">of ${fmt(r.map_ac, 1)}</span>`}</td><td>${fmt(r.bu, 0)}</td><td>${fmt(r.n, 0)}</td>` +
+      `<td>${ver === "interior" ? fmt(r.n_border || 0, 0) : "—"}</td></tr>`;
+  }).join("");
+  const eta = AG.eta2;
+  const etaTxt = eta === null || eta === undefined ? "Not enough interior readings with a yield to say how much of the yield variation the zones account for." :
+    `The management zones account for <b>${fmt(100 * eta, 0)} %</b> of the yield variation between readings <span style="color:var(--muted)">(eta squared ${fmt(eta, 3)}: the between-zone share of the area-weighted variance of ${fmt(AG.n, 0)} interior readings)</span>.`;
+  const nm = (l) => esc(ZM.numeric ? "Zone " + l : l);
+  const own = (AG.order_own || []).map(nm), byY = (AG.order_by_yield || []).map(nm);
+  let verdict = "";
+  if (ZM.numeric && own.length >= 2) {
+    const same = own.join("|") === byY.join("|"), rev = own.slice().reverse().join("|") === byY.join("|");
+    verdict = same ? "The yield rises with the zone number." : rev ? "The yield falls as the zone number rises." : "The yield does not follow the order of the zones.";
+  }
+  const chips = (arr) => arr.map((l, i) => `<span>${i ? "&lt;&nbsp;" : ""}${l}</span>`).join("");
+  let per = "";
+  if ((AG.per_combine || []).length) {
+    const short = (l) => esc(ZM.numeric ? l : (String(l).length > 10 ? String(l).slice(0, 9) + "…" : l));
+    per = `<h3>Inside each combine</h3><div class="small" style="margin:0 0 4px">Combines with at least ${fmt(AG.min_combine_readings, 0)} interior readings in a zone; yield in bu/ac. Each combine's own order of its zones, from the lowest yield to the highest, against the whole field's order of the same zones (rank agreement: 1 the same order, 0 none, −1 the reverse).</div><div class="scroll"><table><tr><th>Combine</th>` +
+      ZCLS.map((z) => `<th>${esc(z.name)}</th>`).join("") + "<th>Lowest → highest</th><th>Rank agreement</th><th>Same order</th></tr>" +
+      AG.per_combine.map((pc) => {
+        const c = C[pc.num - 1] || {}, by = {}; pc.zones.forEach((r) => { by[r.label] = r; });
+        const same = pc.same_as_field ? ["yes", "yes"] : pc.same_highest && pc.same_lowest ? ["no", "no: same lowest and highest"] :
+          pc.same_highest ? ["no", "no: same highest"] : pc.same_lowest ? ["no", "no: same lowest"] : ["no", "no"];
+        return `<tr><td><span class="num" style="display:inline-grid;width:18px;height:18px;font-size:10.5px;background:${esc(c.color || "#ccc")}">${pc.num}</span> ${esc(pc.name)}</td>` +
+          ZCLS.map((z) => `<td>${by[z.label] ? fmt(by[z.label].yield, 1) : '<span style="color:var(--muted)">—</span>'}</td>`).join("") +
+          `<td>${(pc.order_by_yield || []).map(short).join(" &lt; ")}</td><td>${pc.rho_field === null || pc.rho_field === undefined ? "—" : fmt(pc.rho_field, 2)}</td>` +
+          `<td class="${same[0]} wrap">${same[1]}</td></tr>`;
+      }).join("") + "</table></div>";
+  }
+  const early = S.t < T_END - 0.5;
+  const rem = P.totals ? P.totals.removed : 0;
+  const cautions = [
+    raw ? "Raw readings, not cleaned: every reading as imported, the ones a cleaning would remove included." :
+      `Cleaned readings: the ${fmt(P.totals.kept, 0)} readings the cleaning kept (the ${fmt(rem, 0)} it removed are not counted).`,
+    ver === "interior" ? `${fmt(nbAll, 0)} border readings left out: readings closer to a zone border than half their swath width (${fmt(ZM.border_default_m, 0)} m when the width is missing).` :
+      `Border readings counted: the ${fmt(nbAll, 0)} readings closer to a zone border than half their swath width are in.`,
+    "The grain flow delay blurs the yield across a border along the pass: grain cut before a border is still logged after it.",
+    (C.length > 1 ? "Combines whose monitors read apart move a zone's yield towards the combine that harvested most of it: compare the order inside each combine." : null),
+    "In a trial field the rates applied inside the zones are mixed with the zone effect.",
+    "One harvest is one year: zones that agree with this yield may not agree with the next.",
+    "Readings next to each other are not independent: these numbers describe this field and this harvest, with no test of significance.",
+  ].concat(ZM.notes || []).filter(Boolean);
+  $("zcard").innerHTML = `<button class="btn x" id="zcard-x" title="Close (Esc)" aria-label="Close">✕</button>
+    <h2 id="zcard-t">Do the management zones agree with the yield?</h2>
+    <div class="zsub"><b>The whole harvest</b>${early ? " (the panel beside the map shows the harvest so far)" : ""} · zone map ${esc(ZM.file)} · classes from ${esc(ZM.column)} · ${raw ? "<b>raw readings, not cleaned</b>" : "cleaned readings"} · ${ver === "interior" ? "border readings left out" : "border readings counted"}</div>
+    <div class="scroll"><table><tr><th>Management zone</th><th>Yield bu/ac</th><th>SD</th><th>Acres</th><th>Bushels</th><th>Readings</th><th>Border left out</th></tr>${rows}</table></div>
+    <div class="big">${etaTxt}</div>
+    <div class="order"><span><b>Own order:</b>&nbsp;${own.join(" · ")}</span><span><b>Lowest to highest yield:</b>&nbsp;${chips(byY)}</span></div>
+    ${verdict ? `<div class="big" style="margin-top:0">${verdict}</div>` : ""}${per}
+    <h3>Read with care</h3><ul>${cautions.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>`;
+  $("rp-zcard").hidden = false;
+  $("zcard-x").addEventListener("click", closeZoneCard);
+}
+function closeZoneCard() { $("rp-zcard").hidden = true; }
+
+/* ------------------------------------------------------------------ controls */
+function setPlayIcon() { if (HAS_Z && !S.playing && L.ground.ok && zlOn()) { flushBorders(true); S.dirty = true; } $("b-play").innerHTML = S.playing ? I.pause : I.play; $("b-play").setAttribute("aria-label", S.playing ? "Pause" : "Play"); }
+function togglePlay() {
+  if (S.edit) { toast("Playback is paused while you edit points: press Done to play"); return; }
+  S.frozen = false;
+  if ($("rp-card") && !$("rp-card").hidden) { $("rp-card").hidden = true; E.card = null; }
+  if (!S.playing && S.t >= T_END - 0.01) seek(0);
+  S.playing = !S.playing; setPlayIcon(); lastFrame = 0; wake();
+}
+function step(sign) { S.playing = false; setPlayIcon(); seek(S.t + sign * Math.max(1, rate())); }
+function setSpeed(v) {
+  S.speed = v;
+  $("speeds").querySelectorAll("button").forEach((b) => b.classList.toggle("on", String(b.dataset.v) === String(v)));
+  $("speedsel").value = String(v);
+}
+function setMode(m) {
+  if (!MODES.find((x) => x[0] === m)) return;
+  S.mode = m; S.groundDirty = true; bucketsOf(m);
+  $("colours").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === m));
+  $("coloursel").value = m; buildLegend(); if (S.W) resize(); S.dirty = true; wake();
+}
+function followTarget(m, z) {
+  // the view centre that puts the middle of the machine in the middle of the free map (beside the panel, above the
+  // control bar)
+  const s = scaleAt(z === undefined ? S.z : z), a = m.a * Math.PI / 180, back = 4.4 * K_GROUND;
+  const mx_ = m.X - Math.sin(a) * back, my_ = m.Y - Math.cos(a) * back;
+  const r = root.getBoundingClientRect(), bar = root.querySelector(".rp-bar").getBoundingClientRect();
+  const wide = S.W >= 760, zr = HAS_Z && S.W >= 1180 ? 280 : 0, zl = HAS_Z && S.W < 1180 && wide ? 280 : 0;
+  const px = wide && S.panel ? (zl + S.W - 370 - zr) / 2 : S.W / 2;
+  const py = Math.max(80, (bar.top - r.top) / 2 + (wide ? 30 : 60));
+  return [mx_ - (px - S.W / 2) / s, my_ + (py - S.H / 2) / s];
+}
+function setFollow(k) {
+  S.follow = k; $("follow").value = String(k);
+  C.forEach((c) => $("cmb" + c.num).classList.toggle("followed", c.num === k));
+  if (k > 0) {
+    const c = C[k - 1], m = machineState(c, S.t);
+    if (m.show) { const z = Math.max(S.z, 18.6), [x, y] = followTarget(m, z); flyTo(x, y, z, 650); }
+  }
+  wake();
+}
+function setChip(id, on) { $(id).classList.toggle("on", on); $(id).setAttribute("aria-pressed", on ? "true" : "false"); }
+SPEEDS.forEach(([v, l]) => {
+  const b = document.createElement("button"); b.textContent = l; b.dataset.v = v; b.title = v === "min" ? "The whole harvest in one minute" : `${l} real time`;
+  b.addEventListener("click", () => setSpeed(v)); $("speeds").appendChild(b);
+  const o = document.createElement("option"); o.value = String(v); o.textContent = v === "min" ? "Whole in 1 min" : "Speed " + l; $("speedsel").appendChild(o);
+});
+$("speedsel").addEventListener("change", (e) => setSpeed(e.target.value === "min" ? "min" : +e.target.value));
+MODES.forEach(([v, l]) => {
+  const b = document.createElement("button"); b.textContent = l; b.dataset.v = v; b.addEventListener("click", () => setMode(v)); $("colours").appendChild(b);
+  const o = document.createElement("option"); o.value = v; o.textContent = "Colour: " + l; $("coloursel").appendChild(o);
+});
+$("coloursel").addEventListener("change", (e) => setMode(e.target.value));
+{
+  const f = $("follow"); const o0 = document.createElement("option"); o0.value = "0"; o0.textContent = "Follow: none"; f.appendChild(o0);
+  C.forEach((c) => { const o = document.createElement("option"); o.value = String(c.num); o.textContent = `Follow ${c.num} · ${c.name}`; f.appendChild(o); });
+  f.addEventListener("change", (e) => setFollow(+e.target.value));
+}
+$("b-play").addEventListener("click", (ev) => { if (ev.detail === 0 && spaceDown) return; togglePlay(); });
+let spaceDown = false;
+window.addEventListener("keyup", (ev) => {
+  if (ev.key !== " ") return;
+  if (ev.target && ev.target.tagName === "BUTTON") ev.preventDefault();    // no click of the focused button
+  setTimeout(() => { spaceDown = false; }, 0);
+});
+// the click a browser makes on the focused button when the space bar is released: not an action (space plays)
+root.addEventListener("click", (ev) => {
+  const b = ev.target && ev.target.closest ? ev.target.closest("button") : null;
+  if (ev.detail === 0 && spaceDown && b && b.id !== "b-play") { ev.stopImmediatePropagation(); ev.preventDefault(); }
+}, true);
+window.addEventListener("keydown", (ev) => { if (ev.key === " ") spaceDown = true; }, true);
+$("b-back").addEventListener("click", () => step(-1));
+$("b-fwd").addEventListener("click", () => step(1));
+// one level per click, also while a zoom is still moving: the step starts from where that zoom is going
+function zoomStep(dz) { const b = fly ? fly.b : { cx: S.cx, cy: S.cy, z: S.z }; flyTo(b.cx, b.cy, Math.max(3, Math.min(23, b.z + dz)), 250); }
+$("b-zin").addEventListener("click", () => zoomStep(1));
+$("b-zout").addEventListener("click", () => zoomStep(-1));
+function setView(v) {
+  if (!HAS_Z || (v !== "zones" && v !== "yield")) return;
+  S.view = v;
+  $("views").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+  $("viewsel").value = v; $("t-zb").hidden = v === "zones";
+  L.base.ok = false; S.groundDirty = true; buildLegend(); if (S.W) resize(); S.dirty = true; wake();
+}
+function layoutZones() {
+  if (!HAS_Z) return;
+  const zp = $("zpanel"), narrow = S.W < 760, mid = !narrow && S.W < 1180;
+  zp.hidden = narrow ? false : !S.panel || (mid && S.ptab !== "zones");
+  $("panel").hidden = !S.panel || (mid && S.ptab === "zones");
+  document.querySelectorAll(".ptabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === S.ptab));
+  zp.classList.toggle("closed", narrow && !S.zsheet);
+  $("zsheet-h").setAttribute("aria-expanded", S.zsheet ? "true" : "false");
+  if (S.edit) { zp.hidden = true; $("panel").hidden = true; }
+}
+if (HAS_Z) {
+  $("view-grp").hidden = false; $("view-sep").hidden = false;
+  [["yield", "Yield map"], ["zones", "Zone map"]].forEach(([v, l]) => {
+    const b = document.createElement("button"); b.textContent = l; b.dataset.v = v; b.addEventListener("click", () => setView(v)); $("views").appendChild(b);
+    const o = document.createElement("option"); o.value = v; o.textContent = l; $("viewsel").appendChild(o);
+  });
+  $("viewsel").addEventListener("change", (e) => setView(e.target.value));
+  $("t-zb").addEventListener("click", () => { S.zborders = !S.zborders; setChip("t-zb", S.zborders); S.groundDirty = true; S.dirty = true; wake(); });
+  $("t-zbd").addEventListener("click", () => {
+    S.zborder = !S.zborder; setChip("t-zbd", S.zborder); lastUi = 0; updateZones(); if (!$("rp-zcard").hidden) openZoneCard();
+    if (S.mode === "zone") { S.groundDirty = true; buildLegend(); if (S.W) resize(); S.dirty = true; wake(); }
+  });
+  document.querySelectorAll(".ptabs button").forEach((b) => b.addEventListener("click", () => { S.ptab = b.dataset.t; layoutZones(); resize(); }));
+  $("b-zcard").addEventListener("click", () => openZoneCard());
+  $("rp-zcard").addEventListener("click", (ev) => { if (ev.target === $("rp-zcard")) closeZoneCard(); });
+  $("zsheet-h").addEventListener("click", () => {
+    S.zsheet = !S.zsheet;
+    if (S.zsheet && S.panel && S.W < 760) { S.panel = false; $("panel").hidden = true; $("b-panel").classList.toggle("on", false); }
+    layoutZones(); resize();
+  });
+}
+$("b-fit").addEventListener("click", () => { setFollow(0); fit(true); });
+$("t-idle").addEventListener("click", () => { S.skipIdle = !S.skipIdle; setChip("t-idle", S.skipIdle); buildSegs(); wake(); });
+$("t-ahead").addEventListener("click", () => { S.ahead = !S.ahead; setChip("t-ahead", S.ahead); L.ahead.ok = false; S.dirty = true; wake(); });
+$("b-panel").addEventListener("click", () => {
+  S.panel = !S.panel; $("panel").hidden = !S.panel || !!S.edit; $("b-panel").classList.toggle("on", S.panel);
+  if (HAS_Z) { if (S.panel && S.W < 760) S.zsheet = false; layoutZones(); resize(); }
+});
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("show"), 2600); }
+function openTab() {
+  const html = SELF_HTML.replace('"embedded": true', '"embedded": false').replace('"embedded":true', '"embedded":false');
+  try {
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    const w = window.open(url, "_blank");
+    if (!w) toast(EMBED ? "The browser blocked the new tab: use the download button under the player." : "The browser refused full screen: use its own full-screen key (F11).");
+  } catch (e) { toast(EMBED ? "The browser refused a new tab: use the download button under the player." : "The browser refused full screen: use its own full-screen key (F11)."); }
+}
+const fsOn = () => document.fullscreenElement || document.webkitFullscreenElement;
+$("b-full").addEventListener("click", () => {
+  if (fsOn()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+  const req = root.requestFullscreen || root.webkitRequestFullscreen;
+  const ok = (document.fullscreenEnabled || document.webkitFullscreenEnabled) && req;
+  if (!ok) { openTab(); return; }
+  try { const p = req.call(root); if (p && p.catch) p.catch(() => openTab()); } catch (e) { openTab(); }
+});
+document.addEventListener("fullscreenchange", () => { $("b-full").innerHTML = fsOn() ? I.unfull : I.full; setTimeout(resize, 60); });
+// taller / shorter: inside the app the player sits in a frame of the page: that frame is resized
+const FRAME = (() => { try { return EMBED ? window.frameElement : null; } catch (e) { return null; } })();
+const H0 = CFG.height || 640;
+if (!EMBED) $("b-tall").style.display = "none";
+$("b-tall").addEventListener("click", () => {
+  S.tall = !S.tall;
+  const h = S.tall ? Math.max(H0 + 300, Math.round(window.screen.height * 0.82)) : H0;
+  $("b-tall").innerHTML = S.tall ? I.short : I.tall; $("b-tall").classList.toggle("on", S.tall);
+  if (FRAME) { FRAME.style.height = h + "px"; FRAME.height = String(h); }
+  root.style.height = h + "px"; setTimeout(resize, 60);
+});
+if (EMBED && !FRAME && !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) $("b-full").innerHTML = I.tab;
+
+/* ------------------------------------------------------------------ pan and zoom: mouse, wheel, finger, keyboard */
+const ptrs = new Map(); let pinch = null, dragFrom = null;
+cv.addEventListener("pointerdown", (ev) => {
+  cv.setPointerCapture(ev.pointerId); ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (ptrs.size === 1) { dragFrom = { x: ev.clientX, y: ev.clientY, cx: S.cx, cy: S.cy }; cv.classList.add("drag"); }
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: S.z }; dragFrom = null; }
+});
+cv.addEventListener("pointermove", (ev) => {
+  if (!ptrs.has(ev.pointerId)) return;
+  ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  const r = cv.getBoundingClientRect();
+  if (pinch && ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    const nz = Math.max(3, Math.min(23, pinch.z + Math.log2(d / (pinch.d || 1))));
+    zoomAt(nz - S.z, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+  } else if (dragFrom) {
+    const s = scaleAt(S.z);
+    if (S.follow && Math.hypot(ev.clientX - dragFrom.x, ev.clientY - dragFrom.y) > 6) setFollow(0);
+    S.cx = dragFrom.cx - (ev.clientX - dragFrom.x) / s; S.cy = dragFrom.cy + (ev.clientY - dragFrom.y) / s; viewChanged(true);
+  }
+});
+const endPtr = (ev) => { ptrs.delete(ev.pointerId); if (ptrs.size < 2) pinch = null; if (!ptrs.size) { dragFrom = null; cv.classList.remove("drag"); } };
+cv.addEventListener("pointerup", endPtr); cv.addEventListener("pointercancel", endPtr);
+cv.addEventListener("wheel", (ev) => {
+  ev.preventDefault(); const r = cv.getBoundingClientRect();
+  const dz = -ev.deltaY * (ev.deltaMode === 1 ? 0.05 : 0.0022);
+  zoomAt(Math.max(-1, Math.min(1, dz)), ev.clientX - r.left, ev.clientY - r.top);
+}, { passive: false });
+/* ------------------------------------------------------------------ edits by hand and the card of a reading
+   The card (a reading under the cursor; on a touch screen the one tapped): in 'Edit points' and whenever the playback
+   is paused. 'Edit points' (the app's replay of a cleaning only, CFG.edit): the whole field, a click marks a kept
+   reading 'remove' and a reading the moisture, speed or yield filter removed 'keep', a click on a mark clears it,
+   Shift + drag (or Box) marks every reading whose strip centre is in the box. 'Reprocess with these edits' sends
+   every mark (combine number, reading index of this payload) to the page that holds the frame; the app turns them
+   into the engine's reading keys, writes the edits file and cleans again. The standalone file shows the marks of a
+   cleaning made with edits, read-only. */
+const ED = P.edit || null;
+const EDIT_ON = !!(CFG.edit && ED && KIND === "clean");
+const EDIT_OK = EDIT_ON && !!ED.ok;
+const MAN = P.manual || null;
+const STEPN = P.step_names || {};
+const AUTOC = P.auto_codes || [];
+const LIM = P.limits || {};
+const STEP_BY_IDX = {}; (P.steps || []).forEach((s) => { STEP_BY_IDX[s.idx] = s.code; });
+const COL_RM = "#C2185B", COL_KP = "#0B63CE", COL_MV = "#E8590C";
+for (const c of C) {
+  const d = c.data, n = c.n;
+  const dq = (k, sc) => { if (!d[k]) return null; const v = decode(d[k], n); for (let i = 0; i < n; i++) v[i] = v[i] < 0 ? NaN : v[i] * sc; return v; };
+  c.yf = dq("yf", 0.1); c.sf = dq("sf", 0.01); c.wl = dq("wl", 0.01);
+  c.e = d.e ? decode(d.e, n) : null;
+}
+const MK = new Map();                  // num * 1e7 + i -> 1 remove, 2 keep
+const keyOf = (c, i) => c.num * 1e7 + i;
+const BASE = new Map();
+for (const c of C) if (c.e) for (let i = 0; i < c.n; i++) { const st = c.e[i] & 3; if (st === 1 || st === 2) BASE.set(keyOf(c, i), st); }
+BASE.forEach((v, k) => MK.set(k, v));
+const MOVED = [];
+for (const c of C) if (c.e) for (let i = 0; i < c.n; i++) if (c.e[i] & 4) MOVED.push([c, i]);
+const HIST = [];
+const E = { on: false, box: false, sent: false, boxFrom: null, pend: null, card: null, cardPinned: false, posted: [] };
+
+function codeOf(c, i) { return (c.f[i] & 2) ? (STEP_BY_IDX[c.f[i] >> 2] || "") : ""; }
+function autoOf(c, i) { return c.e ? (AUTOC[(c.e[i] >> 3) - 1] || "") : codeOf(c, i); }
+function stepName(code) { return STEPN[code] || code; }
+function cutWhy(code) {
+  const p = code.slice(0, 2);
+  if (p === "S0") return "cut by the import range (S0): edits by hand cannot change it";
+  if (p === "S1") return "cut by the clip to the boundary (S1): edits by hand cannot change it";
+  if (p === "S2") return "cut by the swath step (S2, Optimize Swath Widths): edits by hand cannot change it";
+  return "";
+}
+function clickTarget(c, i) {           // what a click does on an unmarked reading: 1 remove, 2 keep, 0 nothing
+  const code = codeOf(c, i);
+  if (!(c.f[i] & 2) || code === "SM") return 1;
+  const p = code.slice(0, 2);
+  return p === "S3" || p === "S4" || p === "S5" ? 2 : 0;
+}
+function stateText(c, i) {
+  const code = codeOf(c, i), st = c.e ? (c.e[i] & 3) : 0, au = autoOf(c, i);
+  const auto = c.e ? ` (the automatic cleaning: ${au ? "removed by " + esc(stepName(au)) : "kept"})` : "";
+  if (st === 1 || code === "SM") return "Removed by hand" + auto;
+  if (st === 2) return "Kept by hand" + auto;
+  if (st === 3) return "Asked in the edits file, not applied: " + esc(cutWhy(code) || stepName(code));
+  if (!(c.f[i] & 2)) return (c.e && (c.e[i] & 4) ? "Kept: came back when the limits moved" : "Kept") + (c.e && (c.e[i] & 4) ? auto : "");
+  return "Removed by " + esc(stepName(code)) + (c.e && (c.e[i] & 4) ? " (its fate moved with the limits" + (au ? ": the automatic cleaning removed it by " + esc(stepName(au)) : ": the automatic cleaning kept it") + ")" : "");
+}
+function pointInQuad(Q, j, x, y) {
+  let ins = false;
+  for (let a = 0, b = 3; a < 4; b = a++) {
+    const xa = Q[j + 2 * a], ya = Q[j + 2 * a + 1], xb = Q[j + 2 * b], yb = Q[j + 2 * b + 1];
+    if ((ya > y) !== (yb > y) && x < (xb - xa) * (y - ya) / (yb - ya) + xa) ins = !ins;
+  }
+  return ins;
+}
+function centreOf(c, i) { const Q = c.Q, j = i * 8; return [(Q[j] + Q[j + 2] + Q[j + 4] + Q[j + 6]) / 4, (Q[j + 1] + Q[j + 3] + Q[j + 5] + Q[j + 7]) / 4]; }
+function toWorld(px, py) { const s = scaleAt(S.z); return [S.cx + (px - S.W / 2) / s, S.cy - (py - S.H / 2) / s]; }
+function hitAt(px, py) {               // the shown reading under a point of the map (css px), else the nearest within 6 px
+  const s = scaleAt(S.z), [wx, wy] = toWorld(px, py), tol = 6 / s;
+  let best = null, bd = Infinity;
+  for (const c of C) {
+    const up = c.idx; if (up < 0) continue;
+    for (let k = 0; k < c.nch; k++) {
+      const a = k * c.CH; if (a > up) break;
+      if (c.bb[k * 4] - tol > wx || c.bb[k * 4 + 2] + tol < wx || c.bb[k * 4 + 1] - tol > wy || c.bb[k * 4 + 3] + tol < wy) continue;
+      const b = Math.min(c.n - 1, (k + 1) * c.CH - 1, up);
+      for (let i = a; i <= b; i++) {
+        const j = i * 8; if (c.Q[j] !== c.Q[j]) continue;
+        const [cx, cy] = centreOf(c, i), dd = Math.hypot(cx - wx, cy - wy);
+        const sc = pointInQuad(c.Q, j, wx, wy) ? dd : (dd <= tol ? 1e9 + dd : Infinity);
+        if (sc < bd) { bd = sc; best = { c, i }; }
+      }
+    }
+  }
+  return best;
+}
+function inBox(x0, y0, x1, y1) {       // the shown readings whose strip centre is in a box of the map (css px)
+  const [ax, ay] = toWorld(Math.min(x0, x1), Math.max(y0, y1)), [bx, by] = toWorld(Math.max(x0, x1), Math.min(y0, y1));
+  const out = [];
+  for (const c of C) {
+    const up = c.idx; if (up < 0) continue;
+    for (let k = 0; k < c.nch; k++) {
+      const a = k * c.CH; if (a > up) break;
+      if (c.bb[k * 4] > bx || c.bb[k * 4 + 2] < ax || c.bb[k * 4 + 1] > by || c.bb[k * 4 + 3] < ay) continue;
+      const b = Math.min(c.n - 1, (k + 1) * c.CH - 1, up);
+      for (let i = a; i <= b; i++) {
+        if (c.Q[i * 8] !== c.Q[i * 8]) continue;
+        const [cx, cy] = centreOf(c, i);
+        if (cx >= ax && cx <= bx && cy >= ay && cy <= by) out.push([c, i]);
+      }
+    }
+  }
+  return out;
+}
+function setMarks(list, what) {        // list of [c, i, value 0/1/2]: one step of the history
+  const ch = [];
+  for (const [c, i, v] of list) {
+    const k = keyOf(c, i), b = MK.get(k) || 0;
+    if (b === v) continue;
+    if (v) MK.set(k, v); else MK.delete(k);
+    ch.push([k, b, v]);
+  }
+  if (ch.length) { HIST.push(ch); E.sent = false; }
+  if (what && ch.length === 0) toast("Nothing to change here");
+  S.dirty = true; buildEditPanel(); buildLegend(); wake();
+  return ch.length;
+}
+function markClick(c, i) {
+  const k = keyOf(c, i);
+  if (MK.has(k)) return setMarks([[c, i, 0]]);
+  const t = clickTarget(c, i);
+  if (!t) { toast("This reading cannot be marked: " + cutWhy(codeOf(c, i))); return 0; }
+  return setMarks([[c, i, t]]);
+}
+function boxApply(list, act) {          // act: "remove" the kept ones, "keep" the removed ones, "clear" the marks
+  const sel = [];
+  for (const [c, i] of list) {
+    const code = codeOf(c, i), kept = !(c.f[i] & 2);
+    if (act === "remove" && (kept || code === "SM")) sel.push([c, i, 1]);
+    else if (act === "keep" && !kept && clickTarget(c, i) === 2) sel.push([c, i, 2]);
+    else if (act === "clear" && MK.has(keyOf(c, i))) sel.push([c, i, 0]);
+  }
+  return setMarks(sel, true);
+}
+function undo() {
+  const ch = HIST.pop(); if (!ch) { toast("Nothing to undo"); return; }
+  for (const [k, b] of ch) { if (b) MK.set(k, b); else MK.delete(k); }
+  E.sent = false; S.dirty = true; buildEditPanel(); buildLegend(); wake();
+}
+function clearMarks() {
+  const ch = []; MK.forEach((v, k) => ch.push([k, v, 0])); if (!ch.length) { toast("No mark to clear"); return; }
+  MK.clear(); HIST.push(ch); E.sent = false; S.dirty = true; buildEditPanel(); buildLegend(); wake();
+}
+function changed() {                   // marks that differ from the edits of the cleaning shown
+  let n = 0; const all = new Set([...MK.keys(), ...BASE.keys()]);
+  all.forEach((k) => { if ((MK.get(k) || 0) !== (BASE.get(k) || 0)) n++; });
+  return n;
+}
+function marksOut() {
+  const rm = [], kp = [];
+  MK.forEach((v, k) => { const num = Math.floor(k / 1e7), i = k - num * 1e7; (v === 1 ? rm : kp).push([num, i]); });
+  const o = (a, b) => a[0] - b[0] || a[1] - b[1]; rm.sort(o); kp.sort(o);
+  return { type: "oced-replay-marks", token: ED ? ED.token : null, remove: rm, keep: kp, changed: changed() };
+}
+function reprocess() {
+  if (!EDIT_OK || E.sent) return;
+  const m = marksOut();
+  if (!m.changed) { toast("The marks are the edits of this cleaning: nothing to reprocess"); return; }
+  E.sent = true; E.posted.push(m);
+  try { window.parent.postMessage(m, "*"); } catch (e) { E.sent = false; toast("The marks could not be sent to the app"); }
+  buildEditPanel();
+}
+function countsBy() {
+  const by = {}; C.forEach((c) => { by[c.num] = [0, 0]; });
+  MK.forEach((v, k) => { const num = Math.floor(k / 1e7); if (by[num]) by[num][v - 1]++; });
+  return by;
+}
+function buildEditPanel() {
+  const el = $("epanel"); if (!el || !EDIT_ON) return;
+  if (!EDIT_OK) { el.innerHTML = `<div class="ph"><span>Edit points</span></div><div class="small">${esc(ED.why || "")}</div>`; return; }
+  const by = countsBy(); let tr = 0, tk = 0;
+  const rows = C.map((c) => { tr += by[c.num][0]; tk += by[c.num][1];
+    return `<tr><td><span class="num" style="background:${c.color}">${c.num}</span> ${esc(c.name)}</td><td>${fmt(by[c.num][0], 0)}</td><td>${fmt(by[c.num][1], 0)}</td></tr>`; }).join("");
+  const ch = changed();
+  el.innerHTML = `<div class="ph"><span>Edit points</span><button class="linkbtn" id="e-x" title="Leave Edit points">Done</button></div>
+    <div class="ehelp">Click a <b>kept</b> reading to remove it, a reading the <b>moisture, speed or yield</b> filter removed to keep it; click a mark to clear it. <b>Shift + drag</b> (or Box) marks many. The import range, the clip and the swath step cannot be changed by hand.</div>
+    <div class="erow"><button class="btn${E.box ? " on" : ""}" id="e-box" title="Draw a box (a touch screen: the next drag)" aria-pressed="${E.box}">${I.box} Box</button>
+      <button class="btn" id="e-undo" title="Undo (Ctrl+Z)"${HIST.length ? "" : " disabled"}>${I.undo} Undo</button>
+      <button class="btn" id="e-clear" title="Clear every mark (the next reprocess then gives the automatic cleaning)"${MK.size ? "" : " disabled"}>Clear marks</button></div>
+    <button class="btn primary" id="e-go"${(ch && !E.sent) ? "" : " disabled"}>${E.sent ? "Reprocessing in the app ..." : "Reprocess with these edits"}</button>
+    <div class="small" style="margin-bottom:6px">${ch ? `${fmt(ch, 0)} mark(s) differ from this cleaning.` : (MK.size ? "These marks are the edits of this cleaning." : "No mark yet.")}</div>
+    <table class="etab"><thead><tr><th>Combine</th><th><span class="sym">${SYM.rm}</span>Remove</th><th><span class="sym">${SYM.kp}</span>Keep</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td>All</td><td>${fmt(tr, 0)}</td><td>${fmt(tk, 0)}</td></tr></tfoot></table>
+    ${MAN && MAN.summary ? `<div class="small" style="margin-top:6px">This cleaning: ${esc(manLine())}</div>` : ""}`;
+  $("e-x").addEventListener("click", () => setEdit(false));
+  $("e-box").addEventListener("click", () => { E.box = !E.box; buildEditPanel(); root.classList.toggle("boxing", E.box); });
+  $("e-undo").addEventListener("click", undo);
+  $("e-clear").addEventListener("click", clearMarks);
+  $("e-go").addEventListener("click", reprocess);
+}
+function manLine() {
+  if (!MAN) return "";
+  const a = ((MAN.automatic || {}).ALL) || null, e = ((MAN.edited || {}).ALL) || null;
+  let s = `${fmt(MAN.removed_by_hand, 0)} removed by hand, ${fmt(MAN.kept_by_hand, 0)} kept by hand`;
+  if (MAN.moved) s += `, ${fmt(MAN.moved, 0)} other reading(s) changed fate with the limits`;
+  if (e && a) s += `. With the edits ${fmt(e.points, 0)} readings, ${fmt(e.yield_bu_ac, 2)} bu/ac; automatic ${fmt(a.points, 0)} readings, ${fmt(a.yield_bu_ac, 2)} bu/ac`;
+  return s + ".";
+}
+function setEdit(on) {
+  if (!EDIT_ON) return;
+  if (on && !EDIT_OK) { toast(ED.why || "This replay cannot be edited"); return; }
+  E.on = !!on; S.edit = E.on;
+  root.classList.toggle("editing", E.on); setChip("b-edit", E.on);
+  if (E.on) { S.playing = false; setPlayIcon(); setFollow(0); seek(T_END); S.groundDirty = true; }
+  else { E.box = false; root.classList.remove("boxing"); hideBoxMenu(); }
+  $("epanel").hidden = !E.on;
+  $("panel").hidden = E.on || !S.panel;
+  if (HAS_Z) { $("zpanel").dataset.edit = E.on ? "1" : ""; layoutZones(); }
+  buildEditPanel(); buildLegend(); resize();
+}
+/* the box: Shift + drag with a mouse, or Box then a drag */
+function showBox(x0, y0, x1, y1) { const b = $("boxsel"); b.hidden = false; b.style.left = Math.min(x0, x1) + "px"; b.style.top = Math.min(y0, y1) + "px"; b.style.width = Math.abs(x1 - x0) + "px"; b.style.height = Math.abs(y1 - y0) + "px"; }
+function hideBoxMenu() { $("boxsel").hidden = true; $("boxmenu").hidden = true; E.pend = null; }
+function boxMenu(x0, y0, x1, y1) {
+  const list = inBox(x0, y0, x1, y1);
+  let nr = 0, nk = 0, nc = 0;
+  for (const [c, i] of list) { const kept = !(c.f[i] & 2), code = codeOf(c, i); if (kept || code === "SM") nr++; else if (clickTarget(c, i) === 2) nk++; if (MK.has(keyOf(c, i))) nc++; }
+  E.pend = list;
+  const m = $("boxmenu");
+  m.innerHTML = `<div class="bmt">${fmt(list.length, 0)} reading(s) in the box</div>
+    <button class="btn" data-a="remove"${nr ? "" : " disabled"}><span class="sym">${SYM.rm}</span>Remove the kept ones (${fmt(nr, 0)})</button>
+    <button class="btn" data-a="keep"${nk ? "" : " disabled"}><span class="sym">${SYM.kp}</span>Keep the removed ones (${fmt(nk, 0)})</button>
+    <button class="btn" data-a="clear"${nc ? "" : " disabled"}>Clear marks (${fmt(nc, 0)})</button>
+    <button class="linkbtn" data-a="cancel">Cancel</button>`;
+  m.hidden = false;
+  const r = root.getBoundingClientRect(), w = 250, h = 170;
+  m.style.left = Math.max(8, Math.min(S.W - w - 8, Math.max(x0, x1) + 8)) + "px";
+  m.style.top = Math.max(8, Math.min(S.H - h - 8, Math.min(y0, y1))) + "px";
+  m.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    const a = b.dataset.a, L_ = E.pend; hideBoxMenu();
+    if (a !== "cancel" && L_) boxApply(L_, a);
+    if (E.box && !matchMedia("(pointer: fine)").matches) { E.box = false; root.classList.remove("boxing"); buildEditPanel(); }
+  }));
+}
+/* the card of a reading */
+const ORD = (k) => { const m = /^S(\d)([a-z]?)$/.exec(k || ""); return m ? +m[1] + (m[2] ? (m[2].charCodeAt(0) - 96) / 10 : 0) : 0; };
+function limKeys(c, attr) { const L_ = LIM[c.id]; return L_ ? Object.keys(L_).filter((k) => String(L_[k][2] || "").includes(attr)).sort((a, b) => ORD(a) - ORD(b)) : []; }
+function limTxt(c, attr) {
+  const parts = limKeys(c, attr).map((k) => { const l = LIM[c.id][k]; return `${fmt(l[0], 2)} – ${fmt(l[1], 2)} (${esc(k)})`; });
+  return parts.length ? `<span class="lim">limits ${parts.join(", ")}</span>` : "";
+}
+function outTxt(c, i, v, attr) {        // outside a limit of a filter this reading reached (kept: all of them)
+  if (v !== v) return "";
+  const code = codeOf(c, i), oc = ORD(code);
+  for (const k of limKeys(c, attr)) {
+    if (code && !(oc >= 3 && ORD(k) <= oc)) continue;
+    const l = LIM[c.id][k];
+    if (v < l[0]) return ` <b class="out">▼ below ${esc(k)}</b>`;
+    if (v > l[1]) return ` <b class="out">▲ above ${esc(k)}</b>`;
+  }
+  return "";
+}
+function cardHtml(c, i) {
+  const cp = clockParts(c.t[i]), ft = (m) => m / 0.3048;
+  const yv = c.yf ? c.yf[i] : c.y[i], sv = c.sf ? c.sf[i] : c.s[i];
+  const rows = [];
+  rows.push(`<div class="ch"><span class="num" style="background:${c.color}">${c.num}</span><b>${esc(c.name)}</b><span class="ct">${HAS_CLOCK ? esc(cp.date) + " · " : ""}${esc(cp.time)}</span></div>`);
+  const yl = KIND === "clean" ? limTxt(c, "yield") : "", ml = KIND === "clean" ? limTxt(c, "moisture") : "", sl = KIND === "clean" ? limTxt(c, "speed") : "";
+  rows.push(`<div class="cr"><span>Dry yield</span><span><b>${fmt(yv, 1)}</b> bu/ac${c.yf && Math.abs(c.yf[i] - c.y[i]) > 0.05 ? ` <i>(as filtered; logged ${fmt(c.y[i], 1)})</i>` : ""}${KIND === "clean" ? outTxt(c, i, yv, "yield") : ""} ${yl}</span></div>`);
+  rows.push(`<div class="cr"><span>Moisture</span><span><b>${fmt(c.m[i], 2)}</b> %${KIND === "clean" ? outTxt(c, i, c.m[i], "moisture") : ""} ${ml}</span></div>`);
+  rows.push(`<div class="cr"><span>Speed</span><span><b>${fmt(sv, 2)}</b> mph${c.sf && Math.abs(c.sf[i] - c.s[i]) > 0.005 ? ` <i>(after the swath step; logged ${fmt(c.s[i], 2)})</i>` : ""}${KIND === "clean" ? outTxt(c, i, sv, "speed") : ""} ${sl}</span></div>`);
+  rows.push(`<div class="cr"><span>Swath width</span><span><b>${fmt(ft(c.w[i]), 1)}</b> ft${c.wl && Math.abs(c.wl[i] - c.w[i]) > 0.005 ? ` <i>(logged ${fmt(ft(c.wl[i]), 1)})</i>` : ""} · distance <b>${fmt(ft(c.dist[i]), 1)}</b> ft</span></div>`);
+  if (HAS_Z && c.zb) { const z = zoneOf(c.zb[i] >> 1); rows.push(`<div class="cr"><span>Zone</span><span>${zSwatch(z)} ${esc(z.label)}${c.zb[i] & 1 ? " (on a border)" : ""}</span></div>`); }
+  if (KIND === "clean") {
+    rows.push(`<div class="cr"><span>State</span><span>${stateText(c, i)}</span></div>`);
+    if (EDIT_OK && S.edit) {
+      const v = MK.get(keyOf(c, i)) || 0, b = BASE.get(keyOf(c, i)) || 0, t = clickTarget(c, i);
+      const mk = v === 1 ? `<span class="sym">${SYM.rm}</span>marked remove` : v === 2 ? `<span class="sym">${SYM.kp}</span>marked keep` : "no mark";
+      const nx = v ? "click: clear the mark" : t === 1 ? "click: remove it by hand" : t === 2 ? "click: keep it by hand" : esc(cutWhy(codeOf(c, i)));
+      rows.push(`<div class="cr cm"><span>Mark</span><span>${mk}${v !== b ? " (not yet reprocessed)" : ""} · <i>${nx}</i></span></div>`);
+    }
+  }
+  return rows.join("");
+}
+function showCard(hit, px, py) {
+  const el = $("rp-card");
+  if (!hit) { el.hidden = true; E.card = null; return; }
+  E.card = hit; el.innerHTML = cardHtml(hit.c, hit.i); el.hidden = false;
+  const w = el.offsetWidth, h = el.offsetHeight;
+  let x = px + 16, y = py + 16;
+  if (x + w > S.W - 8) x = Math.max(8, px - w - 16);
+  if (y + h > S.H - 8) y = Math.max(8, py - h - 16);
+  el.style.left = x + "px"; el.style.top = y + "px";
+}
+const cardOn = () => S.edit || !S.playing;
+/* the marks on the map (removed by hand: a cross; kept by hand: a ring; another reading whose fate moved: a diamond) */
+const SYM = {
+  rm: `<svg width="13" height="13" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" stroke="#fff" stroke-width="4.2" stroke-linecap="round"/><path d="M3 3l8 8M11 3l-8 8" stroke="${COL_RM}" stroke-width="2.2" stroke-linecap="round"/></svg>`,
+  kp: `<svg width="13" height="13" viewBox="0 0 14 14"><circle cx="7" cy="7" r="4.6" fill="none" stroke="#fff" stroke-width="4"/><circle cx="7" cy="7" r="4.6" fill="none" stroke="${COL_KP}" stroke-width="2.1"/></svg>`,
+  mv: `<svg width="13" height="13" viewBox="0 0 14 14"><path d="M7 1.8L12.2 7 7 12.2 1.8 7z" fill="none" stroke="#fff" stroke-width="3.6"/><path d="M7 1.8L12.2 7 7 12.2 1.8 7z" fill="none" stroke="${COL_MV}" stroke-width="1.8"/></svg>`,
+};
+function drawMarks(s) {
+  if (!MK.size && !MOVED.length && !E.card) return;
+  const ox = S.W / 2 - S.cx * s, oy = S.H / 2 + S.cy * s;
+  const pts = [[], [], []];
+  const push = (c, i, k) => { if (i > c.idx) return; const j = i * 8; if (c.Q[j] !== c.Q[j]) return; const [x, y] = centreOf(c, i); const px = x * s + ox, py = oy - y * s; if (px < -10 || py < -10 || px > S.W + 10 || py > S.H + 10) return; pts[k].push(px, py, c.w[i] * K_GROUND * s); };
+  const byNum = {}; C.forEach((c) => { byNum[c.num] = c; });
+  MK.forEach((v, k) => { const num = Math.floor(k / 1e7); const c = byNum[num]; if (c) push(c, k - num * 1e7, v === 1 ? 0 : 1); });
+  if (KIND === "clean") for (const [c, i] of MOVED) if (!MK.has(keyOf(c, i))) push(c, i, 2);
+  const many = pts[0].length + pts[1].length + pts[2].length > 45000;
+  ctx.lineCap = "round";
+  for (const k of [2, 1, 0]) {
+    const a = pts[k]; if (!a.length) continue;
+    const col = k === 0 ? COL_RM : k === 1 ? COL_KP : COL_MV;
+    for (const pass of [0, 1]) {
+      ctx.beginPath();
+      for (let q = 0; q < a.length; q += 3) {
+        const x = a[q], y = a[q + 1], r = many ? 1.6 : Math.max(2.6, Math.min(6.5, a[q + 2] * 0.32));
+        if (k === 0) { ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); }
+        else if (k === 1) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); }
+        else { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); }
+      }
+      ctx.strokeStyle = pass ? col : "rgba(255,255,255,0.95)"; ctx.lineWidth = pass ? (k === 2 ? 1.5 : 2) : (k === 2 ? 3.4 : 4.2);
+      ctx.stroke();
+    }
+  }
+  if (E.card) {                          // the reading of the card, outlined
+    const c = E.card.c, i = E.card.i, j = i * 8;
+    if (i <= c.idx && c.Q[j] === c.Q[j]) {
+      ctx.beginPath();
+      for (let q = 0; q < 4; q++) { const x = c.Q[j + 2 * q] * s + ox, y = oy - c.Q[j + 2 * q + 1] * s; if (q) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+      ctx.closePath(); ctx.lineWidth = 3.2; ctx.strokeStyle = "#fff"; ctx.stroke(); ctx.lineWidth = 1.6; ctx.strokeStyle = "#111827"; ctx.stroke();
+    }
+  }
+}
+function editLegend() {
+  if (KIND !== "clean") return "";
+  let nr = 0, nk = 0; MK.forEach((v) => { if (v === 1) nr++; else nk++; });
+  const mv = MOVED.filter(([c, i]) => !MK.has(keyOf(c, i))).length;
+  if (!nr && !nk && !mv && !S.edit) return "";
+  return `<div class="lchips eds" style="margin-top:7px"><div class="lchip"><span class="sym">${SYM.rm}</span>Removed by hand<em>${fmt(nr, 0)}</em></div>` +
+    `<div class="lchip"><span class="sym">${SYM.kp}</span>Kept by hand<em>${fmt(nk, 0)}</em></div>` +
+    (mv ? `<div class="lchip" title="Readings in neither list whose fate differs from the automatic cleaning: the limits moved"><span class="sym">${SYM.mv}</span>Fate moved with the limits<em>${fmt(mv, 0)}</em></div>` : "") + "</div>";
+}
+/* pointer: a tap marks (edit) or shows the card; hover shows the card; Shift + drag or Box draws a box */
+let tap = null, hoverRaf = 0, hoverAt = null;
+cv.addEventListener("pointerdown", (ev) => {
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  tap = { x, y, t: performance.now(), id: ev.pointerId, multi: ptrs.size > 1 };
+  if (S.edit && EDIT_OK && (ev.shiftKey || E.box) && ptrs.size <= 1) {
+    E.boxFrom = { x, y }; dragFrom = null; cv.classList.remove("drag"); hideBoxMenu(); E.boxFrom.on = true; showBox(x, y, x, y);
+  }
+});
+cv.addEventListener("pointermove", (ev) => {
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (E.boxFrom && E.boxFrom.on) { dragFrom = null; showBox(E.boxFrom.x, E.boxFrom.y, x, y); return; }
+  if (ev.pointerType === "mouse" && !ptrs.size && cardOn()) {
+    hoverAt = [x, y];
+    if (!hoverRaf) hoverRaf = requestAnimationFrame(() => { hoverRaf = 0; if (!hoverAt || !cardOn()) return; const h = hitAt(hoverAt[0], hoverAt[1]); const same = h && E.card && h.c === E.card.c && h.i === E.card.i; if (!same) { showCard(h, hoverAt[0], hoverAt[1]); S.dirty = true; wake(); } });
+  }
+});
+cv.addEventListener("pointerleave", () => { hoverAt = null; if (E.card && !E.cardPinned) { showCard(null); S.dirty = true; wake(); } });
+cv.addEventListener("pointerup", (ev) => {
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (E.boxFrom && E.boxFrom.on) {
+    const b = E.boxFrom; E.boxFrom = null;
+    if (Math.hypot(x - b.x, y - b.y) < 6) { hideBoxMenu(); return; }
+    boxMenu(b.x, b.y, x, y); return;
+  }
+  const t = tap; tap = null;
+  if (!t || t.multi || t.id !== ev.pointerId || Math.hypot(x - t.x, y - t.y) > 6 || performance.now() - t.t > 700) return;
+  if (!cardOn()) return;
+  const h = hitAt(x, y);
+  if (S.edit && EDIT_OK && h) markClick(h.c, h.i);
+  E.cardPinned = ev.pointerType !== "mouse" && !!h;
+  showCard(h, x, y); S.dirty = true; wake();
+});
+function editKey(ev) {                // Escape: the box menu, the box; Ctrl+Z: undo (edit mode)
+  if (!S.edit) return false;
+  if (ev.key === "Escape") { if (!$("boxmenu").hidden) hideBoxMenu(); else if (E.box) { E.box = false; root.classList.remove("boxing"); buildEditPanel(); } else showCard(null); return true; }
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === "z" || ev.key === "Z")) { ev.preventDefault(); undo(); return true; }
+  return false;
+}
+if (EDIT_ON) {
+  $("b-edit").hidden = false;
+  if (!EDIT_OK) { $("b-edit").classList.add("off"); $("b-edit").title = ED.why || "This replay cannot be edited"; }
+  $("b-edit").addEventListener("click", () => setEdit(!E.on));
+}
+
+cv.addEventListener("dblclick", (ev) => { if (S.edit) return; const r = cv.getBoundingClientRect(); const s0 = scaleAt(S.z);
+  const wx = S.cx + (ev.clientX - r.left - S.W / 2) / s0, wy = S.cy - (ev.clientY - r.top - S.H / 2) / s0;
+  flyTo(S.cx + (wx - S.cx) * 0.5, S.cy + (wy - S.cy) * 0.5, Math.min(23, S.z + 1), 300); });
+window.addEventListener("keydown", (ev) => {
+  if (ev.target && /input|select|textarea/i.test(ev.target.tagName)) return;
+  if (editKey(ev)) return;
+  const k = ev.key;
+  if (k === "Enter" && ev.target && ev.target.tagName === "BUTTON") return;   // Enter: the focused button acts
+  if (k === "Escape" && HAS_Z && !$("rp-zcard").hidden) { closeZoneCard(); return; }
+  if (k === " ") { ev.preventDefault(); if (!ev.repeat) togglePlay(); }
+  else if (k === "ArrowLeft") { ev.preventDefault(); step(-1); }
+  else if (k === "ArrowRight") { ev.preventDefault(); step(1); }
+  else if (k === "+" || k === "=") zoomStep(1);
+  else if (k === "-" || k === "_") zoomStep(-1);
+  else if (k === "0") { setFollow(0); fit(true); }
+  else if (k === "f" || k === "F") $("b-full").click();
+  else if (/^[1-9]$/.test(k) && +k <= C.length) setFollow(S.follow === +k ? 0 : +k);
+});
+
+/* ------------------------------------------------------------------ size */
+function resize() {
+  const r = root.getBoundingClientRect();
+  S.W = Math.max(1, Math.round(r.width)); S.H = Math.max(1, Math.round(r.height));
+  cv.width = Math.round(S.W * DPR); cv.height = Math.round(S.H * DPR);
+  for (const l of Object.values(L)) l.ok = false;
+  const bar = root.querySelector(".rp-bar").getBoundingClientRect();
+  const above = r.bottom - bar.top;
+  $("attr").style.bottom = (above + 6) + "px";
+  $("legend").style.bottom = (above + 10) + "px";
+  // the panels on the right end above the control bar, which wraps onto two rows on a narrower screen
+  if (S.W >= 760) $("panel").style.maxHeight = Math.max(120, bar.top - r.top - 14 - 10) + "px"; else $("panel").style.maxHeight = "";
+  const sheetOpen = HAS_Z && S.W < 760 && S.zsheet;      // the open zones sheet on a phone takes the legend's place
+  $("legend").style.visibility = sheetOpen ? "hidden" : "";
+  const ep = $("epanel");                                 // Edit points on a phone: the panel right above the bar
+  if (ep && !ep.hidden && S.W < 760) { ep.style.bottom = (above + 8) + "px"; $("legend").style.visibility = "hidden"; }
+  else if (ep) ep.style.bottom = "";
+  const lg = $("legend").getBoundingClientRect(), lgH = sheetOpen ? 6 : lg.height;   // open: just above the image credit
+  let scaleAt_ = above + 10 + lg.height + 14;
+  if (HAS_Z) {                     // the zones panel: a sheet above the legend on a phone, under the title on a medium screen
+    layoutZones();
+    const zp = $("zpanel");
+    zp.style.bottom = ""; zp.style.top = ""; zp.style.maxHeight = "";
+    if (S.W < 760) {
+      zp.style.bottom = (above + 10 + lgH + 8) + "px";
+      const tools = root.querySelector(".rp-tools").getBoundingClientRect();
+      zp.style.maxHeight = Math.max(120, S.H - (above + 10 + lgH + 8) - (tools.bottom - r.top) - 10) + "px";
+      scaleAt_ = above + 10 + lgH + 8 + zp.getBoundingClientRect().height + 8;
+    } else {
+      zp.style.maxHeight = Math.max(120, bar.top - r.top - 14 - 10) + "px";
+    }
+  }
+  // the image credit: left of a panel that reaches down to the bar (a wide screen), so the panel does not cover it
+  let ar = 14;
+  if (S.W >= 760) for (const id of ["panel", "zpanel"]) {
+    const e = $(id); if (!e || e.hidden) continue;
+    const b = e.getBoundingClientRect(); if (b.height && b.bottom > bar.top - 34) ar = Math.max(ar, r.right - b.left + 10);
+  }
+  $("attr").style.right = ar + "px";
+  $("scale").style.bottom = scaleAt_ + "px";
+  if (HAS_Z) $("scale").style.visibility = S.W < 760 && S.zsheet ? "hidden" : "";
+  S.dirty = true; wake();
+}
+window.addEventListener("resize", () => { clearTimeout(resize.h); resize.h = setTimeout(resize, 80); });
+
+/* ------------------------------------------------------------------ start: the URL hash sets the state */
+function readHash() {
+  const h = {}; (location.hash || "").replace(/^#/, "").split("&").forEach((kv) => { if (!kv) return; const [k, v] = kv.split("="); h[decodeURIComponent(k)] = decodeURIComponent(v || ""); });
+  return h;
+}
+$("title").textContent = P.title; $("title").title = P.file;
+$("kicker").textContent = KIND === "clean" ? "Harvest replay · cleaning result" : "Harvest replay · readings as imported";
+$("zone").textContent = HAS_CLOCK ? "Clock: " + P.basis.zone : "No clock in the file";
+$("note").textContent = P.basis.kind === "clock" ? "" : P.basis.note;
+buildPanel(); buildSegs(); buildZonePanel();
+const H = readHash();
+const narrow = window.innerWidth < 760;
+S.panel = H.panel !== undefined ? H.panel !== "0" : !narrow;
+$("panel").hidden = !S.panel; $("b-panel").classList.toggle("on", S.panel);
+S.skipIdle = H.idle !== undefined ? H.idle !== "0" : true; setChip("t-idle", S.skipIdle); buildSegs();
+S.ahead = H.ahead === "1"; setChip("t-ahead", S.ahead);
+setSpeed(H.speed ? (H.speed === "min" ? "min" : +H.speed) : 60);
+if (HAS_Z) {
+  S.zborders = H.zb === "1"; setChip("t-zb", S.zborders); S.zborder = H.zbd === "1"; setChip("t-zbd", S.zborder);
+  S.zsheet = H.zs === "1"; S.ptab = H.ptab === "combines" ? "combines" : "zones"; setView(H.view === "yield" ? "yield" : "zones");
+}
+setMode(H.c && MODES.find((m) => m[0] === H.c) ? H.c : "yield");
+resize(); fit(false);
+if (H.z) { S.z = Math.max(3, Math.min(23, +H.z)); }
+if (H.lat && H.lon) { S.cx = mx(+H.lon); S.cy = my(+H.lat); }
+if (H.at !== undefined) seek(+H.at); else if (H.t !== undefined) seek(uToT(Math.max(0, Math.min(1, +H.t)))); else seek(0);
+if (H.f && +H.f > 0 && +H.f <= C.length) {
+  S.follow = +H.f; $("follow").value = H.f; C.forEach((c) => $("cmb" + c.num).classList.toggle("followed", c.num === S.follow));
+  const m = machineState(C[S.follow - 1], S.t);
+  if (m.show) { if (!H.z) S.z = 18.6; const [x, y] = followTarget(m); S.cx = x; S.cy = y; }
+}
+S.playing = H.play === "1"; setPlayIcon();
+if (S.playing && H.stop) {          // #play=1&stop=2: play for 2 s, then hold that moment as it is (for pictures)
+  setTimeout(() => { S.playing = false; S.frozen = true; setPlayIcon(); S.dirty = true; wake(); }, +H.stop * 1000);
+}
+if (H.bench) {
+  try { bench(+H.bench || 300, H.t !== undefined ? +H.t : 0.05, H.f ? +H.f : 0); }
+  catch (e) { S.playing = false; S.benched = true; $("rp-stats").textContent = "bench error: " + e.message + " | " + (e.stack || ""); $("rp-stats").style.display = "block"; }
+}
+if (HAS_Z && H.card === "1") openZoneCard();
+if (HAS_Z && H.zcheck) zoneCheck();
+if (H.gallery) { S.gallery = true; S.galleryAnim = H.anim !== "0"; root.classList.add("gallery"); }
+S.dirty = true; wake();
+
+/* a measured run for the tests and the report: n frames at 1200x (rendering only, no waiting) */
+function bench(n, u, follow) {
+  const sp = S.speed; S.speed = 1200; S.playing = true; S.bench = true; resize(); fit(false); seek(uToT(u));
+  if (follow) { S.follow = follow; S.z = 18.6; }
+  const tStart = performance.now(); let worst = 0, sum = 0; const per = [];
+  for (let k = 0; k < n; k++) { const a = performance.now(); lastFrame = a - 1000 / 60; raf = 0; frame(a); const ms = performance.now() - a; per.push(ms); sum += ms; worst = Math.max(worst, ms); }
+  cancelAnimationFrame(raf); raf = 0; chaff.length = 0;
+  per.sort((a, b) => a - b);
+  const r0 = performance.now(); S.groundDirty = true; paintGround(); const full = performance.now() - r0;
+  $("rp-stats").textContent = JSON.stringify({ bench: n, readings: stats.n, mean_ms: +(sum / n).toFixed(2), p50_ms: +per[Math.floor(n / 2)].toFixed(2),
+    p95_ms: +per[Math.floor(n * 0.95)].toFixed(2), max_ms: +worst.toFixed(2), full_ground_repaint_ms: +full.toFixed(1), total_ms: +(performance.now() - tStart).toFixed(0),
+    from_u: u, played_to: clockParts(S.t).time, follow: follow || 0, W: S.W, H: S.H, dpr: DPR,
+    painted: C.reduce((a, c) => a + c.idx + 1, 0) });
+  $("rp-stats").style.display = "block"; S.benched = true; console.log("BENCH end", $("rp-stats").textContent);
+  S.speed = sp; S.playing = false; setPlayIcon();
+}
+/* the running numbers of the management zones checked in the browser (#zcheck=1): after seeks backwards and forwards
+   each zone's running sums are compared with a sum over every reading reached; then the timeline is played to the end
+   at several speeds, 'skip idle time' on and off, and the end compared with the final statistics computed in Python */
+function zoneCheck() {
+  const brute = () => {
+    const out = []; for (let k = 0; k <= ZK; k++) out.push({ n: 0, A: 0, B: 0 });
+    C.forEach((c) => {
+      if (!c.zb) return;
+      for (let i = 0; i <= c.idx; i++) {
+        if ((c.f[i] & 2) || ((c.zb[i] & 1) && !S.zborder)) continue;
+        const g = c.zg[c.zb[i]], o = out[c.zb[i] >> 1], y = c.y[i];          // the same scale as the running sums
+        o.n++; o.A += c.A[i] * g.kA; if (y === y) o.B += y * c.A[i] * g.kB;
+      }
+    });
+    return out;
+  };
+  const rel = (a, b) => Math.abs(a - b) / Math.max(1e-12, Math.abs(b));
+  const res = { seeks: 0, seek_max_rel_A: 0, seek_max_rel_B: 0, seek_max_dn: 0, seek_backwards: 0 };
+  let u = 0.37, prevT = 0;
+  for (let j = 0; j < 40; j++) {
+    u = (u * 7.31 + 0.137) % 1; seek(uToT(j % 5 === 4 ? 0 : u));
+    if (S.t < prevT) res.seek_backwards++;
+    prevT = S.t;
+    S.zborder = j % 2 === 1;
+    const R = zoneRun(S.zborder), Bf = brute();
+    for (let k = 0; k <= ZK; k++) {
+      if (Bf[k].A > 0) res.seek_max_rel_A = Math.max(res.seek_max_rel_A, rel(R[k].A, Bf[k].A));
+      if (Bf[k].B > 0) res.seek_max_rel_B = Math.max(res.seek_max_rel_B, rel(R[k].B, Bf[k].B));
+      if (P.thin === 1) res.seek_max_dn = Math.max(res.seek_max_dn, Math.abs(R[k].n - Bf[k].n));
+    }
+    res.seeks++;
+  }
+  // played to the end through the frames, at several speeds, 'skip idle time' both ways
+  const plays = [];
+  for (const [sp, skip] of [[1200, true], ["min", false], [300, true]]) {
+    S.speed = sp; S.skipIdle = skip; buildSegs(); seek(uToT(0.2)); S.playing = true; S.bench = true;
+    let guard = 0;
+    while (S.playing && guard++ < 400000) { const a = performance.now(); lastFrame = a - 250; raf = 0; frame(a); }
+    cancelAnimationFrame(raf); raf = 0; chaff.length = 0;
+    plays.push({ speed: sp, skip_idle: skip, frames: guard, at_end: S.t >= T_END - 1e-6, every_reading: C.every((c) => c.idx === c.n - 1) });
+  }
+  const fin = {};
+  for (const ver of ["interior", "all"]) {
+    const R = zoneRun(ver === "all"), F = ZM.stats[ver].zones;
+    let mA = 0, mB = 0, mY = 0, mM = 0, mS = 0, mN = 0, shown = 0;
+    for (let k = 0; k <= ZK; k++) {
+      const f = F[k]; if (!f) continue;
+      mN = Math.max(mN, Math.abs(R[k].n - f.n));
+      if (f.acres > 0) mA = Math.max(mA, rel(R[k].A, f.acres));
+      if (f.bu > 0) mB = Math.max(mB, rel(R[k].B, f.bu));
+      if (f.yield !== null) { mY = Math.max(mY, rel(R[k].yield, f.yield)); if (fmt(R[k].yield, 1) !== fmt(f.yield, 1)) shown++; }
+      if (f.mean !== null) mM = Math.max(mM, rel(R[k].mean, f.mean));
+      if (f.sd !== null && f.sd > 0) mS = Math.max(mS, rel(R[k].sd, f.sd));
+    }
+    fin[ver] = { max_rel_acres: mA, max_rel_bu: mB, max_rel_yield: mY, max_rel_mean: mM, max_rel_sd: mS,
+      max_abs_readings: mN, shown_yields_differing: shown };
+  }
+  S.zborder = false; S.bench = false;
+  const out = Object.assign({ zcheck: true, zones: ZK, combines: C.length, thin: P.thin }, res, { plays, end: fin });
+  $("rp-stats").textContent = JSON.stringify(out); $("rp-stats").style.display = "block"; S.benched = true;
+  console.log("ZCHECK", JSON.stringify(out));
+}
+
+window.__replay = { S, C, P, stats, seek, setMode, setFollow, fit, bench, setView, zoneRun, openZoneCard, zoomStep, togglePlay,
+  edit: { set: setEdit, click: (num, i) => markClick(C[num - 1], i), box: (x0, y0, x1, y1) => inBox(x0, y0, x1, y1), apply: boxApply, menu: boxMenu,
+    marks: marksOut, undo, clear: clearMarks, reprocess, hit: hitAt, card: (num, i) => cardHtml(C[num - 1], i),
+    show: showCard, posted: E.posted, on: () => E.on, ok: EDIT_OK, centre: (num, i) => { const c = C[num - 1], [x, y] = centreOf(c, i), sc = scaleAt(S.z); return [(x - S.cx) * sc + S.W / 2, (S.cy - y) * sc + S.H / 2]; } },
+  zoomTarget: () => (fly ? fly.b.z : S.z),
+  zoneCheck: HAS_Z ? zoneCheck : null };
+})();
+</script>
+</body>
+</html>

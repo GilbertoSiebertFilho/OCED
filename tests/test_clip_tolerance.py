@@ -125,7 +125,8 @@ def test_the_app_pre_step_cuts_at_the_s1_tolerance_of_the_settings(tmp_path):
     ns = {"os": os, "er": er, "sms": sms, "ss": types.SimpleNamespace(grower={}, datasets={}),
           "combine_settings": lambda tag: {"on": False}, "boundary_of": lambda tag: {"path": str(bnd)},
           "grower_ticket": lambda G: None, "import_record_of": lambda tag: None,
-          "import_min_yield": lambda tag: (None, False), "yields_converted": lambda IM: False}
+          "import_min_yield": lambda tag: (None, False), "yields_converted": lambda IM: False,
+          "edits_path": lambda tag: None}                 # no edits file (readings removed / kept by hand)
     exec(compile(ast.Module(fn, []), app, "exec"), ns)
     so = ns["settings_of"]
     assert so("T", {"clip_tolerance_m": 0.05})["aoi"]["buffer_m"] == 0.05

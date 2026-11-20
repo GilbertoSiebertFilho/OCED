@@ -92,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.3"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.3.4"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -1116,6 +1116,8 @@ def difm_note(R: dict) -> str:
     col, reason = recommended_yield_column(R)
     s = (f"The clean shapefile is {os.path.basename(R['files']['difm_ready_zip'])}; the yield to map is "
          f"{col} ({reason}). For the DIFM platform use the app's step 4 'Shapefile for DIFM' (the layout DIFM reads)")
+    if R.get("manual_edits"):
+        s += ". " + yield_clean.manual_mod.summary_text(R)
     if R.get("level_column_for_difm") and leveled_column(R) is None:
         s += (f"; to work on the scale-ticket level map {R['level_column_for_difm']} instead (level factor "
               f"{level_factor_text(R['level'])})")
@@ -1840,6 +1842,8 @@ def main(argv=None) -> int:
                          "(--no-sms-import; default 5; 0 = no check on the yield). With the import on (the default), "
                          "S0 takes the import's own minimum (--min-yield), which already left out every reading below "
                          "it: a different value here is not used and a warning names the minimum in force")
+    ap.add_argument("--manual-edits", default=None, metavar="FILE.json",
+                    help="SMS 3-sigma: readings removed or kept by hand (an edits file, engine/clean/manual_edits.py)")
     ap.add_argument("--no-sms-import", action="store_true",
                     help="clean the file as it is, without the import as SMS (engine/sms_import.py) the app and this "
                          "command run by default")
@@ -1904,6 +1908,8 @@ def _count(n) -> str:
 
 
 def _cli(a) -> int:
+    if a.manual_edits:                          # a bad edits file (a key in both lists ...) stops before the decode
+        yield_clean.manual_mod.read_edits(a.manual_edits)
     work = os.path.abspath(a.out)
     for sub in ("input", "decoded", "output"):
         os.makedirs(os.path.join(work, sub), exist_ok=True)
@@ -2132,6 +2138,8 @@ def _cli(a) -> int:
         settings["sms3sigma"] = dict(settings.get("sms3sigma") or {}, swath_scope=a.sms_swath_scope)
     if a.sms_swath_bias:
         settings["sms3sigma"] = dict(settings.get("sms3sigma") or {}, swath_bias=a.sms_swath_bias)
+    if a.manual_edits:
+        settings["manual_edits"] = os.path.abspath(a.manual_edits)
     # as the app: the import's weight, moisture and minimum, and the SMS clip of the field of interest
     settings = sms_clean_defaults(settings, imp_rec)
     out = free_output_dir(work)
@@ -2147,6 +2155,8 @@ def _cli(a) -> int:
     if dec:
         _print(f"  decoded points   {dec['zip']}")
     _print(f"  points           {R['n_in']:,} in -> {R['n_kept']:,} kept ({R['removed_pct']:.2f} % removed)")
+    if R.get("manual_edits"):
+        _print(f"  manual edits     {yield_clean.manual_mod.summary_text(R)}")
     if R.get("method") == "sms3sigma":
         M3 = R.get("sms3sigma") or {}
         sw, gr = M3.get("swath") or {}, M3.get("grouping") or {}

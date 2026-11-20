@@ -1571,7 +1571,8 @@ def make_report(result: dict, path: str) -> str:
     inp = R.get("input") or files.get("input", "")
     story.append(_masthead())
     story.append(Spacer(1, 10))
-    story.append(Paragraph("Yield map cleaning report" + (" &middot; SMS 3-sigma method" if _is_sms(R) else ""), H1))
+    story.append(Paragraph("Yield map cleaning report" + (" &middot; SMS 3-sigma method" if _is_sms(R) else "")
+                           + (" &middot; " + yield_clean.manual_mod.title_label(R) if R.get("manual_edits") else ""), H1))
     story.append(Paragraph(f"{_e(os.path.basename(inp))} &nbsp;&middot;&nbsp; tag {_e(R.get('tag', ''))} "
                            f"&nbsp;&middot;&nbsp; {datetime.date.today().isoformat()}", SUB))
     story.append(Spacer(1, 6))
@@ -1589,6 +1590,7 @@ def make_report(result: dict, path: str) -> str:
         rows.append(["Field of interest", aoi_txt])
     rows += [
         ["Points", f"{R['n_in']:,} in &rarr; <b>{R['n_kept']:,} kept</b>; {rem:,} removed ({R['removed_pct']:.2f} %)"],
+    ] + ([["Manual edits", f"<b>{_e(yield_clean.manual_mod.summary_text(R))}</b>"]] if R.get("manual_edits") else []) + [
         ["Harvest order", _e(f"{R['order']['basis']}: {R['order']['rule']}")
          + (f" ({R['order']['n_logs']} logs)" if R["order"].get("n_logs") else "") + _swath_order_text(R)],
     ]
@@ -1760,6 +1762,8 @@ def make_report(result: dict, path: str) -> str:
     if R.get("level"):
         _section_level(story, R, num)
         num += 1
+    if R.get("manual_edits"):                   # readings removed or kept by hand (engine/clean/manual_edits.py)
+        num = yield_clean.manual_mod.report_section(story, R, num)
 
     # ---- settings and columns (filter parameters and column mapping side by side, general settings below)
     S = R.get("settings")

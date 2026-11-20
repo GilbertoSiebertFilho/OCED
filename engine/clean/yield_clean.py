@@ -40,7 +40,9 @@ multiplied by Swath_Scl = (W x D) / (W' x D') (Prod_ac_h_ and Fuel_Eff__ divided
 every point sits where SMS moved it; every other cell is byte for byte the export's, and Wdth_Raw / Swath_Scl are
 added. Its files are named <tag>_sms3s_*, its figures are the final map, map, cascade (the S0-S5 steps), limits
 (fig_sms_limits.png) and sessions (with several combines the combine and seam maps); the flagged file adds Wdth_Opt,
-Dist_Opt, Swath_Scl and Rem_By = S0 .. S5a, S5b.
+Dist_Opt, Swath_Scl and Rem_By = S0 .. S5a, S5b (SM = removed by hand: a cleaning with a manual edits file,
+engine/clean/manual_edits.py, whose flagged file also has Man_Edit = R removed / K kept / N not applied by hand, and
+Rem_Auto = the step of the automatic cleaning).
 
 Input: a POINT SHAPEFILE (.shp + .shx + .dbf; the app unpacks zips before calling run). Units are the SMS / Ops
 Center ones: yield bu/ac, moisture %, speed mph, distance ft, swath width ft, heading deg (clockwise from north),
@@ -202,6 +204,7 @@ from skimage.draw import polygon as sk_polygon
 from engine.clean import aoi as aoi_mod
 from engine.clean import sessions as sessions_mod
 from engine.clean import machines as machines_mod
+from engine.clean import manual_edits as manual_mod
 from engine.clean import sms3sigma as sms_mod
 from engine.formats.common import CROPS
 try:                                          # written by another builder: FILTER_INFO['source'] falls back below
@@ -493,7 +496,7 @@ def merge_settings(user=None) -> dict:
     user = {} if user is None else user
     if not isinstance(user, dict):
         raise ValueError(f"settings must be a dict, not {type(user).__name__}")
-    unknown = set(user) - set(S)
+    unknown = set(user) - set(S) - {manual_mod.SETTING}
     if unknown:
         raise ValueError(f"unknown setting(s): {sorted(unknown)}; allowed: {sorted(S)}")
     for k, v in user.items():
@@ -752,6 +755,7 @@ def merge_settings(user=None) -> dict:
         for k, v in S["cols"].items():
             if v is not None and not isinstance(v, str):
                 raise ValueError(f"cols.{k} must be a column name or null, not {v!r}")
+    manual_mod.settle(S)        # readings removed / kept by hand: read and checked; none or empty = no key at all
     return S
 
 
@@ -2247,10 +2251,15 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
                              f"({'none' if not my0 else f'{float(my0):g} bu/ac'})")
             S["sms3sigma"]["min_yield"] = None if my_eff is None else float(my_eff)
         S_run = dict(S, sms3sigma=dict(S["sms3sigma"], min_yield_source=my_src))
-        CS = sms_mod.run_cascade(g, S_run, C, {"y": y, "moi": moi if C.get("moisture") else None, "spd": spd,
-                                           "width_m": width_m, "dist_m": dist_m, "hdg": hdg},
-                                 plan, utm, burn, aoi_mod, log=log, warnings=warnings, notes=notes,
-                                 src_format=src_fmt, session_keys=sess0)
+        # readings removed / kept by hand (engine/clean/manual_edits.py): matched to g, and the automatic result beside
+        ME = manual_mod.prepare(S["manual_edits"], g, g0, g_aside, S.get("sms_import")) if S.get("manual_edits") else None
+        cargs = (g, S_run, C, {"y": y, "moi": moi if C.get("moisture") else None, "spd": spd,
+                               "width_m": width_m, "dist_m": dist_m, "hdg": hdg}, plan, utm, burn, aoi_mod)
+        with manual_mod.swath_once(ME):         # with edits, the automatic run beside takes the edited run's S2
+            CS = sms_mod.run_cascade(*cargs, log=log, warnings=warnings, notes=notes,
+                                     src_format=src_fmt, session_keys=sess0, manual=ME)
+            me_R = (manual_mod.automatic_beside(ME, CS, sms_mod.run_cascade, cargs, {"src_format": src_fmt,
+                    "session_keys": sess0}, g, plan, warnings, log=log) if ME is not None else None)
         if (CS.get("swath") or {}).get("order_basis") == sms_mod.ORDER_FILE:
             # the swath step took the file's own row order, not the dataset order the warning above names
             warnings[:] = [SEVERAL_FILE_ORDER if w == SEVERAL_NO_TIME else w for w in warnings]
@@ -2750,6 +2759,8 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
          "coverage_ac": coverage_ac, "method": S["method"]}
     if sms_R is not None:
         R["sms3sigma"] = sms_R
+    if sms_run and me_R is not None:
+        R["manual_edits"] = me_R
     if isinstance(S.get("sms_import"), dict):
         R["sms_import"] = copy.deepcopy(S["sms_import"])
         # a setting the user asked for that the import could not apply (a manual swath on a file without a width
@@ -4507,6 +4518,7 @@ def write_all(path, out, tag, S, g0, g, gx, gy, R, diag, log=print):
         + lvl_sy_cols + [("X_log", "N", lx, 20, cdec), ("Y_log", "N", ly, 20, cdec)] + v2_cols
     if plan is not None:
         extra_all.append(("In_AOI", "N", G["In_AOI"].values, 1, 0))
+    extra_all += manual_mod.flagged_columns(G)      # a cleaning with manual edits only: Man_Edit, Rem_Auto
     extra_all, _ = _rename_clashes(extra_all, in_names, R["warnings"], "flagged")
     F = {"dir": out, "input": path}
     exts = (".shp", ".shx", ".dbf", ".prj", ".cpg")

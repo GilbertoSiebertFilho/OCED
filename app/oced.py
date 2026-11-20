@@ -156,12 +156,14 @@ with _engine_lock():
     from engine import works as ew  # noqa: E402
     from engine import sms_import as si  # noqa: E402
     from engine.clean import applied3s as a3  # noqa: E402
+    from engine.clean import manual_edits as me  # noqa: E402
     from engine.clean import sms3sigma as sms  # noqa: E402
     from engine.clean import yield_clean as yc  # noqa: E402
     from engine.formats import common, detect  # noqa: E402
     from engine.formats import native_write as nw  # noqa: E402
     from engine import difm as ed  # noqa: E402
 import brand  # noqa: E402
+import replay_view  # noqa: E402
 
 try:
     import pydeck as pdk
@@ -1304,9 +1306,13 @@ def file_config(tag: str, sset: dict) -> dict:
                                     "area_ac", "bushels", "bushel_from")}
     else:
         gr = {"crop": G.get("crop")} if G.get("crop") else None     # the crop alone reaches the engine too
-    return {"sms3sigma": S3,
-            "boundary": [B["path"], [int(x) for x in (B.get("feature") or ())], B.get("fingerprint")] if B else None,
-            "grower": gr, "combines": combine_settings(tag) if is_y else None}
+    cfg = {"sms3sigma": S3,
+           "boundary": [B["path"], [int(x) for x in (B.get("feature") or ())], B.get("fingerprint")] if B else None,
+           "grower": gr, "combines": combine_settings(tag) if is_y else None}
+    E = edits_of(tag) if is_y else None
+    if E:                                 # readings removed / kept by hand: only a work that has them carries the key
+        cfg["manual_edits"] = E.get("sha256") or E.get("error")
+    return cfg
 
 
 NOT_CONFIRMED = "not confirmed by the cleaning record"
@@ -1452,7 +1458,66 @@ def settings_of(tag: str, sset: dict) -> dict:
         S["moisture"] = {**(S.get("moisture") or {}), "standard_pct": float(G["std_moisture"])}
     # the engine's defaults for an SMS cleaning of an imported file, where nothing above set them (setdefault only)
     # (the import's weight and moisture only when the import computed the file's dry yield with them)
-    return er.sms_clean_defaults(S, S.get("sms_import") if wm else None) if hasattr(er, "sms_clean_defaults") else S
+    S = er.sms_clean_defaults(S, S.get("sms_import") if wm else None) if hasattr(er, "sms_clean_defaults") else S
+    EP = edits_path(tag)                  # readings removed / kept by hand in the replay: every cleaning applies them
+    if EP and os.path.isfile(EP):
+        S["manual_edits"] = EP
+    return S
+
+
+# ---- readings removed or kept by hand (engine/clean/manual_edits.py), marked in the replay of a cleaning (step 3)
+EDITS_DIR = "edits"
+
+
+def edits_path(tag: str) -> str | None:
+    """The edits file of a file of the work: <work>/edits/<tag>/<tag>_manual_edits.json. While it is there, every
+    cleaning of the file applies it (settings_of) and step 3 says so."""
+    wd = ss.get("workdir")
+    return os.path.join(wd, EDITS_DIR, tag, f"{tag}_manual_edits.json") if wd else None
+
+
+def edits_of(tag: str) -> dict | None:
+    """The edits file of tag, read and checked (me.read_edits); None without one; {'error', 'path'} when it cannot be
+    used (the cleaning then stops with the engine's reason)."""
+    p = edits_path(tag)
+    if not p or not os.path.isfile(p):
+        return None
+    try:
+        return me.read_edits(p)
+    except (OSError, ValueError) as e:
+        return {"error": str(e), "path": p}
+
+
+def remove_edits(tag: str) -> bool:
+    """'Remove all edits': the edits file is moved aside (<tag>_manual_edits_removed.json, the last one only), so the
+    next cleaning of the file is the automatic one. True when there was one."""
+    p = edits_path(tag)
+    if not p or not os.path.isfile(p):
+        return False
+    os.replace(p, p[:-len(".json")] + "_removed.json")
+    return True
+
+
+def apply_marks(tag: str, K: dict) -> dict:
+    """The reading keys of the replay's marks (engine.replay.edit_keys) written as the edits file of tag
+    (me.write_edits; the engine's own writer), or, with no mark left, the edits removed (the automatic cleaning). No
+    cleaning here: the caller asks for one. Returns {path, n_remove, n_keep, refused, removed}."""
+    p = edits_path(tag)
+    if not p:
+        raise ValueError("no work folder: the edits cannot be kept")
+    if not K.get("remove") and not K.get("keep"):
+        return {"path": None, "n_remove": 0, "n_keep": 0, "refused": list(K.get("refused") or []),
+                "removed": remove_edits(tag)}
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    E = me.write_edits(p, remove=list(K["remove"]), keep=list(K["keep"]),
+                       note=f"marked in the harvest replay of the cleaning (step 3), {dt.datetime.now():%Y-%m-%d %H:%M}")
+    return {"path": p, "n_remove": len(E.get("remove") or []), "n_keep": len(E.get("keep") or []),
+            "refused": list(K.get("refused") or []), "removed": False, "sha256": E.get("sha256")}
+
+
+def edits_line(R: dict | None) -> str:
+    """One line for a result made with edits by hand (the record's summary, engine/clean/manual_edits.py), '' without."""
+    return me.summary_text(R) if isinstance(R, dict) and R.get("manual_edits") else ""
 
 
 def dbf_drop_fields(dbf: str, names) -> list:
@@ -5654,7 +5719,8 @@ def action_tree():
             nat = "".join(f"  \n{_tick(not NR.get('stale'))} {html.escape(str(NR.get('label') or fid), quote=False)}"
                           + (" · from an earlier cleaning" if NR.get("stale") else "")
                           for fid, NR in native_results(t, C).items())
-            st.caption(f"{_tick(os.path.exists(C['shp']))} {html.escape(os.path.basename(C['shp']))}  \n"
+            st.caption(f"{_tick(os.path.exists(C['shp']))} {html.escape(os.path.basename(C['shp']))}"
+                       + (" · includes edits by hand" if edits_line(C.get("R")) else "") + "  \n"
                        f"{_tick(bool(C.get('report_pdf')) and os.path.exists(C.get('report_pdf') or ''))} report (PDF)"
                        + nat)
         if ss.workdir:
@@ -8793,6 +8859,9 @@ with st.container(border=True, key="oced_step_2"):
     df0 = read_points(D["shp"], mtime(D["shp"]))            # the import in use: what step 3 cleans
     OPX = operation_of(D["shp"], mtime(D["shp"]))
     n_located = located_in(df0)
+    if n_located and D.get("yield", True):               # the harvest replay of the readings in use (replay_view.py)
+        replay_view.section(D["shp"], f"imp_{key_of(D['shp'])}", outline=B_["outline"] if B_ else None,
+                            raw_root=lambda: _raw_root(D), title=ss.active, field=ss.active)
     if n_located:
         brand.next_step(3, "Cleaning")
 if not n_located:
@@ -9185,6 +9254,22 @@ with st.container(border=True, key="oced_step_3"):
                                    "max_pct": float(cf_max), "ticket_confirms": bool(cf_tc)}
 
     save_requested()                     # Save: every setting of the file on screen is read in this run by now
+    EDS = edits_of(ss.active) if D.get("yield", True) else None
+    if EDS:                              # readings removed / kept by hand in the replay of the cleaning
+        with st.container(horizontal=True, vertical_alignment="center", key="edits_box"):
+            if EDS.get("error"):
+                st.error(f"The edits by hand of this file cannot be used: {EDS['error']}", icon=":material/error:")
+            else:
+                st.info(f"Edits by hand for this file: {len(EDS.get('remove') or []):,} reading(s) removed and "
+                        f"{len(EDS.get('keep') or []):,} kept by hand (marked in Play the harvest of the cleaning). "
+                        "Every cleaning of this file applies them.", icon=":material/edit:")
+            if st.button("Remove all edits", key="edits_remove", icon=":material/undo:",
+                         help="The edits file is set aside and the file cleaned again without it: the automatic "
+                              "cleaning, the same files as before any edit."):
+                remove_edits(ss.active)
+                ss["reprocess"] = ss.active
+                ss["edits_msg"] = "Every edit by hand removed: the automatic cleaning."
+                st.rerun()
     many = False
     with st.container(horizontal=True, key="run_go_box"):
         with st.container(key="run_go_2"):
@@ -9193,6 +9278,8 @@ with st.container(border=True, key="oced_step_3"):
             many = st.button(f"Clean all {len(DS)} files", icon=":material/done_all:", key="clean_all",
                              help="Each file with its own import, boundary and grower's data.")
     todo = [ss.active] if one else (list(DS) if many else [])
+    if not todo and ss.pop("reprocess", None) == ss.active:          # the replay's marks, or 'Remove all edits'
+        todo = [ss.active]
     # every file's SMS default brought up to date first, as step 1 does for the file on screen (a raw file of an
     # earlier version decoded again from its raw data, a default whose file changed made again; the same rules set a
     # cleaning aside), so that no file is cleaned on an older import and that cleaning then set aside
@@ -9203,7 +9290,8 @@ with st.container(border=True, key="oced_step_3"):
                 pre_notes[t] = ensure_default(t)
     done = []
     for t in todo:
-        with st.status(f"SMS 3-sigma on {t} ...", expanded=True) as status:
+        with st.status(f"SMS 3-sigma on {t}" + (" with the edits by hand" if edits_of(t) else "") + " ...",
+                       expanded=True) as status:
             lines_ = []
 
             def log_(m, _s=status, _l=lines_):
@@ -9242,6 +9330,8 @@ with st.container(border=True, key="oced_step_3"):
     for s_ in ss.pop("clean_status", None) or []:
         with st.status(s_["label"], state="complete", expanded=False):
             st.text("\n".join(s_["log"]) or " ")
+    if ss.get("edits_msg"):
+        st.success(ss.pop("edits_msg"), icon=":material/edit:")
     if seam_box is not None:
         with seam_box:
             seams_panel(ss.cleaned.get(ss.active))
@@ -9263,6 +9353,8 @@ with st.container(border=True, key="oced_step_3"):
         CL = L.get("closure") or {}
         # ---- the strip of the result, the clean map right under it (its statistics at its side)
         result_strip(ss.active, C)
+        if edits_line(R):
+            st.warning(edits_line(R), icon=":material/edit:")
         cols_clean = read_points(C["shp"], mtime(C["shp"])).columns
         ycol0 = (R.get("columns") or {}).get("yield") or "Yld_Vol_Dr"
         ycol0 = ycol0 if ycol0 in cols_clean else ("Yld_Vol_Dr" if "Yld_Vol_Dr" in cols_clean else None)
@@ -9273,6 +9365,23 @@ with st.container(border=True, key="oced_step_3"):
                  col_help={corr[0]: corr[1]} if corr else None,
                  outline=C["boundary"]["outline"] if C.get("boundary") else None, extras=False,
                  data="clean (step 3)")
+        if edits_line(R):
+            st.caption(f"The clean map includes the edits by hand ({me.title_label(R).lower()}).")
+        if not A3:                                       # the harvest replay of the cleaning (replay_view.py)
+            def _on_edits(K, _t=ss.active):
+                """The player's marks as reading keys: the edits file written, the file cleaned again."""
+                W_ = apply_marks(_t, K)
+                ref = W_["refused"]
+                ss["edits_msg"] = (("Edits by hand: " + f"{W_['n_remove']:,} removed and {W_['n_keep']:,} kept by hand"
+                                    if W_["path"] else "No mark left: the automatic cleaning")
+                                   + (f"; {len(ref):,} mark(s) not applied ({ref[0]['reason']})" if ref else "") + ".")
+                ss["reprocess"] = _t
+                st.rerun()
+            replay_view.section(C.get("flagged_shp"), f"clean_{key_of(C['shp'])}", kind="clean",
+                                outline=C["boundary"]["outline"] if C.get("boundary") else None,
+                                raw_root=lambda: _raw_root(D), steps=replay_view.rp.step_names_of(R), title=ss.active,
+                                field=ss.active, record=C.get("json"),
+                                on_edits=_on_edits if C.get("kind") == "sms" else None)
         # ---- the details, in tabs
         RM = R.get("machines") if not A3 else None
         tab_names = ((["Yield path"] if not A3 else []) + ["Steps", "Limits", "Removed points"]
@@ -9657,6 +9766,8 @@ with st.container(border=True, key="oced_step_4"):
                      primary=True, icon=":material/folder_zip:")
         for t, c in ss.cleaned.items():
             st.markdown(f"**{t}**")
+            if edits_line(c.get("R")):
+                st.caption(":material/edit: These files include edits by hand: " + edits_line(c.get("R")))
             row4 = st.container(horizontal=True)             # the downloads, filled once the yield is chosen
             adj4 = difm_question(t, c)                       # asked only when the cleaning adjusted the yield
             Wd = difm_of(t, c)

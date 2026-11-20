@@ -5,9 +5,24 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.3** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.4** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.4:* the harvest replay, management zones and readings removed or kept by hand. *Play the harvest*
+plays the harvest on the satellite map, every combine on the readings' own clock, drawn in the colours of its make,
+with zoom, follow and full screen, in step 2 (the readings in use) and step 3 (the cleaning, kept and removed), and as
+a file to keep or send. A management zone map made elsewhere can be added to it: the yield of each zone while the
+combines harvest, and at the end whether the zones agree with the yield (zone_yield.csv). In the replay of a
+cleaning, *Edit points* lets the user click a kept reading to remove it, or a reading the moisture, speed or yield
+filter removed to keep it (one by one, or a box), with a card of the reading's data and its combine's limits under the
+cursor; *Reprocess with these edits* cleans the file again with them (an edits file in the work folder:
+`engine/clean/manual_edits.py`, `--manual-edits` on the command line). The readings removed by hand leave after the
+swath step and before the moisture, speed and yield filters; the readings kept by hand are never cut by those filters
+and stay in their statistics; the import range, the clip and the swath step cannot be undone by hand. The result, the
+report, the shapefile for DIFM's note and the record say when a cleaning includes edits by hand, with the automatic
+result beside it; *Remove all edits* gives the automatic cleaning again, the same files as before any edit. Without
+an edits file the clean, flagged and DIFM shapefiles are the same as with 0.3.3.
 
 *Changes in 0.3.3:* closer to SMS, and every value typed by hand used as it is shown. The clip (S1) keeps a reading
 only inside the boundary (edge tolerance 0, as SMS; it was 1 cm), in the field-of-interest pre-step and the
@@ -332,7 +347,10 @@ deeper.
    DIFM* folded under it) and the box of the monitor's format. For each file: the clean shapefile (the kept readings with every attribute of the
    file, in one zip), the flagged points (the readings with `Keep` and `Rem_By`, the step that removed it: for a
    harvest file every reading inside the boundary, the readings clipped by S1 counted in step 3, not listed; for a
-   planter or sprayer file every reading, the clipped ones with `Rem_By` S1), the
+   planter or sprayer file every reading, the clipped ones with `Rem_By` S1; a cleaning run again with a **manual edits
+   file**, readings removed or kept by hand, `engine/clean/manual_edits.py`, `--manual-edits` on the command line, has
+   `Rem_By` SM for the readings removed by hand, after the swath step and before S3, and two more columns: `Man_Edit`
+   R removed by hand, K kept by hand, N asked but not applied, and `Rem_Auto` the step of the automatic cleaning), the
    cleaning report (PDF: the steps, the limits, the statistics and the maps) and the cleaning record (JSON); all the
    clean shapefiles in one zip. Next to the clean shapefile, the clean harvest can be written in the **monitor's own
    raw format**, so that SMS reads it as monitor data (`engine/formats/*_write.py`, one dispatcher
@@ -436,6 +454,8 @@ removed %, L), *4 · Clean files and reports* the outputs.
 | `engine/sms_import.py` | import as SMS: the Processing Settings of SMS's Grain Harvest import, per source and product, and where each value came from |
 | `engine/works.py` | saved works: `oced_work.json` per work folder (save, open, list; older folders rebuilt from their files; the input folder of a decoded card kept, found again when the work folder moved) |
 | `engine/report/` | the PDF reports (`clean_report.py` for harvest files, `applied_report.py` for the others) |
+| `engine/replay.py`, `engine/replay_player.html`, `app/replay_view.py` | the harvest replay: the readings played back on the satellite map combine by combine (each machine drawn in the colours of its make), one self-contained HTML player; in the app *Play the harvest* under step 2 and under the clean map; `python -m engine.replay <shp or zip> --out replay.html` |
+| `engine/zones.py` | management zones in the harvest replay: a zone map made elsewhere (zip, shp, geojson, kml, kmz, gpkg) read with the boundary reader, the zone of each reading and whether it is on a border, the yield of each zone and whether the zones agree with it; `zone_yield.csv` |
 | `engine/run.py` | the API from the files to the clean shapefile (`open_input`, `list_units`, `decode`, `import_as_sms`, `clean`) and a command line (`python -m engine.run --help`, below) |
 | `tests/` | end-to-end tests on synthetic fields (`python -m pytest -q tests`, run on the code of the same version: a clone or the GitHub zip); no real data in the repository |
 | `workspace/` | the work folders (not in the repository) |
@@ -451,6 +471,47 @@ values, and S0 then takes the import's minimum), then cleaned with the SMS 3-sig
 sms3sigma`; `--sms-order`, `--sms-group`). `--aoi FILE` is the field boundary: for the SMS method the S1 clip (edge
 tolerance 0, as SMS), as in the app. A planter, sprayer or other point export (no yield column) is cleaned as an as-applied
 file by `engine/clean/applied3s.py` (`--attributes A,B` chooses the attributes), never by the yield cleaning.
+
+**Harvest replay.** *Play the harvest* (step 2: the readings in use; step 3: the cleaning, kept and removed) plays
+the harvest on the map: every combine on the readings' own clock (two combines working at the same time move at the
+same time; a file without a time of day plays in the file order and says so), the ground each reading covered painted
+as the combine passes (the app's strips), coloured by yield, moisture, speed, combine or kept / removed, idle time
+skipped, zoom to single passes, follow a combine, full screen, and the same player as a file to keep or send. Each
+combine is drawn in the colours of its make (John Deere logs, the model text of a Case IH / New Holland card, ISOXML
+and point exports by their machine text; the make can be set by hand) with its own number and colour. It reads the
+files only. `python -m engine.replay FILE --boundary B --raw RAW --make COMBINE=MAKE --out replay.html` writes the
+player of any point file; the page takes `#t=0.4&speed=60&play=1&z=18&c=yield&f=2` (time on the timeline 0-1 or `at=`
+seconds, speed, playing, zoom, colour, follow) and `#gallery=1` shows the colours of every make.
+
+**Management zones in the replay.** A management zone map made elsewhere (a prescription or zone file: polygons and one
+column that names the zones, at most 12) can be added to *Play the harvest*; OCED never builds zones. The player then
+switches between the yield map and the zone map (the zones under the trail, their borders over it), colours the trail by
+zone, shows the yield of each zone as the combines harvest (the readings closer to a zone border than half their swath
+left out by default), and ends with *Do the zones agree?*: the yield, SD, acres and bushels of each zone, the share of
+the yield variation between readings the zones account for (eta squared), the zones in order of yield beside their own
+order, the same inside each combine, and the cautions. The cleaning replay counts the readings the cleaning kept; the
+replay of the imported readings says 'raw, not cleaned'. `python -m engine.replay FILE --zones ZONES [--zone-column NAME]
+[--zone-csv zone_yield.csv] --out replay.html`; the page takes `#view=yield|zones&zb=1&card=1` (and `ptab=combines` for
+the tab shown first on a medium screen, where the zones and the combines share the right panel). A zone map that misses
+a quarter or more of the readings is said (a map of another field, or one that covers part of it). In the app the zone
+map belongs to its work: it is kept in the work folder (`zones/<tag>/`), and a file that cannot be read is a message.
+
+**Readings removed or kept by hand, from the replay.** In *Play the harvest* of a cleaning (step 3), *Edit points*
+(in the title card of the player) pauses and shows the whole field. A click on a kept reading marks it to be removed
+(a cross), a click on a reading the moisture, speed or yield filter removed marks it to be kept (a ring), a click on a
+mark clears it; Shift + drag (or *Box*, then a drag, on a touch screen) marks every reading whose strip centre is in
+the box: remove the kept ones, keep the removed ones, or clear their marks. Readings cut by the import range, the clip
+or the swath step cannot be marked (their card says why). Whenever the playback is paused, and while editing, the card
+of the reading under the cursor (on a touch screen: the one tapped) gives its time, combine, dry yield, moisture and
+speed (the values the filters compared) beside its combine's limits, its width and distance, its state and its zone.
+The panel counts the marks per combine, with *Undo*, *Clear marks* and *Reprocess with these edits*: the app turns the
+marks into reading keys, writes `edits/<tag>/<tag>_manual_edits.json` in the work folder and cleans the file again;
+while that file is there every cleaning of the file applies it, and step 3 says so beside *Remove all edits*. The
+replay then shows the readings removed and kept by hand and the readings whose fate moved with the limits (a
+diamond), and the totals of the edited cleaning beside the automatic ones. The player in the app talks to the page
+through a two-way component (`st.components.v2`, inline JavaScript, no build step); the replay file to download shows
+the edits, read-only. A replay thinned for a very large field (more than about 16 MB of readings) cannot be edited,
+and says so; the replay of the imported readings has no edit mode.
 
 Grower data (monitor cards, exports, boundaries, results) never goes into this repository: `.gitignore` lets only the
 code and the documents in.

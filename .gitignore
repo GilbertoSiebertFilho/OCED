@@ -9,6 +9,7 @@
 !*.bat
 !docs/literature/references_verified.csv
 !assets/brand/*
+!engine/replay_player.html
 workspace/
 _backup/
 examples/

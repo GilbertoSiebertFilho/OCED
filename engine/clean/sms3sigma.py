@@ -52,6 +52,8 @@ every step, as the user reads them again in Edit Legend after each filter:
       between log files).
       NOT ESTABLISHED against SMS, so off by default: swath_bias "auto" and swath_scope "machine"; the no-value rule
       of S3 / S4 below (tested on synthetic data only).
+  SM  Only with a manual edits file: the readings removed by hand leave here, and the readings kept by hand are never
+      cut by S3-S5 (engine/clean/manual_edits.py; not an SMS step).
   S3  Moisture: keep mean +/- k SD (k = 3); a negative lower limit is typed as 0 (as the SMS logs show it: 0.00).
   S4  Speed: keep mean +/- k SD; a negative lower limit is typed as 0.
       The order of S3 and S4 is the setting filter_order: "moisture_speed" (the project's method, the default) or
@@ -807,7 +809,7 @@ def lateral_bias(x_m, y_m, heading_deg, width_ft, full_tol_ft=0.3, min_pairs=BIA
 
 
 def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log=print, warnings=None, notes=None,
-                src_format=None, session_keys=None) -> dict:
+                src_format=None, session_keys=None, manual=None) -> dict:
     """Run S0-S5 on the processed set g (processing order). arrays: y, moi (or None), spd, width_m, dist_m, hdg
     (pandas Series aligned to g). Returns {alive, why, log (cascade rows), steps (per group and step), grouping, swath
     (arrays + stats), scale, x_new, y_new, clip_mask, in_aoi_sms}."""
@@ -1119,6 +1121,10 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
     else:
         record("S2", "Optimize Swath Widths", np.zeros(n, bool), on=False)
     y_map = y * scale
+    # ---- SM readings removed by hand, and the readings kept by hand S3-S5 never cut (engine/clean/manual_edits.py)
+    mkeep = None
+    if manual is not None:
+        alive, mkeep = manual.apply(alive, why, rows, log)
 
     # ---- grouping for the 3-sigma filters
     gkey, ginfo = resolve_groups(g, C, P, src_format, session_keys, warnings=warnings)
@@ -1154,6 +1160,8 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                 v = values[sel]
                 miss = ~np.isfinite(v)                    # no value: not outside the limits, kept by this filter
                 out_ = ~miss & ~((v >= lo) & (v <= hi))
+                if mkeep is not None:                     # kept by hand: never cut, in the SD after the cut
+                    out_ &= ~mkeep[sel]
                 n_miss += int(miss.sum())
                 idx = np.where(sel)[0][out_]
                 kill[idx] = True
@@ -1210,6 +1218,8 @@ def run_cascade(g, S: dict, C: dict, arrays: dict, plan, utm, burn, aoi_mod, log
                 nn, mu, sd, lo, hi = lim
                 v = y_map[sel]
                 out_ = np.isfinite(v) & ~((v >= lo) & (v <= hi))     # S0 already removed the readings without a yield
+                if mkeep is not None:                     # kept by hand: never cut, in the SD after the cut
+                    out_ &= ~mkeep[sel]
                 kill[np.where(sel)[0][out_]] = True
                 sda = _sd(v[~out_])
                 drop = 100 * (1 - sda / sd) if np.isfinite(sda) else None
