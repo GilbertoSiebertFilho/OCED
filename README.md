@@ -5,9 +5,17 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.4** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.5** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.5:* read tasks of more than one crop as one crop. When the tasks or logs chosen for a field and season
+were logged with more than one crop label (a calibration load logged under another crop, a short log labelled with
+the wrong crop), step 1 lists which task has which crop label and offers *Read the selected tasks as one crop*, off
+by default, with the crop to use (preselected: the crop of most of the records). On, the tasks become one harvest
+file, decoded and imported as the command line's `--allow-mixed --product` does; the import record, the cleaning
+record and report and the notes of the shapefile for DIFM say which tasks were read under another crop than they
+were logged with, and the choice is kept with the work. When the tasks share one crop nothing changes.
 
 *Changes in 0.3.4:* the harvest replay, management zones and readings removed or kept by hand. *Play the harvest*
 plays the harvest on the satellite map, every combine on the readings' own clock, drawn in the colours of its make,

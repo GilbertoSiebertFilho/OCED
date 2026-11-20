@@ -2124,8 +2124,10 @@ def failed_in_use(D: dict) -> bool:
 
 
 def default_resolved(B: dict) -> dict:
-    """The settings of SMS's default import of a file (engine/sms_import.resolve with the settings untouched)."""
-    return si.resolve(si.settings({}), (B or {}).get("crop"), (B or {}).get("monitor"), (B or {}).get("fmt"))
+    """The settings of SMS's default import of a file (engine/sms_import.resolve with the settings untouched; a file
+    whose tasks were read as one crop (extract one_crop) with that product, as the command line's --product)."""
+    S = si.settings({"product": B["product"]} if (B or {}).get("product") else {})
+    return si.resolve(S, (B or {}).get("crop"), (B or {}).get("monitor"), (B or {}).get("fmt"))
 
 
 def _fmt_setting(v, d) -> str:
@@ -2920,7 +2922,7 @@ def decode_default(tag: str, D: dict) -> dict:
     d, no_product, err = decode_for_default(
         cand, list(S0["unit_ids"]), detect.default_options(S0.get("format")), _label_crop(D.get("label")),
         dict(S0.get("decoder_kwargs") or {}), os.path.join(ss.workdir, DEFAULT_DECODE_DIR), tag, lambda m: None,
-        where)
+        where, one_crop=(D.get("one_crop") or {}).get("product"))
     if d is None:
         raise ValueError(f"{tag}: the raw data could not be decoded again ({err})")
     d.pop("df", None)
@@ -2952,7 +2954,7 @@ def decode_as_logged(tag: str, D: dict) -> dict:
          "shrink": detect.default_options(fid).shrink}
     opts = common.DecodeOptions(**{k: v for k, v in o.items() if k in names})
     d = er.decode(cand, list(S0["unit_ids"]), opts, os.path.join(ss.workdir, AS_LOGGED_DIR), log=lambda m: None,
-                  tag=tag, **dict(S0.get("decoder_kwargs") or {}))
+                  tag=tag, allow_mixed=bool(D.get("one_crop")), **dict(S0.get("decoder_kwargs") or {}))
     d.pop("df", None)
     return d
 
@@ -4184,7 +4186,50 @@ def import_as_sms(shp: str, tag: str, folder: str, crop=None, monitor=None, fmt=
     return rep["path"], int(rep["n_out"]), rec
 
 
-def extract(cand, chosen_units, opts, kw, log, warn=None):
+def crop_mix(units) -> list:
+    """The harvests (field, season) of a selection of units whose units carry more than one crop label: [{field, year,
+    crops {crop label: records}, units}] ([] = every harvest has one crop: nothing in the app changes)."""
+    by = {}
+    for u in units:
+        by.setdefault((u.field or "", u.year), []).append(u)
+    out = []
+    for (f, y), us in sorted(by.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
+        crops = {}
+        for u in us:
+            c = str(u.crop or "").strip().lower()
+            crops[c] = crops.get(c, 0) + int(u.n_records or 0)
+        if len(crops) > 1:
+            out.append({"field": f, "year": y, "crops": crops, "units": us})
+    return out
+
+
+def one_crop_default(mix: list) -> str:
+    """The SMS product preselected to read mixed tasks as one crop: the crop of most of the harvest records."""
+    tot = {}
+    for m in mix:
+        for c, n in m["crops"].items():
+            tot[c] = tot.get(c, 0) + n
+    for c in sorted(tot, key=lambda c: (-tot[c], c)):
+        p = si.CROP_PRODUCT.get(si.crop_key(c) or "")
+        if p in si.SMS_PRODUCTS:
+            return p
+    return next(iter(si.SMS_PRODUCTS))
+
+
+def one_crop_lines(product: str, units, rep: dict | None) -> list:
+    """What says that tasks were read under another crop than the one they were logged with: a line naming them, then
+    the decoder's own lines (each task's crop replaced, the harvests decoded together)."""
+    k = si.crop_key(product)
+    other = [u for u in units if si.crop_key(u.crop) != k]
+    out = [f"read as one crop, {product}: {len(other)} of {len(units)} selected task(s) logged with another crop "
+           "label (" + "; ".join(f"{u.label}: {u.crop or 'no crop'}" for u in other) + ")"]
+    for w in (rep or {}).get("warnings") or []:
+        if "replaced by" in str(w) or "more than one harvest decoded together" in str(w):
+            out.append(str(w))
+    return out
+
+
+def extract(cand, chosen_units, opts, kw, log, warn=None, one_crop: str | None = None):
     """The chosen units as one shapefile per field, season and crop (engine.run.decode on each group), each imported
     as SMS imports it with its Processing Settings untouched (the default import of the file, kept beside the active
     one: import_default). The decoder gets the one-sided shrink of SMS's import; a John Deere file or ISOXML task
@@ -4196,10 +4241,17 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
     readings as they are (mode as_is, its default marked 'error'). A tag another raw input of this work already has
     gets a suffix instead of replacing that file; the same input extracted again replaces its file (and its cleaning
     moves to superseded/); a custom import of the replaced file is applied again after the extraction
-    (reapply_after_extract, made[tag]['_reapply'])."""
+    (reapply_after_extract, made[tag]['_reapply']).
+    one_crop (an SMS product, e.g. 'Wheat - Spring'): the units of a field and season that carry more than one crop
+    label (crop_mix) become ONE file, decoded and imported with that product as the command line's --allow-mixed
+    --product does (engine.run.decoder_options_for_import, decode(allow_mixed=True), the import's product); the file
+    keeps the choice (made[tag]['one_crop']) and the lines that say so go to its import record."""
     groups = {}
+    mixed = {(m["field"], m["year"]) for m in crop_mix(chosen_units)} if one_crop else set()
+    k1 = si.crop_key(one_crop) if one_crop else None
     for u in chosen_units:
-        groups.setdefault((u.field or "", u.year, str(u.crop or "").strip().lower()), []).append(u)
+        fy = (u.field or "", u.year)
+        groups.setdefault((*fy, k1 if fy in mixed else str(u.crop or "").strip().lower()), []).append(u)
     made, failed = {}, []
     S_i = si.settings({})
     fmt = cand.get("decoder")
@@ -4243,8 +4295,9 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
             want = {str(x) for x in kw["totals_only"]}
             kw_g["totals_only"] = [r["id"] for r in totals_only_of(cand, us) if str(r["id"]) in want] or None
         where = f"{field or '(no field)'} {year or ''}"
+        forced = one_crop if (field, year) in mixed else None
         d, no_product, err0 = decode_for_default(cand, [u.id for u in us], opts, crop, kw_g, ss.workdir, tag, log,
-                                                 where)
+                                                 where, one_crop=forced)
         if d is None:
             if warn is None:
                 raise err0
@@ -4266,10 +4319,11 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
         fmt_d = rep.get("format") or fmt
         crop_i = rep.get("crop_name") or crop or None
         err_i = None
+        S_g = {"product": forced} if forced else {}       # read as one crop: the import's product, as --product
         try:
-            R_i = si.resolve(S_i, crop_i, mon, fmt_d)
+            R_i = si.resolve(si.settings(S_g) if forced else S_i, crop_i, mon, fmt_d)
             shp_i, n_i, rec = import_as_sms(d["shp"], d["tag"], os.path.join(ss.workdir, "decoded"), crop=crop_i,
-                                            monitor=mon, fmt=fmt_d, R=R_i)
+                                            monitor=mon, fmt=fmt_d, R=R_i, S=S_g)
         except Exception as e:                            # the decoded readings as they are; step 2 tries again
             shp_i, n_i, rec, err_i = d["shp"], None, None, f"{type(e).__name__}: {e}"
             w = (f"{d['tag']}: SMS's import failed ({err_i}): the decoded readings are used as they are; step 2 can "
@@ -4294,6 +4348,20 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
                 if warn is not None:
                     warn(f"{d['tag']}: {w_}")
         n_d = n_i if n_i is not None else d["n"]
+        oc = None
+        if forced:
+            lines = one_crop_lines(forced, us, rep)
+            log(lines[0])
+            if warn is not None:
+                warn(lines[0])
+            if rec:
+                rec.setdefault("notes", [])
+                rec["notes"] += [w for w in lines if w not in rec["notes"]]
+            if isinstance(d.get("source"), dict):        # the cleaning record and report (the decoder's lines are
+                d["source"]["warnings"] = [lines[0]] + list(d["source"].get("warnings") or [])   # there already)
+            oc = {"product": forced, "crop": k1, "lines": lines,
+                  "units": [{"id": u.id, "label": u.label, "crop": u.crop, "start": u.start, "end": u.end,
+                             "n_records": int(u.n_records or 0)} for u in us]}
         made[d["tag"]] = {"tag": d["tag"], "shp": shp_i, "zip": d["zip"], "n": n_d,
                           "kind": "raw", "op": "harvest", "yield": True,
                           "label": f"{field or '(no field)'} · {year or 'no season'} · {crop or 'crop?'}",
@@ -4304,9 +4372,12 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
                                              "sms_import": copy.deepcopy(rec), "source": copy.deepcopy(d["source"]),
                                              "basis": {"all_readings": d["shp"],
                                                        "crop": rec.get("crop") if rec else crop_i,
-                                                       "monitor": copy.deepcopy(mon), "fmt": fmt_d},
+                                                       "monitor": copy.deepcopy(mon), "fmt": fmt_d,
+                                                       **({"product": k1} if forced else {})},
                                              "error": err_i},
                           "import_mode": "as_is" if err_i else "default"}
+        if oc:
+            made[d["tag"]]["one_crop"] = oc
         if reapply:
             made[d["tag"]]["_reapply"] = reapply
     if not made and failed:
@@ -4314,7 +4385,8 @@ def extract(cand, chosen_units, opts, kw, log, warn=None):
     return made
 
 
-def decode_for_default(cand, unit_ids, opts, crop, kw: dict, out: str, tag: str, log, where: str) -> tuple:
+def decode_for_default(cand, unit_ids, opts, crop, kw: dict, out: str, tag: str, log, where: str,
+                       one_crop: str | None = None) -> tuple:
     """The units decoded for SMS's default import (extract; decode_default): the decoder gets the one-sided shrink of
     SMS's import; a John Deere file and ISOXML task data keep the file's crop and values, any other source the
     product's lb/bu and moisture (crop: the units' crop as the input names it). A crop the card gives no weight (a
@@ -4324,7 +4396,13 @@ def decode_for_default(cand, unit_ids, opts, crop, kw: dict, out: str, tag: str,
     S_i = si.settings({})
     fmt = cand.get("decoder")
     sh = "symmetric" if S_i["expand_dry_moisture"] else "one_sided"
-    if si.format_family(fmt) in si.FILE_CROP_FAMILIES:
+    if one_crop:
+        # units of more than one crop read as one: the command line's own code (--allow-mixed --product)
+        opts_g, _r = er.decoder_options_for_import(
+            dataclasses.replace(opts, test_weight_lb_bu=None, std_moisture_pct=None), {"product": one_crop},
+            one_crop, fmt=fmt)
+        kw = {**kw, "allow_mixed": True}
+    elif si.format_family(fmt) in si.FILE_CROP_FAMILIES:
         opts_g = dataclasses.replace(opts, shrink=sh)
     else:
         R_pre = si.resolve(S_i, crop, None, fmt)
@@ -4534,6 +4612,9 @@ def write_difm(tag: str, clean_shp: str, R: dict | None, kind: str | None = None
         else:
             W = ed.write_zip(clean_shp, zp, source=src, columns=R.get("columns"), map_column=difm_map_column(R),
                              adjustment=adj, adjusted=which == "adjusted", basis=difm_basis(tag, R))
+        oc = (ss.datasets.get(tag) or {}).get("one_crop")
+        if isinstance(oc, dict) and oc.get("lines"):      # tasks read under another crop than they were logged with
+            W["notes"] = list(oc["lines"]) + [n for n in (W.get("notes") or []) if n not in oc["lines"]]
         W["error"] = None
         return W
     except Exception as e:                               # noqa: BLE001 - the cleaning stands without this file
@@ -7791,6 +7872,10 @@ def decoder_report_box(V: dict, D: dict):
     if not rep:
         return
     _, SS_D, SS_how = sms_summary_view(rep, V.get("sms_import"))
+    oc = D.get("one_crop")
+    if isinstance(oc, dict) and oc.get("lines"):           # tasks read under another crop than they were logged with
+        st.caption(":orange[" + str(oc["lines"][0]).replace("[", "(").replace("]", ")") + "]",
+                   help="Chosen in step 1 ('Read the selected tasks as one crop'). " + " ".join(oc["lines"][1:]))
     with st.expander("What the decoder reported", type="compact"):
         st.caption("Units: " + "; ".join(D.get("units") or []))
         if rep.get("points"):
@@ -8633,6 +8718,37 @@ with st.container(border=True, key="oced_step_1"):
                                      "seconds goes to no reading and its last seconds are no readings. Joined: the "
                                      "logs that follow each other without a gap are read as one, which keeps those "
                                      "readings (more readings and grain than SMS holds).")
+                    one_crop = None
+                    mix = crop_mix(chosen)
+                    if mix:
+                        # the tasks of one field and season logged with more than one crop label: said plainly, and
+                        # the choice to read them as one crop (off: one file per crop, as before)
+                        prev_oc = next((ss.datasets[t]["one_crop"] for t in sorted({done_tags[str(i)] for i in
+                                                                                    chosen_ids if str(i) in done_tags})
+                                        if isinstance((ss.datasets.get(t) or {}).get("one_crop"), dict)), None)
+                        st.markdown(":orange[The selected tasks of "
+                                    + ", ".join(f"{m['field'] or '(no field)'} {m['year'] or ''}".strip() for m in mix)
+                                    + " carry more than one crop label]",
+                                    help="Off, each crop becomes its own file. On, they become one file read as the "
+                                         "crop chosen, and every file, record and report of it says which tasks were "
+                                         "logged with another crop.")
+                        st.dataframe(pd.DataFrame([{"crop label": u.crop or "(none)", "task": u.label,
+                                                    "start": u.start, "end": u.end, "records": int(u.n_records or 0)}
+                                                   for m in mix for u in m["units"]]),
+                                     hide_index=True, key=f"mix_{CK}_{n_ex}",
+                                     column_config={"task": st.column_config.TextColumn("task", width="large")})
+                        prods = list(si.SMS_PRODUCTS)
+                        p0 = (prev_oc or {}).get("product")
+                        p0 = p0 if p0 in prods else one_crop_default(mix)
+                        with st.container(horizontal=True):
+                            on = st.checkbox("Read the selected tasks as one crop", value=bool(prev_oc),
+                                             key=f"onecrop_{CK}",
+                                             help="As the command line's --allow-mixed --product: the tasks are "
+                                                  "decoded and imported together with this crop's values.")
+                            prod = st.selectbox("Crop / product", prods, index=prods.index(p0), key=f"onecrop_p_{CK}",
+                                                disabled=not on, label_visibility="collapsed")
+                        if on:
+                            one_crop = prod
                     with st.container(key="run_go"):
                         go = st.button(f"Extract {len(groups)} file" + ("s" if len(groups) != 1 else "") if groups
                                        else "Extract", type="primary", icon=":material/file_export:",
@@ -8646,7 +8762,8 @@ with st.container(border=True, key="oced_step_1"):
                                 made = extract(cand, chosen, opts, kw,
                                                lambda m: (done["log"].append(str(m)), status.text(m)),
                                                warn=lambda m: (done["warnings"].append(str(m)),
-                                                               st.warning(m, icon=":material/warning:")))
+                                                               st.warning(m, icon=":material/warning:")),
+                                               one_crop=one_crop)
                                 ss.datasets.update(made)
                                 again_l = reapply_after_extract(              # a custom import of a replaced file
                                     made, warn=lambda m: (done["warnings"].append(str(m)),

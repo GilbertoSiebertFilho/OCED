@@ -56,7 +56,7 @@ def _flow(hA, M):
     return max(0.0, (x - 1000) / 100.0)
 
 
-def _task(folder, task, field_id, start, n, counters, seed):
+def _task(folder, task, field_id, start, n, counters, seed, crop=CROP):
     import pandas as pd
     rng = np.random.default_rng(seed)
     base = os.path.join(folder, task)
@@ -124,7 +124,7 @@ def _task(folder, task, field_id, start, n, counters, seed):
     so[0:19] = start.strftime("%y/%m/%d-%H:%M:%S").encode().ljust(19, b"\0")
     so[19:25] = bytes(_t6(start))
     so[33:43] = b"Grain Harv"
-    so[52] = CROP
+    so[52] = crop
     so[53:65] = VEHICLE.encode()
     so[120:132] = b"SYNSEAS02026"
     struct.pack_into("<hh", so, 159, OLAT, OLON)
@@ -154,7 +154,9 @@ def _upper_inside(card: str) -> None:
                 os.rename(os.path.join(d, x), os.path.join(d, x.upper()))
 
 
-def make_card(folder: str, name: str = "SYN0001A", upper: bool = False) -> dict:
+def make_card(folder: str, name: str = "SYN0001A", upper: bool = False, second_crop: int | None = None) -> dict:
+    """second_crop: task SYNTSK02 logged with this crop number instead (its table entry a 48 lb/bu, 14.5 % crop),
+    so that the card holds one field and season in two crops; None: the card as before, byte for byte."""
     import pandas as pd
     card = os.path.join(folder, name + ".cn1")
     veh = VEHICLE[:5]
@@ -170,10 +172,17 @@ def make_card(folder: str, name: str = "SYN0001A", upper: bool = False) -> dict:
     ycc = bytearray(65)
     struct.pack_into("<11H", ycc, 0, *CURVE)
     ycc[46] = COMP
+    ycs2 = bytearray(ycs)
+    struct.pack_into("<H", ycs2, 2, 480)
+    ycs2[4], ycs2[6] = 145, 145
     with open(os.path.join(card, "COMBINES", veh, veh + ".ycs"), "wb") as fh:
         fh.write(record(".ycs", struct.pack("<I", CROP), b"", t0, bytes(ycs)))
+        if second_crop is not None:
+            fh.write(record(".ycs", struct.pack("<I", second_crop), b"", t0, bytes(ycs2)))
     with open(os.path.join(card, "COMBINES", veh, veh + ".ycc"), "wb") as fh:
         fh.write(record(".ycc", struct.pack("<I", CROP), b"", t0, bytes(ycc)))
+        if second_crop is not None:
+            fh.write(record(".ycc", struct.pack("<I", second_crop), b"", t0, bytes(ycc)))
     with open(os.path.join(card, "shared", "growers.gws"), "wb") as fh:
         fh.write(record(".gws", b"SYNGRW01", b"", t0, b"Grower A".ljust(18, b"\0")))
     with open(os.path.join(card, "shared", "SYNFARM1.fms"), "wb") as fh:
@@ -186,7 +195,8 @@ def make_card(folder: str, name: str = "SYN0001A", upper: bool = False) -> dict:
     tasks["SYNTSK01"] = _task(fld, "SYNTSK01", b"SYNFLD01", pd.Timestamp("2026-09-14 13:00:00"), 300,
                               list(range(1000, 1300)), seed=1)
     ctr = list(range(5000, 5120)) + list(range(5100, 5180))          # a display restart after 120 records
-    tasks["SYNTSK02"] = _task(fld, "SYNTSK02", b"SYNFLD01", pd.Timestamp("2026-09-14 14:00:00"), 200, ctr, seed=2)
+    tasks["SYNTSK02"] = _task(fld, "SYNTSK02", b"SYNFLD01", pd.Timestamp("2026-09-14 14:00:00"), 200, ctr, seed=2,
+                              crop=CROP if second_crop is None else second_crop)
     if upper:
         _upper_inside(card)
     return {"root": folder, "card": card, "tasks": tasks, "vehicle": VEHICLE, "upper": bool(upper),
