@@ -92,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.6"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.3.7"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -819,11 +819,14 @@ def clean(shp: str, out_dir: str, settings: dict | None = None, log=print, sourc
     return R
 
 
-def small_area_after_clean(R: dict, polygons_path: str, rule: str = "clip", log=print) -> dict:
+def small_area_after_clean(R: dict, polygons_path: str, rule: str = "clip", log=print, extra: dict | None = None,
+                           method: str = "ground", cv_pct=None, interior_m: float = 0.0,
+                           decoded: str | None = None) -> dict:
     """The small area cut AFTER the whole-field cleaning (engine/clean/small_area.py), the same on the command line
     (--small-area / --edge-rule) and in the app: reads the cleaning's flagged file, writes <tag>_small_area.csv and
     <tag>_small_area.zip next to it, adds R['small_area'] (also to the cleaning JSON on disk) and makes the report
-    again with its section. The clean, flagged and DIFM files are not touched. Returns the record."""
+    again with its section. The clean, flagged and DIFM files are not touched. extra: keys added to the record (the
+    app: when it was measured again after a cleaning, and the figures before it). Returns the record."""
     from engine.clean import small_area
     F = R.get("files") or {}
     fz = F.get("flagged_zip")
@@ -831,7 +834,12 @@ def small_area_after_clean(R: dict, polygons_path: str, rule: str = "clip", log=
         raise ValueError("small area: the cleaning has no flagged file to read")
     out = F.get("dir") or os.path.dirname(fz)
     tag = os.path.basename(fz)[:-len("_flagged.zip")] if fz.endswith("_flagged.zip") else         os.path.splitext(os.path.basename(fz))[0]
-    rec = small_area.run(fz, polygons_path, out, tag, rule, log=log)
+    # grain / ground also reads the readings the import left out: from the decoded file given (the app's), else the
+    # one the cleaning's import record names (found again in the work's decoded/ folder)
+    rec = small_area.run(fz, polygons_path, out, tag, rule, log=log, method=method, cv_pct=cv_pct,
+                         interior_m=interior_m, decoded=decoded, R=R)
+    if extra:
+        rec.update(extra)
     R["small_area"] = rec
     F["small_area_csv"], F["small_area_zip"] = rec["files"]["csv"], rec["files"]["zip"]
     js = F.get("json")
@@ -849,6 +857,40 @@ def small_area_after_clean(R: dict, polygons_path: str, rule: str = "clip", log=
         except Exception as e:                       # the figures stay in the JSON and the CSV
             log(f"WARNING: the report could not be made again with the small area: {type(e).__name__}: {e}")
     return rec
+
+
+def small_area_remove(R: dict, log=print) -> bool:
+    """The small area of a cleaning taken away (the app's 'Remove the small area'): R['small_area'] and its files
+    (<tag>_small_area.csv, .zip, _parts.zip) removed, the cleaning JSON and the report made again without it. The
+    clean, flagged and DIFM files are not touched. True when there was one."""
+    X = R.pop("small_area", None)
+    F = R.get("files") or {}
+    for k in ("small_area_csv", "small_area_zip"):
+        F.pop(k, None)
+    if not X:
+        return False
+    for p in [(X.get("files") or {}).get(k) for k in ("csv", "zip", "parts_zip", "ground_zip")]:
+        if p and os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    js = F.get("json")
+    if js and os.path.exists(js):
+        with open(js, encoding="utf-8") as f:
+            D = json.load(f)
+        D.pop("small_area", None)
+        for k in ("small_area_csv", "small_area_zip"):
+            (D.get("files") or {}).pop(k, None)
+        with open(js, "w", encoding="utf-8") as f:
+            json.dump(D, f, indent=1, default=yield_clean._json_default)
+    if F.get("report_pdf"):
+        try:
+            from engine.report.clean_report import make_report
+            make_report(R, F["report_pdf"])
+        except Exception as e:                       # the record stands
+            log(f"WARNING: the report could not be made again without the small area: {type(e).__name__}: {e}")
+    return True
 
 
 def advice(R: dict) -> list[str]:
@@ -1331,6 +1373,65 @@ def find_boundary(root: str) -> str | None:
             if "polygon" in gt.lower():
                 return p
     return None
+
+
+POLYGON_EXTS = (".geojson", ".json", ".gpkg", ".kml", ".kmz", ".shp")
+POLYGON_WALK_MAX = 20000          # files looked at under the input roots (a large card folder: the first ones only)
+POLYGON_EXPORT_MIN = 12           # a polygon file with more features than this AND a yield / rate column: an export
+
+
+def polygon_layers(roots, max_files: int = POLYGON_WALK_MAX) -> list:
+    """The polygon files carried with the data under the input roots (app step 1, 'Found in the input'): every
+    .shp / .geojson / .json / .gpkg / .kml / .kmz with a polygon geometry, as [{path, name, n_polygons, area_ac,
+    is_plan, needs_choice, zones: [class column candidates of 2 to 12 zones], kinds: ['boundary'] (+ 'zones')}].
+    A yield or as-applied POLYGON export (a yield or rate column and more than POLYGON_EXPORT_MIN polygons) is left
+    out. Nothing is applied here: a polygon layer in a card can be a trial plan, a prescription or a guidance area."""
+    import pyogrio
+    out, seen, n = [], set(), 0
+    for root in [r for r in (roots or []) if r and os.path.isdir(str(r))]:
+        for dp, dn, fn in os.walk(str(root)):
+            dn.sort()
+            for f in sorted(fn):
+                n += 1
+                if n > max_files:
+                    return out
+                if os.path.splitext(f)[1].lower() not in POLYGON_EXTS:
+                    continue
+                p = os.path.abspath(os.path.join(dp, f))
+                if os.path.normcase(p) in seen:
+                    continue
+                seen.add(os.path.normcase(p))
+                try:
+                    info = pyogrio.read_info(p)
+                except Exception:                    # noqa: BLE001 - not a vector file OCED can read
+                    continue
+                if "polygon" not in str(info.get("geometry_type") or "").lower():
+                    continue
+                fields = [str(x) for x in (info.get("fields") if info.get("fields") is not None else [])]
+                nf = int(info.get("features") or 0)
+                det = yield_clean.detect_columns(fields)
+                ratey = bool(det.get("yield") or det.get("wet_mass_lbac")) or any(
+                    str(c).lower().startswith(("rt_apd", "rt_tgt", "rate", "appl")) for c in fields)
+                if ratey and nf > POLYGON_EXPORT_MIN:
+                    continue                         # a yield / as-applied polygon export, not a boundary
+                rec = {"path": p, "name": os.path.basename(p), "n_polygons": nf, "area_ac": None, "is_plan": False,
+                       "needs_choice": False, "zones": [], "kinds": ["boundary"]}
+                try:
+                    P = read_plan(p)
+                    rec.update(n_polygons=int(P["n_polygons"]), area_ac=float(P["area_ac"]),
+                               is_plan=bool(P.get("is_plan")), needs_choice=bool(P.get("needs_choice")))
+                except Exception:                    # noqa: BLE001 - listed without its area; the app says why at Use
+                    pass
+                try:
+                    from engine import zones as _zn
+                    zm = _zn.prepare(p, None)
+                    rec["zones"] = [dict(c) for c in zm.columns if 2 <= int(c.get("n_classes") or 0) <= 12]
+                except Exception:                    # noqa: BLE001 - no zone column
+                    rec["zones"] = []
+                if rec["zones"]:
+                    rec["kinds"].append("zones")
+                out.append(rec)
+    return out
 
 
 # ================================================================================================ field of interest
@@ -1918,8 +2019,20 @@ def main(argv=None) -> int:
                          "kml / kmz; one or several polygons, named by their name column or numbered); the kept "
                          "readings counted per polygon go to <tag>_small_area.csv / .zip (engine/clean/small_area.py)")
     ap.add_argument("--edge-rule", choices=["clip", "full", "point"], default="clip",
-                    help="small area: clip = the footprint clipped by the polygon's line (area-weighted; default), "
-                         "full = the whole footprint inside (as SMS's query), point = the reading's point inside")
+                    help="small area, the cleaned map average: clip = the footprint clipped by the polygon's line "
+                         "(area-weighted; default), full = the whole footprint inside (as SMS's query), point = the "
+                         "reading's point inside")
+    ap.add_argument("--small-area-method", choices=["ground", "cleaned", "sms"], default="ground",
+                    help="small area: the figure it leads with (all three are measured): ground = grain / ground "
+                         "(default: every reading inside, the removed and the import's left-out ones too, each "
+                         "logged strip clipped by the line, grain over the ground the strips cover), cleaned = the "
+                         "cleaned map average (0.3.6), sms = as SMS's query (whole strips inside)")
+    ap.add_argument("--small-area-cv", type=float, default=None, metavar="PCT",
+                    help="small area: the load-to-load CV (%%) of the combine's calibration: the calibration range "
+                         "(+- 1.96 x CV x yield) and the differences between polygons")
+    ap.add_argument("--small-area-interior", type=float, default=0.0, metavar="M",
+                    help="small area: metres off each end of every polygon along its long axis (the ends of a pass "
+                         "read low, so the interior reads higher than the whole pass; default 0)")
     a = ap.parse_args(argv)
     try:
         return _cli(a)
@@ -2189,7 +2302,9 @@ def _cli(a) -> int:
     R = clean(shp, out, settings, log=lambda m: _print("  " + m), source=dec["source"] if dec else None,
               inputs_left_out=list(cand.get("inputs_left_out") or []) + aoi_left_out)
     if a.small_area:
-        small_area_after_clean(R, os.path.abspath(a.small_area), a.edge_rule, log=lambda m: _print("  " + m))
+        small_area_after_clean(R, os.path.abspath(a.small_area), a.edge_rule, log=lambda m: _print("  " + m),
+                               method=a.small_area_method, cv_pct=a.small_area_cv,
+                               interior_m=float(a.small_area_interior or 0.0))
     _print("")
     _print(pd.DataFrame(R["cascade"])[["filter", "on", "removed", "remaining"]].to_string(index=False))
     f8 = R["f8"]

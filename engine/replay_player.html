@@ -329,6 +329,7 @@ canvas.zchart { width: 100%; height: 92px; display: block; margin: 2px 0 6px; }
       <button class="tbtn" id="b-zin" title="Zoom in (+)" aria-label="Zoom in"></button>
       <button class="tbtn" id="b-zout" title="Zoom out (-)" aria-label="Zoom out"></button>
       <button class="tbtn" id="b-fit" title="Fit the field (0)" aria-label="Fit the field"></button>
+      <button class="tbtn" id="b-sa" title="Zoom to the small area (A)" aria-label="Zoom to the small area" hidden></button>
     </div>
   </div>
   <div class="rp-panel glass" id="panel">
@@ -515,6 +516,7 @@ const C = P.combines.map((c) => {
     painted: -1, idx: -1, ang: null, px: NaN, py: NaN, reel: Math.random() * 6, steer: 0, lastWork: false });
 });
 const MAKES = P.makes;
+const SA = P.small_area || null;        // the small area of the cleaning shown (polygons, names, box), app step 3
 const T_END = P.t_end || 0;
 const IDLE = (P.idle || []).slice().sort((a, b) => a[0] - b[0]);
 const KIND = P.kind;
@@ -620,7 +622,9 @@ for (const k of ["yield", "moisture", "speed"]) {
 }
 const GREY = "#5E6B79", NOVAL = "rgba(176,184,192,0.85)", KEPT = "#00B373";
 const MODES = [["yield", "Yield"], ["moisture", "Moisture"], ["speed", "Speed"], ["combine", "Combine"]];
+const IMP_ED = !!(P.manual && P.manual.stage === "import");   // the imported readings with edits by hand (step 2)
 if (KIND === "clean") MODES.push(["kept", "Kept / removed"]);
+else if (IMP_ED) MODES.push(["kept", "Kept / removed by hand"]);
 if (HAS_Z) MODES.push(["zone", "Zone"]);
 // bucket of each reading for a mode: 0..NB-1 ramp, NB+ci combine, 100+2*zone+border management zone, 200 kept,
 // 201 removed / no value
@@ -673,10 +677,10 @@ function rate() { return S.speed === "min" ? workTotal / 60 : S.speed; }
 
 /* ------------------------------------------------------------------ the view (Web Mercator) */
 const scaleAt = (z) => 256 * Math.pow(2, z) / TWO_PI_R;      // css px per mercator metre
-function fit(animate) {
-  const bb = P.bbox; if (!bb) return;
+function fit(animate, box) {
+  const bb = box || P.bbox; if (!bb) return;
   let x0 = mx(bb[0]), x1 = mx(bb[2]), y0 = my(bb[1]), y1 = my(bb[3]);
-  if (P.outline && P.outline.length) {
+  if (!box && P.outline && P.outline.length) {
     for (const ring of P.outline) for (const [lo, la] of ring) {
       x0 = Math.min(x0, mx(lo)); x1 = Math.max(x1, mx(lo)); y0 = Math.min(y0, my(la)); y1 = Math.max(y1, my(la));
     }
@@ -851,6 +855,26 @@ function paintBase() {
       for (const ring of P.outline) ring.forEach(([lo, la], i) => { const x = lx(l, mx(lo)), y = ly(l, my(la)); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
       g.stroke();
     }
+  }
+}
+// the small area (step 3 of the app): its polygons in yellow over a dark halo, each with its name, over the readings
+const SA_M = (P.small_area && P.small_area.polygons || []).map((pg) => ({ name: pg.name,
+  rings: pg.rings.map((r) => r.map(([lo, la]) => [mx(lo), my(la)])), label: pg.label ? [mx(pg.label[0]), my(pg.label[1])] : null }));
+function drawSmallArea(s) {
+  if (!SA_M.length) return;
+  const ox = S.W / 2 - S.cx * s, oy = S.H / 2 + S.cy * s;
+  ctx.lineJoin = "round";
+  for (const pass of [["rgba(20,20,0,0.6)", 4.2], ["#FFD600", 2.0]]) {
+    ctx.strokeStyle = pass[0]; ctx.lineWidth = pass[1]; ctx.beginPath();
+    for (const pg of SA_M) for (const ring of pg.rings) ring.forEach(([x, y], i) => { const px = x * s + ox, py = oy - y * s; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+    ctx.stroke();
+  }
+  ctx.font = "600 12px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const pg of SA_M) {
+    if (!pg.label) continue;
+    const px = pg.label[0] * s + ox, py = oy - pg.label[1] * s;
+    ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(20,20,0,0.75)"; ctx.strokeText(pg.name, px, py);
+    ctx.fillStyle = "#FFF59D"; ctx.fillText(pg.name, px, py);
   }
 }
 function zonePath(l, z) {           // the rings of one management zone in a layer's px
@@ -1493,6 +1517,7 @@ function frame(now) {
   if (S.ahead) drawLayer(L.ahead, 0.55);
   drawLayer(L.ground);
   const s = scaleAt(S.z), pxPerM = s * K_GROUND;
+  drawSmallArea(s);
   drawMarks(s);
   // the strip each combine is cutting now, up to its header
   for (const c of C) {
@@ -2029,7 +2054,10 @@ cv.addEventListener("wheel", (ev) => {
    into the engine's reading keys, writes the edits file and cleans again. The standalone file shows the marks of a
    cleaning made with edits, read-only. */
 const ED = P.edit || null;
-const EDIT_ON = !!(CFG.edit && ED && KIND === "clean");
+// the imported readings (step 2 of the app, 0.3.7): a click removes any reading or puts back one removed by hand;
+// nothing is kept by hand before a cleaning, and 'Apply these edits' cleans nothing
+const IMP = !!(ED && ED.stage === "import");
+const EDIT_ON = !!(CFG.edit && ED && (KIND === "clean" || IMP));
 const EDIT_OK = EDIT_ON && !!ED.ok;
 const MAN = P.manual || null;
 const STEPN = P.step_names || {};
@@ -2042,6 +2070,7 @@ for (const c of C) {
   const dq = (k, sc) => { if (!d[k]) return null; const v = decode(d[k], n); for (let i = 0; i < n; i++) v[i] = v[i] < 0 ? NaN : v[i] * sc; return v; };
   c.yf = dq("yf", 0.1); c.sf = dq("sf", 0.01); c.wl = dq("wl", 0.01);
   c.e = d.e ? decode(d.e, n) : null;
+  c.sp = d.sp ? decode(d.sp, n) : null; c.ss = d.ss ? decode(d.ss, n) : null;   // the small area: polygon, share (0.1 %)
 }
 const MK = new Map();                  // num * 1e7 + i -> 1 remove, 2 keep
 const keyOf = (c, i) => c.num * 1e7 + i;
@@ -2064,6 +2093,7 @@ function cutWhy(code) {
   return "";
 }
 function clickTarget(c, i) {           // what a click does on an unmarked reading: 1 remove, 2 keep, 0 nothing
+  if (IMP) return 1;                    // the imported readings: any reading can be removed by hand
   const code = codeOf(c, i);
   if (!(c.f[i] & 2) || code === "SM") return 1;
   const p = code.slice(0, 2);
@@ -2071,6 +2101,7 @@ function clickTarget(c, i) {           // what a click does on an unmarked readi
 }
 function stateText(c, i) {
   const code = codeOf(c, i), st = c.e ? (c.e[i] & 3) : 0, au = autoOf(c, i);
+  if (IMP_ED) return st === 1 || code === "SM" ? "Removed by hand (before any cleaning)" : "As imported";
   const auto = c.e ? ` (the automatic cleaning: ${au ? "removed by " + esc(stepName(au)) : "kept"})` : "";
   if (st === 1 || code === "SM") return "Removed by hand" + auto;
   if (st === 2) return "Kept by hand" + auto;
@@ -2178,7 +2209,7 @@ function marksOut() {
 function reprocess() {
   if (!EDIT_OK || E.sent) return;
   const m = marksOut();
-  if (!m.changed) { toast("The marks are the edits of this cleaning: nothing to reprocess"); return; }
+  if (!m.changed) { toast(IMP ? "The marks are the edits of these readings: nothing to apply" : "The marks are the edits of this cleaning: nothing to reprocess"); return; }
   E.sent = true; E.posted.push(m);
   try { window.parent.postMessage(m, "*"); } catch (e) { E.sent = false; toast("The marks could not be sent to the app"); }
   buildEditPanel();
@@ -2215,6 +2246,24 @@ function buildEditPanel() {
     return `<tr><td><span class="num" style="background:${c.color}">${c.num}</span> ${esc(c.name)}</td><td>${fmt(by[c.num][0], 0)}</td><td>${fmt(by[c.num][1], 0)}</td></tr>`; }).join("");
   const ch = changed(), mk = (ED && ED.min_kept) || 0, ka = mk ? keptAfter() : null;
   const low = !!(mk && ch && ka < mk);
+  if (IMP) {
+    el.innerHTML = `<div class="ph"><span>Edit points</span><button class="linkbtn" id="e-x" title="Leave Edit points">Done</button></div>
+    <div class="ehelp">Click a reading to <b>remove</b> it by hand; click a reading removed by hand (a cross) to <b>put it back</b>. <b>Shift + drag</b> (or Box) marks many. Nothing is cleaned: the edits go with this file to the downloads without cleaning and to every cleaning of it.</div>
+    <div class="erow"><button class="btn${E.box ? " on" : ""}" id="e-box" title="Draw a box (a touch screen: the next drag)" aria-pressed="${E.box}">${I.box} Box</button>
+      <button class="btn" id="e-undo" title="Undo (Ctrl+Z)"${HIST.length ? "" : " disabled"}>${I.undo} Undo</button>
+      <button class="btn" id="e-clear" title="Clear every mark (Apply then puts every reading back)"${MK.size ? "" : " disabled"}>Clear marks</button></div>
+    <button class="btn primary" id="e-go"${(ch && !E.sent) ? "" : " disabled"}>${E.sent ? "Applying in the app ..." : "Apply these edits"}</button>
+    <div class="small" style="margin-bottom:6px">${ch ? `${fmt(ch, 0)} mark(s) differ from the edits of this file.` : (MK.size ? "These marks are the edits of this file." : "No mark yet.")}${ch && ka !== null ? ` ${fmt(ka, 0)} reading(s) stay.` : ""}</div>
+    ${low ? `<div class="ewarn" id="e-low">These marks remove every reading of the file.</div>` : ""}
+    <table class="etab"><thead><tr><th>Combine</th><th><span class="sym">${SYM.rm}</span>Removed by hand</th></tr></thead><tbody>${C.map((c) => `<tr><td><span class="num" style="background:${c.color}">${c.num}</span> ${esc(c.name)}</td><td>${fmt(by[c.num][0], 0)}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><td>All</td><td>${fmt(tr, 0)}</td></tr></tfoot></table>`;
+    $("e-x").addEventListener("click", () => setEdit(false));
+    $("e-box").addEventListener("click", () => { E.box = !E.box; buildEditPanel(); root.classList.toggle("boxing", E.box); });
+    $("e-undo").addEventListener("click", undo);
+    $("e-clear").addEventListener("click", clearMarks);
+    $("e-go").addEventListener("click", reprocess);
+    return;
+  }
   el.innerHTML = `<div class="ph"><span>Edit points</span><button class="linkbtn" id="e-x" title="Leave Edit points">Done</button></div>
     <div class="ehelp">Click a <b>kept</b> reading to remove it, a reading the <b>moisture, speed or yield</b> filter removed to keep it; click a mark to clear it. <b>Shift + drag</b> (or Box) marks many. The import range, the clip and the swath step cannot be changed by hand.</div>
     <div class="erow"><button class="btn${E.box ? " on" : ""}" id="e-box" title="Draw a box (a touch screen: the next drag)" aria-pressed="${E.box}">${I.box} Box</button>
@@ -2262,8 +2311,8 @@ function boxMenu(x0, y0, x1, y1) {
   E.pend = list;
   const m = $("boxmenu");
   m.innerHTML = `<div class="bmt">${fmt(list.length, 0)} reading(s) in the box</div>
-    <button class="btn" data-a="remove"${nr ? "" : " disabled"}><span class="sym">${SYM.rm}</span>Remove the kept ones (${fmt(nr, 0)})</button>
-    <button class="btn" data-a="keep"${nk ? "" : " disabled"}><span class="sym">${SYM.kp}</span>Keep the removed ones (${fmt(nk, 0)})</button>
+    <button class="btn" data-a="remove"${nr ? "" : " disabled"}><span class="sym">${SYM.rm}</span>${IMP ? "Remove them" : "Remove the kept ones"} (${fmt(nr, 0)})</button>
+    ${IMP ? "" : `<button class="btn" data-a="keep"${nk ? "" : " disabled"}><span class="sym">${SYM.kp}</span>Keep the removed ones (${fmt(nk, 0)})</button>`}
     <button class="btn" data-a="clear"${nc ? "" : " disabled"}>Clear marks (${fmt(nc, 0)})</button>
     <button class="linkbtn" data-a="cancel">Cancel</button>`;
   m.hidden = false;
@@ -2305,13 +2354,17 @@ function cardHtml(c, i) {
   rows.push(`<div class="cr"><span>Speed</span><span><b>${fmt(sv, 2)}</b> mph${c.sf && Math.abs(c.sf[i] - c.s[i]) > 0.005 ? ` <i>(after the swath step; logged ${fmt(c.s[i], 2)})</i>` : ""}${KIND === "clean" ? outTxt(c, i, sv, "speed") : ""} ${sl}</span></div>`);
   rows.push(`<div class="cr"><span>Swath width</span><span><b>${fmt(ft(c.w[i]), 1)}</b> ft${c.wl && Math.abs(c.wl[i] - c.w[i]) > 0.005 ? ` <i>(logged ${fmt(ft(c.wl[i]), 1)})</i>` : ""} · distance <b>${fmt(ft(c.dist[i]), 1)}</b> ft</span></div>`);
   if (HAS_Z && c.zb) { const z = zoneOf(c.zb[i] >> 1); rows.push(`<div class="cr"><span>Zone</span><span>${zSwatch(z)} ${esc(z.label)}${c.zb[i] & 1 ? " (on a border)" : ""}</span></div>`); }
-  if (KIND === "clean") {
+  if (SA && c.sp && c.sp[i] > 0) {
+    const pg = SA.polygons[c.sp[i] - 1], sh = c.ss ? c.ss[i] / 10 : null;
+    if (pg) rows.push(`<div class="cr"><span>Small area</span><span><b>${esc(pg.name)}</b>${sh !== null ? ` · ${fmt(sh, 1)} % of its strip counted` : ""}</span></div>`);
+  }
+  if (KIND === "clean" || IMP_ED) {
     rows.push(`<div class="cr"><span>State</span><span>${stateText(c, i)}</span></div>`);
     if (EDIT_OK && S.edit) {
       const v = MK.get(keyOf(c, i)) || 0, b = BASE.get(keyOf(c, i)) || 0, t = clickTarget(c, i);
       const mk = v === 1 ? `<span class="sym">${SYM.rm}</span>marked remove` : v === 2 ? `<span class="sym">${SYM.kp}</span>marked keep` : "no mark";
-      const nx = v ? "click: clear the mark" : t === 1 ? "click: remove it by hand" : t === 2 ? "click: keep it by hand" : esc(cutWhy(codeOf(c, i)));
-      rows.push(`<div class="cr cm"><span>Mark</span><span>${mk}${v !== b ? " (not yet reprocessed)" : ""} · <i>${nx}</i></span></div>`);
+      const nx = IMP ? (v ? "click: put it back" : "click: remove it by hand") : v ? "click: clear the mark" : t === 1 ? "click: remove it by hand" : t === 2 ? "click: keep it by hand" : esc(cutWhy(codeOf(c, i)));
+      rows.push(`<div class="cr cm"><span>Mark</span><span>${mk}${v !== b ? (IMP ? " (not yet applied)" : " (not yet reprocessed)") : ""} · <i>${nx}</i></span></div>`);
     }
   }
   return rows.join("");
@@ -2368,12 +2421,12 @@ function drawMarks(s) {
   }
 }
 function editLegend() {
-  if (KIND !== "clean") return "";
+  if (KIND !== "clean" && !IMP_ED) return "";
   let nr = 0, nk = 0; MK.forEach((v) => { if (v === 1) nr++; else nk++; });
   const mv = MOVED.filter(([c, i]) => !MK.has(keyOf(c, i))).length;
   if (!nr && !nk && !mv && !S.edit) return "";
   return `<div class="lchips eds" style="margin-top:7px"><div class="lchip"><span class="sym">${SYM.rm}</span>Removed by hand<em>${fmt(nr, 0)}</em></div>` +
-    `<div class="lchip"><span class="sym">${SYM.kp}</span>Kept by hand<em>${fmt(nk, 0)}</em></div>` +
+    (IMP_ED ? "" : `<div class="lchip"><span class="sym">${SYM.kp}</span>Kept by hand<em>${fmt(nk, 0)}</em></div>`) +
     (mv ? `<div class="lchip" title="Readings in neither list whose fate differs from the automatic cleaning: the limits moved"><span class="sym">${SYM.mv}</span>Fate moved with the limits<em>${fmt(mv, 0)}</em></div>` : "") + "</div>";
 }
 /* pointer: a tap marks (edit) or shows the card; hover shows the card; Shift + drag or Box draws a box */
@@ -2415,8 +2468,14 @@ function editKey(ev) {                // Escape: the box menu, the box; Ctrl+Z: 
   if ((ev.ctrlKey || ev.metaKey) && (ev.key === "z" || ev.key === "Z")) { ev.preventDefault(); undo(); return true; }
   return false;
 }
+if (SA && SA.bbox) {
+  $("b-sa").hidden = false;
+  $("b-sa").innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg>';
+  $("b-sa").addEventListener("click", () => { setFollow(0); fit(true, SA.bbox); });
+}
 if (EDIT_ON) {
   $("b-edit").hidden = false;
+  if (IMP) $("b-edit").title = "Edit points: remove readings by hand or put them back, then apply (nothing is cleaned)";
   if (!EDIT_OK) { $("b-edit").classList.add("off"); $("b-edit").title = ED.why || "This replay cannot be edited"; }
   $("b-edit").addEventListener("click", () => setEdit(!E.on));
 }
@@ -2436,6 +2495,7 @@ window.addEventListener("keydown", (ev) => {
   else if (k === "+" || k === "=") zoomStep(1);
   else if (k === "-" || k === "_") zoomStep(-1);
   else if (k === "0") { setFollow(0); fit(true); }
+  else if ((k === "a" || k === "A") && SA && SA.bbox) { setFollow(0); fit(true, SA.bbox); }
   else if (k === "f" || k === "F") $("b-full").click();
   else if (/^[1-9]$/.test(k) && +k <= C.length) setFollow(S.follow === +k ? 0 : +k);
 });
@@ -2491,7 +2551,7 @@ function readHash() {
   return h;
 }
 $("title").textContent = P.title; $("title").title = P.file;
-$("kicker").textContent = KIND === "clean" ? "Harvest replay · cleaning result" : "Harvest replay · readings as imported";
+$("kicker").textContent = KIND === "clean" ? "Harvest replay · cleaning result" : (IMP_ED && P.manual.removed_by_hand) ? "Harvest replay · readings as imported, with edits by hand" : "Harvest replay · readings as imported";
 $("zone").textContent = HAS_CLOCK ? "Clock: " + P.basis.zone : "No clock in the file";
 $("note").textContent = P.basis.kind === "clock" ? "" : P.basis.note;
 buildPanel(); buildSegs(); buildZonePanel();

@@ -259,7 +259,8 @@ for k, v in {"workdir": None, "cands": None, "open_error": None, "open_exc": Non
              "open_log": [], "units": {}, "datasets": {}, "cleaned": {}, "active": None, "boundary": {},
              "grower": {}, "a3set": {}, "smsset": None, "input_label": None, "work_saved": None, "cfset": {},
              "work_saved_at": None, "work_msg": None, "work_nonce": 0, "last_cand": None, "open_fail_log": [],
-             "last_open_path": None, "left_out": [], "away": {}, "away_order": []}.items():
+             "last_open_path": None, "left_out": [], "away": {}, "away_order": [], "small_area": {},
+             "field_files": None, "ff_nonce": 0, "asis_make": {}}.items():
     ss.setdefault(k, v)
 
 
@@ -298,6 +299,24 @@ def content_sig(shp: str | None) -> str | None:
         except OSError:
             return None
     return h.hexdigest()
+
+
+@st.cache_data(max_entries=32, show_spinner=False)
+def _content_sig_cached(shp: str, mt: float, size: int) -> str | None:
+    return content_sig(shp)
+
+
+def content_sig_of(shp: str | None) -> str | None:
+    """content_sig, computed once per file version (its path, modification time and size): the files of step 2's
+    'Without cleaning' check it on every run."""
+    if not shp or not os.path.exists(str(shp)):
+        return None
+    dbf = os.path.splitext(str(shp))[0] + ".dbf"
+    try:
+        st_s, st_d = os.stat(shp), os.stat(dbf)
+    except OSError:
+        return content_sig(shp)
+    return _content_sig_cached(str(shp), max(st_s.st_mtime, st_d.st_mtime), st_s.st_size + st_d.st_size)
 
 
 def stamp(shp: str | None) -> dict:
@@ -482,12 +501,17 @@ def _forget_work(clear_inputs: bool = False):
     ss.open_log, ss.units, ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set = [], {}, {}, {}, {}, {}, {}
     ss.cfset, ss.open_fail_log = {}, []
     ss.away, ss.away_order = {}, []   # files of the work set aside while their points are away (restore_work)
+    ss.field_files = {"boundary": None, "zones": None, "found": [], "use": {}, "feature": {}}   # step 1 (0.3.7)
+    ss.small_area = {}               # the small area kept per harvest file, measured again after every cleaning
+    ss.asis_make = {}                # step 2's files without cleaning asked for (or edits made) in this session
+    for k in ("_ff_variants", "ff_change_b", "ff_change_z"):
+        ss.pop(k, None)
     ss.left_out = []                 # the inputs left out when this work's data was opened (a damaged zip)
     ss.workdir = None
     ss.input_label = ss.work_saved = ss.work_saved_at = ss.work_msg = None
     for k in ("work_name", "work_name_for", "active_pick", "save_request", "default_failed"):
         ss.pop(k, None)
-    prefixes = WORK_PER_FILE_KEYS + (("path_in", "uploads") if clear_inputs else ())
+    prefixes = WORK_PER_FILE_KEYS + (("path_in", "uploads", "ff_path_", "ff_up_") if clear_inputs else ())
     for k in [k for k in ss if str(k).startswith(prefixes)]:
         ss.pop(k, None)
     ss.work_nonce = int(ss.get("work_nonce") or 0) + 1
@@ -522,6 +546,7 @@ def start_over():
     _forget_work(clear_inputs=True)
     # a file uploader keeps its files until it is created again: a new key empties the upload fields
     ss.up_nonce = int(ss.get("up_nonce") or 0) + 1
+    ss.ff_nonce = int(ss.get("ff_nonce") or 0) + 1     # the field files panel's uploaders too
 
 
 def request_open(source):
@@ -782,7 +807,7 @@ def outline_layer(outline):
                      get_width=1, width_min_pixels=2, width_max_pixels=4, pickable=False)
 
 
-def deck(layers, lon, lat, height, tooltip=None, width=900):
+def deck(layers, lon, lat, height, tooltip=None, width=900, max_zoom: float = 17):
     lon, lat = np.asarray(lon, float), np.asarray(lat, float)
     ok = np.isfinite(lon) & np.isfinite(lat)
     if not ok.any():                                 # nothing with a position: no map (never a crash)
@@ -795,7 +820,7 @@ def deck(layers, lon, lat, height, tooltip=None, width=900):
     z_w = np.log2(0.9 * width * 360.0 / (512.0 * max(lo1 - lo0, 1e-6)))
     z_h = np.log2(0.9 * height * 360.0 * coslat / (512.0 * max(la1 - la0, 1e-6)))
     view = pdk.ViewState(latitude=(la0 + la1) / 2, longitude=(lo0 + lo1) / 2,
-                         zoom=float(np.clip(min(z_w, z_h), 9, 17)))
+                         zoom=float(np.clip(min(z_w, z_h), 9, max_zoom)))
     st.pydeck_chart(_CompactDeck(layers=layers, initial_view_state=view, map_style=SATELLITE_STYLE_URL,
                                  tooltip=tooltip), height=height)
 
@@ -1174,18 +1199,19 @@ def _outline_of(geom) -> list:
     return out
 
 
-def load_boundary(tag: str, source, feature=None) -> dict:
+def load_boundary(tag: str, source, feature=None, folder: str | None = None) -> dict:
     """A boundary file for the extracted file `tag`: source ('upload', [UploadedFile]) or ('path', str), or the
-    path of a boundary already loaded (a new choice of field). The uploads go to boundary/<tag>/ in the work folder.
-    Returns {path, name, n_polygons, area_ac, needs_choice, fields, feature, is_plan, warnings, outline}; raises
-    ValueError when the file is not a polygon file OCED can read."""
+    path of a boundary already loaded (a new choice of field). The uploads go to boundary/<tag>/ in the work folder
+    (folder: another folder, the field files' field_files/boundary/). Returns {path, name, n_polygons, area_ac,
+    needs_choice, fields, feature, is_plan, warnings, outline}; raises ValueError when the file is not a polygon file
+    OCED can read."""
     kind, val = source
     if kind == "upload":
         low = [os.path.basename(f.name).lower() for f in val]
         dup = sorted({n for n in low if low.count(n) > 1})
         if dup:
             raise ValueError(f"two boundary files are named {dup[0]}: give one boundary (one shapefile set, or a zip)")
-        d = os.path.join(ss.workdir, "boundary", tag)
+        d = folder or os.path.join(ss.workdir, "boundary", tag)
         if os.path.isdir(d):
             shutil.rmtree(d, ignore_errors=True)
         os.makedirs(d, exist_ok=True)
@@ -1238,9 +1264,378 @@ def chosen_fields(B: dict) -> str:
 
 
 def boundary_of(tag: str) -> dict | None:
-    """The boundary of an extracted file, when one is given and usable (a file of several fields needs its choice)."""
+    """The boundary of a file of the work, when one is given and usable (a file of several fields needs its choice):
+    1 none when the file is set to 'No boundary for this file' (field files' use 'none'); 2 the file's own (step 3,
+    ss.boundary); 3 the field boundary of the work (step 1's field files) when it covers the file (at least
+    er.AOI_PRESELECT_SHARE of its located readings inside it + er.AOI_BUFFER_M; of a file of several fields, the
+    polygon holding most of them, or the polygons chosen for the file in step 3); else none. The dict carries source
+    'own' or 'field'. Every caller (the clip and field of interest, the outlines, the replays, the action tree) goes
+    through it; the cleaning's config [path, features, fingerprint] is the same whichever level it came from."""
+    use = (ff().get("use") or {}).get(tag)
+    if use == "none":
+        return None
     B = ss.boundary.get(tag)
-    return B if (B and not B.get("needs_choice") and os.path.exists(B["path"])) else None
+    if B:
+        if B.get("needs_choice") or not os.path.exists(B["path"]):
+            return None
+        B.setdefault("source", "own")
+        return B
+    return field_boundary_status(tag)["B"]
+
+
+# ---- the field files of the work (0.3.7): one field boundary and one management zone map, given in step 1 for every
+# harvest file of the work (each file can still have its own: step 3's boundary box, its replay's zone map)
+FF_DIR = "field_files"
+
+
+def ff() -> dict:
+    """The field files of the work in the session: {boundary: load_boundary's dict of the whole file (uploads kept in
+    <work>/field_files/boundary/) | None, zones: the zone record (replay_view: path, name, column, fingerprint,
+    stamp; uploads in <work>/field_files/zones/) | None, found: [polygon files found in the input], use: {tag: 'own' |
+    'none'} (absent: the field boundary), feature: {tag: [polygon indices]}}."""
+    F = ss.get("field_files")
+    if not isinstance(F, dict):
+        F = {}
+        ss["field_files"] = F
+    F.setdefault("boundary", None)
+    F.setdefault("zones", None)
+    for k in ("found",):
+        if not isinstance(F.get(k), list):
+            F[k] = []
+    for k in ("use", "feature"):
+        if not isinstance(F.get(k), dict):
+            F[k] = {}
+    return F
+
+
+def field_boundary() -> dict | None:
+    """The work's field boundary (the whole file), when it is given and its file is there."""
+    B = ff().get("boundary")
+    return B if (isinstance(B, dict) and B.get("path") and os.path.exists(B["path"])) else None
+
+
+def field_zone_map() -> dict | None:
+    """The work's management zone map (step 1), the record replay_view takes as field_zone, or None."""
+    Z = ff().get("zones")
+    return Z if isinstance(Z, dict) and Z.get("path") else None
+
+
+def set_field_zone_column(col: str):
+    """A new class column for the work's zone map (chosen in a replay or in step 1)."""
+    Z = field_zone_map()
+    if Z:
+        ff()["zones"] = dict(Z, column=col)
+        save_current(quiet=True)
+
+
+@st.cache_data(max_entries=32, show_spinner=False)
+def boundary_shares(shp: str, mt: float, bpath: str, fingerprint: str) -> dict:
+    """The share of the located readings of a point file that lie inside a boundary file + er.AOI_BUFFER_M: {'union':
+    share inside the union of its polygons, 'fields': {polygon index (1-based): share}} (fields only for a file of
+    several field boundaries), 'n': the located readings. Cached per file, its time, the boundary and its
+    fingerprint."""
+    import shapely
+    df = read_points(shp, mt)
+    lon = pd.to_numeric(df["lon"], errors="coerce").to_numpy(float)
+    lat = pd.to_numeric(df["lat"], errors="coerce").to_numpy(float)
+    ok = np.isfinite(lon) & np.isfinite(lat)
+    lon, lat = lon[ok], lat[ok]
+    out = {"union": 0.0, "fields": {}, "n": int(ok.sum())}
+    if not len(lon):
+        return out
+    P = er.read_plan(bpath)
+    if P.get("needs_choice"):
+        G = P["gdf"].geometry
+        if G.crs is None:
+            G = G.set_crs("EPSG:4326")
+        elif not G.crs.equals("EPSG:4326"):
+            G = G.to_crs("EPSG:4326")
+        for i, g in enumerate(G, start=1):
+            poly = er.buffer_wgs84(g, er.AOI_BUFFER_M)
+            shapely.prepare(poly)
+            out["fields"][i] = float(shapely.contains_xy(poly, lon, lat).mean())
+        out["union"] = max(out["fields"].values()) if out["fields"] else 0.0
+    else:
+        poly = er.buffer_wgs84(er.plan_union_wgs84(P), er.AOI_BUFFER_M)
+        shapely.prepare(poly)
+        out["union"] = float(shapely.contains_xy(poly, lon, lat).mean())
+    return out
+
+
+def _field_variant(FB: dict, feature: list) -> dict | None:
+    """The field boundary file with the polygons `feature` chosen (load_boundary, kept per work in the session)."""
+    cache = ss.setdefault("_ff_variants", {})
+    k = (FB["path"], FB.get("fingerprint"), tuple(sorted(int(x) for x in feature)))
+    if k not in cache:
+        try:
+            v = load_boundary("", ("path", FB["path"]), feature=list(k[2]))
+            v["fields"] = v.get("fields") or FB.get("fields")
+            cache[k] = v
+        except ValueError:
+            cache[k] = None
+    return cache[k]
+
+
+def field_boundary_status(tag: str) -> dict:
+    """How the work's field boundary applies to a file: {FB (the field boundary or None), B (what the file uses:
+    the field boundary, or the polygons of it chosen for the file, with source 'field'; None), share (of the file's
+    located readings inside it + 50 m; of the best polygon), feature (the polygons used), why ('' used; 'none' the file
+    is set to no boundary; 'cover' it does not cover the file; 'choice' polygons chosen: none; 'no_points')}."""
+    FB = field_boundary()
+    out = {"FB": FB, "B": None, "share": None, "feature": None, "why": ""}
+    if not FB:
+        return out
+    if (ff().get("use") or {}).get(tag) == "none":
+        out["why"] = "none"
+        return out
+    D = ss.datasets.get(tag) or {}
+    shp = D.get("shp")
+    if not shp or not os.path.exists(shp):
+        out["why"] = "no_points"
+        return out
+    try:
+        sh = boundary_shares(shp, mtime(shp), FB["path"], FB.get("fingerprint") or "")
+    except Exception:                                    # noqa: BLE001 - a boundary that cannot be read: not used
+        out["why"] = "cover"
+        return out
+    F = ff()
+    if FB.get("needs_choice"):
+        feats = F["feature"].get(tag)
+        if feats is None:                                # chosen once: the polygon holding most of the readings
+            best = max(sh["fields"].items(), key=lambda kv: kv[1]) if sh["fields"] else (None, 0.0)
+            if best[0] is not None and best[1] >= er.AOI_PRESELECT_SHARE:
+                feats = [int(best[0])]
+                F["feature"][tag] = feats
+        if not feats:
+            out["share"] = max(sh["fields"].values()) if sh["fields"] else 0.0
+            out["why"] = "choice" if feats == [] else "cover"
+            return out
+        out["share"] = max(sh["fields"].get(int(x), 0.0) for x in feats)
+        V = _field_variant(FB, feats)
+        if V is None:
+            out["why"] = "cover"
+            return out
+        out["B"], out["feature"] = dict(V, source="field"), list(feats)
+        return out
+    out["share"] = sh["union"]
+    if sh["union"] < er.AOI_PRESELECT_SHARE:
+        out["why"] = "cover"
+        return out
+    out["B"] = dict(FB, source="field")
+    return out
+
+
+def pending_field_files() -> dict:
+    """The files put in the field files panel before Open (its uploaders and paths, read before do_open forgets the
+    work): {boundary: source | None, zones: source | None}."""
+    n = int(ss.get("ff_nonce") or 0)
+    out = {}
+    for k, up_k, path_k in (("boundary", f"ff_up_b_{n}", "ff_path_b"), ("zones", f"ff_up_z_{n}", "ff_path_z")):
+        up, pth = ss.get(up_k), str(ss.get(path_k) or "").strip()
+        out[k] = ("upload", list(up)) if up else (("path", pth) if pth else None)
+    return out
+
+
+def use_field_boundary(source) -> str | None:
+    """The work's field boundary from a source ('upload' kept in <work>/field_files/boundary/, or 'path' read in
+    place). Returns an error text or None; the polygons chosen per file are chosen again."""
+    try:
+        B = load_boundary("", source, folder=os.path.join(ss.workdir, FF_DIR, "boundary") if source[0] == "upload"
+                          else None)
+    except ValueError as e:
+        return f"field boundary: {e}"
+    F = ff()
+    F["boundary"] = B
+    F["feature"] = {}
+    ss.pop("_ff_variants", None)
+    return None
+
+
+def use_field_zones(source) -> str | None:
+    """The work's management zone map from a source (uploads kept in <work>/field_files/zones/). Error text or None."""
+    Z, err = replay_view.zone_from_file(source, os.path.join(ss.workdir, FF_DIR, "zones"))
+    if err:
+        return f"management zone map: {err}"
+    ff()["zones"] = Z
+    return None
+
+
+def take_field_files(pending: dict) -> list:
+    """After a successful Open: the field files put in the panel before it applied to the new work, and the polygon
+    files found in the input listed (never applied). Returns the messages (errors) to show."""
+    msgs = []
+    if pending.get("boundary"):
+        e = use_field_boundary(pending["boundary"])
+        if e:
+            msgs.append(e)
+    if pending.get("zones"):
+        e = use_field_zones(pending["zones"])
+        if e:
+            msgs.append(e)
+    try:
+        ff()["found"] = er.polygon_layers(getattr(ss.cands, "roots", None) or [])
+    except Exception:                                    # noqa: BLE001 - nothing found is said by nothing listed
+        ff()["found"] = []
+    ss.ff_nonce = int(ss.get("ff_nonce") or 0) + 1
+    for k in ("ff_path_b", "ff_path_z"):
+        ss.pop(k, None)
+    return msgs
+
+
+def _ff_remove(what: str):
+    F = ff()
+    F[what] = None
+    if what == "boundary":
+        F["feature"] = {}
+        # the per-file choices about the field boundary go with it: 'No boundary for this file' and 'own' (a file's
+        # own boundary stays in ss.boundary and keeps winning; without a field boundary there is nothing to opt out of)
+        F["use"] = {}
+        ss.pop("_ff_variants", None)
+    ss[f"ff_change_{what[0]}"] = False
+    save_current(quiet=True)
+
+
+def _ff_change(what: str):
+    ss[f"ff_change_{what[0]}"] = True
+
+
+def _ff_slot_input(what: str, label: str, types, has_work: bool):
+    """The upload and the path of one slot of the field files panel; with a work, 'Use'."""
+    n = int(ss.get("ff_nonce") or 0)
+    w = what[0]
+    st.file_uploader(label, accept_multiple_files=True, key=f"ff_up_{w}_{n}", type=types,
+                     help="A .zip (a shapefile), the .shp + .shx + .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml "
+                          "or .kmz.")
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        st.text_input("or a file on this computer", key=f"ff_path_{w}",
+                      placeholder=r"C:\...\field boundary.zip" if what == "boundary" else r"C:\...\zones.shp")
+        go = st.button("Use", type="primary", icon=":material/crop_free:" if what == "boundary" else ":material/layers:",
+                       key=f"ff_use_{w}", disabled=not has_work,
+                       help=None if has_work else "Given before the data is opened, it is used when the data opens.")
+    if go:
+        up = ss.get(f"ff_up_{w}_{n}")
+        pth = str(ss.get(f"ff_path_{w}") or "").strip()
+        if not up and not pth:
+            st.toast("Upload a file or type its path first", icon=":material/info:")
+            return
+        src = ("upload", list(up)) if up else ("path", pth)
+        e = use_field_boundary(src) if what == "boundary" else use_field_zones(src)
+        if e:
+            st.error(e, icon=":material/error:")
+            return
+        ss.ff_nonce = n + 1
+        ss.pop(f"ff_path_{w}", None)
+        ss[f"ff_change_{w}"] = False
+        save_current(quiet=True)
+        st.rerun()
+
+
+def _ff_use_found(f: dict, what: str):
+    e = (use_field_boundary(("path", f["path"])) if what == "boundary" else use_field_zones(("path", f["path"])))
+    if e:
+        ss["ff_msg"] = [e]
+    else:
+        save_current(quiet=True)
+
+
+def field_files_panel():
+    """Step 1, under the open row and always visible: 'Field files · optional', the field boundary and the management
+    zone map of the work, for every harvest file of it (step 3's clip and field of interest, both replays); a file can
+    have its own in step 3 / in its replay. Before the data is opened, the files given here are used when it opens."""
+    F = ff()
+    has_work = bool(ss.get("workdir")) and (bool(ss.datasets) or ss.get("cands") is not None)
+    with st.container(key="ff_box"):
+        st.markdown("**Field files** · optional",
+                    help="The field boundary: every file of this work is clipped to it in step 3 (S1) and "
+                         "uses it as its field of interest, when at least 20 % of its readings lie inside it (+ 50 m); "
+                         "of a file of several field boundaries, each file takes the polygon holding most of its "
+                         "readings. The management zone map: both replays of every file show it. Nothing is clipped or "
+                         "cleaned here: the cleaning (step 3) applies them. A file can have its own boundary (step 3) "
+                         "and its own zone map (its replay).")
+        for m in ss.pop("ff_msg", None) or []:
+            st.error(m, icon=":material/error:")
+        c_b, c_z = st.columns(2, gap="medium")
+        with c_b:
+            with st.container(key="ff_slot_b"):
+                st.markdown("**Field boundary**")
+                FB = field_boundary()
+                if F.get("boundary") and not FB:
+                    st.warning(f"The field boundary {F['boundary'].get('name')} is no longer at "
+                               f"{F['boundary'].get('path')}.", icon=":material/warning:")
+                if FB and not ss.get("ff_change_b"):
+                    st.success(f"{FB['name']} · " + (f"{len(FB.get('fields') or [])} fields in one file"
+                                                     if FB.get("needs_choice") else f"{FB['n_polygons']} polygon(s)")
+                               + f" · {FB['area_ac']:,.2f} ac", icon=":material/crop_free:")
+                    if FB.get("is_plan"):
+                        st.caption(":orange[Looks like a trial plan: S1 clips to the plots, not to the field.]")
+                    with st.container(horizontal=True):
+                        st.button("Change", key="ff_chg_b", icon=":material/edit:", on_click=_ff_change,
+                                  args=("boundary",))
+                        st.button("Remove", key="ff_rm_b", icon=":material/delete:", on_click=_ff_remove,
+                                  args=("boundary",), help="Every file without its own boundary is then not clipped.")
+                else:
+                    _ff_slot_input("boundary", "Boundary file", BOUNDARY_TYPES, has_work)
+                    if FB and st.button("Keep the one given", key="ff_keep_b", icon=":material/undo:"):
+                        ss["ff_change_b"] = False
+                        st.rerun()
+        with c_z:
+            with st.container(key="ff_slot_z"):
+                st.markdown("**Management zone map**")
+                Z = replay_view.zone_record(field_zone_map())
+                if Z and Z.get("missing"):
+                    st.warning(f"The zone map {Z.get('name')} is no longer at {Z.get('path')}.",
+                               icon=":material/warning:")
+                if Z and not Z.get("missing") and not ss.get("ff_change_z"):
+                    info = replay_view.zone_info(Z["path"], Z["fingerprint"], Z.get("column"))
+                    if info.get("error"):
+                        st.error(info["error"], icon=":material/error:")
+                    else:
+                        st.success(f"{Z['name']} · {len(info['labels'])} zone{'s' if len(info['labels']) != 1 else ''}"
+                                   f": {', '.join(info['labels'][:8])}" + (", ..." if len(info["labels"]) > 8 else ""),
+                                   icon=":material/layers:")
+                        cols = [c["column"] for c in info["columns"]]
+                        cur = info["column"]
+                        lab = {c["column"]: f"{c['column']} · {c['n_classes']} zones" for c in info["columns"]}
+                        pick = st.selectbox("Column that names the zones", cols,
+                                            index=cols.index(cur) if cur in cols else 0, key=f"ff_zcol_{cur}",
+                                            format_func=lambda c: lab.get(c, c))
+                        if pick != cur:
+                            set_field_zone_column(pick)
+                            st.rerun()
+                    with st.container(horizontal=True):
+                        st.button("Change", key="ff_chg_z", icon=":material/edit:", on_click=_ff_change,
+                                  args=("zones",))
+                        st.button("Remove", key="ff_rm_z", icon=":material/delete:", on_click=_ff_remove,
+                                  args=("zones",), help="The replays of every file without its own zone map then show "
+                                                        "none.")
+                else:
+                    _ff_slot_input("zones", "Zone map file", replay_view.ZONE_TYPES, has_work)
+                    if Z and st.button("Keep the one given", key="ff_keep_z", icon=":material/undo:"):
+                        ss["ff_change_z"] = False
+                        st.rerun()
+        found = [f for f in (F.get("found") or []) if os.path.exists(f.get("path") or "")]
+        for i, f in enumerate(found):
+            FB = field_boundary()
+            ZB = field_zone_map()
+            same_b = bool(FB) and os.path.normcase(FB["path"]) == os.path.normcase(f["path"])
+            same_z = bool(ZB) and os.path.normcase(ZB["path"]) == os.path.normcase(f["path"])
+            with st.container(horizontal=True, vertical_alignment="center"):
+                st.caption(f":material/search: Found in the input: **{html.escape(f['name'])}** ("
+                           + (f"{int(f.get('n_polygons') or 0):,} polygon(s)")
+                           + (f", {float(f['area_ac']):,.2f} ac" if f.get("area_ac") else "")
+                           + (", looks like a trial plan" if f.get("is_plan") else "")
+                           + (", several fields" if f.get("needs_choice") else "") + ")",
+                           help="A polygon file carried with the data. It is never used by itself: a polygon layer in "
+                                "an input can be a trial plan, a prescription or a guidance area.")
+                if "boundary" in (f.get("kinds") or []) and not same_b:
+                    st.button("Use as the boundary", key=f"ff_found_b_{i}", icon=":material/crop_free:",
+                              on_click=_ff_use_found, args=(f, "boundary"))
+                if "zones" in (f.get("kinds") or []) and not same_z:
+                    st.button("Use as the zone map", key=f"ff_found_z_{i}", icon=":material/layers:",
+                              on_click=_ff_use_found, args=(f, "zones"))
+        st.caption("Every file of this work uses them (step 3's clip and field of interest, both replays); a "
+                   "file can have its own in step 3 and in its replay."
+                   + ("" if has_work else " Given before the data is opened, they are used when it opens."))
 
 
 # ------------------------------------------------------------------------------------------------ grower's data
@@ -1539,21 +1934,296 @@ def restore_edits(tag: str, before: bytes | None) -> None:
         fh.write(before)
 
 
-def apply_marks(tag: str, K: dict) -> dict:
-    """The reading keys of the replay's marks (engine.replay.edit_keys) written as the edits file of tag
-    (me.write_edits; the engine's own writer), or, with no mark left, the edits removed (the automatic cleaning). No
-    cleaning here: the caller asks for one. Returns {path, n_remove, n_keep, refused, removed}."""
+def apply_marks(tag: str, K: dict, stage: str = "clean") -> dict:
+    """The reading keys of the replay's marks (engine.replay.edit_keys) merged into the edits file of tag (one file
+    for both replays: me.merge_marks keeps the edits of the readings that replay does not show, e.g. a removal made in
+    step 2 outside the boundary) and written (me.write_edits; the engine's own writer), or, with no edit left, the
+    edits removed (the automatic cleaning). stage: 'clean' (step 3) or 'import' (step 2). No cleaning here: the caller
+    asks for one. Returns {path, n_remove, n_keep, refused, removed}."""
     p = edits_path(tag)
     if not p:
         raise ValueError("no work folder: the edits cannot be kept")
-    if not K.get("remove") and not K.get("keep"):
+    E0 = edits_of(tag)
+    E0 = None if (E0 or {}).get("error") else E0
+    M = me.merge_marks(E0, K, K.get("seen") or (), stage)
+    if not M["remove"] and not M["keep"]:
         return {"path": None, "n_remove": 0, "n_keep": 0, "refused": list(K.get("refused") or []),
                 "removed": remove_edits(tag)}
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    E = me.write_edits(p, remove=list(K["remove"]), keep=list(K["keep"]),
-                       note=f"marked in the harvest replay of the cleaning (step 3), {dt.datetime.now():%Y-%m-%d %H:%M}")
+    where = ("the harvest replay of the imported readings (step 2)" if stage == "import" else
+             "the harvest replay of the cleaning (step 3)")
+    E = me.write_edits(p, remove=M["remove"], keep=M["keep"],
+                       note=f"marked in {where}, {dt.datetime.now():%Y-%m-%d %H:%M}")
     return {"path": p, "n_remove": len(E.get("remove") or []), "n_keep": len(E.get("keep") or []),
             "refused": list(K.get("refused") or []), "removed": False, "sha256": E.get("sha256")}
+
+
+@st.cache_data(max_entries=8, show_spinner=False)
+def import_keys_of(shp: str, mt: float) -> list:
+    """The reading keys of every reading of an import file (me.file_keys: the keys its cleaning gives them), cached
+    by the file and its modification time."""
+    return [str(k) for k in me.file_keys(shp)[0]]
+
+
+def import_edits_of(tag: str) -> dict | None:
+    """The edits file of a harvest file for the replay of its imported readings (step 2): the file read and checked,
+    {} when there is none yet (the replay can still be edited), None when it cannot be used (no edit mode: step 3 says
+    why)."""
+    E = edits_of(tag)
+    if E is None:
+        return {}
+    return None if E.get("error") else E
+
+
+def import_edits_counts(tag: str, D: dict) -> dict:
+    """{n_keys, removed (readings of the import in use removed by hand), not_found (keys of the remove list that name
+    no reading of this import), kept_keys} of the edits file of tag."""
+    E = edits_of(tag)
+    if not E or E.get("error") or not D.get("shp") or not os.path.exists(D["shp"]):
+        return {"n_keys": 0, "removed": 0, "not_found": 0, "kept_keys": 0}
+    keys = import_keys_of(D["shp"], mtime(D["shp"]))
+    rm = set(E.get("remove") or [])
+    hit = sum(1 for k in keys if k in rm)
+    return {"n_keys": len(rm), "removed": hit, "not_found": len(rm - set(keys)), "kept_keys": len(E.get("keep") or [])}
+
+
+WITHOUT_DIR = "without_cleaning"
+
+
+def edited_copy(tag: str, make: bool = True):
+    """The import in use of tag without the readings removed by hand: <work>/edits/<tag>/<tag>_edited.shp, its records
+    byte for byte the import's (yield_clean.write_points with the import's bytes; the GDAL route when they cannot be
+    copied), with a sidecar <tag>_edited.json {made_from, edits, n, n_removed, n_not_found, way}; made again when the
+    import or the edits change. None without removals (the import in use is the data). The import itself never
+    changes: every cleaning reads it with the edits file (step SM). make=False: nothing is written; False when the
+    copy would have to be made (none yet, or one of other data or other edits)."""
+    D = ss.datasets.get(tag) or {}
+    E = edits_of(tag)
+    shp = D.get("shp")
+    if not E or E.get("error") or not E.get("remove") or not shp or not os.path.exists(shp):
+        return None
+    base = os.path.join(ss.workdir, EDITS_DIR, tag, f"{tag}_edited")
+    side = base + ".json"
+    S = None
+    if os.path.exists(side):
+        try:
+            with open(side, encoding="utf-8") as fh:
+                S = json.load(fh)
+        except (OSError, ValueError):
+            S = None
+    made_from = content_sig_of(shp) if (isinstance(S, dict) or make) else None
+    if (isinstance(S, dict) and S.get("made_from") == made_from and S.get("edits") == E.get("sha256")
+            and os.path.exists(base + ".shp") and os.path.exists(base + ".dbf")):
+        return dict(S, shp=base + ".shp")
+    if not make:
+        return False
+    import geopandas as gpd
+    keys = import_keys_of(shp, mtime(shp))
+    rm = set(E["remove"])
+    drop = np.fromiter((k in rm for k in keys), bool, len(keys))
+    g0 = gpd.read_file(shp)
+    rows = np.flatnonzero(~drop)
+    bc, why = yc.byte_copy_source(shp, g0)
+    os.makedirs(os.path.dirname(base), exist_ok=True)
+    way = yc.write_points(base + ".shp", shp, g0, rows, [], byte_copy=bc)
+    S = {"made_from": made_from, "edits": E.get("sha256"), "n": int(len(rows)), "n_removed": int(drop.sum()),
+         "n_not_found": int(len(rm - set(keys))), "way": way if bc is not None else f"geopandas ({why})",
+         "source": os.path.basename(shp)}
+    with open(side, "w", encoding="utf-8") as fh:
+        json.dump(S, fh, indent=1)
+    return dict(S, shp=base + ".shp")
+
+
+# the DIFM writer's wording is a cleaning's: for the data used without cleaning it says 'the data in use'
+_WITHOUT_WORDS = (("3-sigma only (the monitor's yield)", "Without cleaning (the monitor's yield)"),
+                  ("the cleaning adjusted no yield", "no yield adjusted"),
+                  ("the clean file", "the data in use"),
+                  ("the monitor's dry yield as cleaned", "the monitor's dry yield of the data in use"),
+                  ("as cleaned", "as in the data in use"))
+
+
+def without_cleaning_words(text):
+    """A line of the DIFM writer (a note, a warning, its line) said of the data in use, not of a cleaning."""
+    if not isinstance(text, str):
+        return text
+    for a, b in _WITHOUT_WORDS:
+        text = text.replace(a, b)
+    return text
+
+
+def without_cleaning_files(tag: str, make: bool = True) -> dict | None:
+    """The files of a harvest file used without cleaning (step 2's 'Without cleaning'), in <work>/without_cleaning/:
+    <tag>_edited.zip (the edited copy) or <tag>_in_use.zip (the import in use, no edits), and the same readings in the
+    SMS export layout DIFM reads (engine/difm.py write_zip, <stem>_DIFM.zip; the fields the file does not hold filled
+    from its import record only). Made again when the data or the edits change (a sidecar per file). Returns {data
+    (path of the shapefile used), zip, difm (write_zip's result, or {error}), edited (edited_copy or None)}.
+    make=False: nothing is written, no folder made; None when the files are not there for the data and the edits of
+    now (step 2 then offers 'Prepare the files')."""
+    D = ss.datasets.get(tag) or {}
+    EC = edited_copy(tag, make=make)
+    if EC is False:
+        return None
+    data = EC["shp"] if EC else D.get("shp")
+    stem = f"{tag}_edited" if EC else f"{tag}_in_use"
+    out = os.path.join(ss.workdir, WITHOUT_DIR)
+    side = os.path.join(out, stem + ".json")
+    S = None
+    if os.path.exists(side):
+        try:
+            with open(side, encoding="utf-8") as fh:
+                S = json.load(fh)
+        except (OSError, ValueError):
+            S = None
+    zp, dz = os.path.join(out, stem + ".zip"), os.path.join(out, stem + "_DIFM.zip")
+    sig = None
+    if isinstance(S, dict) or make:
+        sig = [content_sig_of(data), (edits_of(tag) or {}).get("sha256")]
+        if isinstance(S, dict) and S.get("sig") == sig and os.path.exists(zp) and (
+                os.path.exists(dz) or (S.get("difm") or {}).get("error")):
+            return {"data": data, "zip": zp,
+                    "difm": dict(S.get("difm") or {}, zip=dz if os.path.exists(dz) else None), "edited": EC}
+    if not make:
+        return None
+    os.makedirs(out, exist_ok=True)
+    other = f"{tag}_in_use" if EC else f"{tag}_edited"           # the other variant's files: no longer the data
+    for f in (zp, dz) + tuple(os.path.join(out, other + e) for e in (".zip", "_DIFM.zip", ".json")):
+        if os.path.exists(f):
+            os.remove(f)
+    zip_shapefile(data, zp, stem=stem)
+    IM = import_record_of(tag)
+    allr = import_readings_of(tag)
+    try:
+        W = ed.write_zip(data, dz, source=D.get("source"), columns=None, map_column=None, adjustment=None,
+                         adjusted=False, basis=ed.import_basis({"settings": {"sms_import": IM}} if IM else None,
+                                                               imported=allr))
+        W = {k: W.get(k) for k in ("zip", "n", "warnings", "notes", "line", "yield")}
+        W["notes"] = [without_cleaning_words(x) for x in (W.get("notes") or [])]
+        W["warnings"] = [without_cleaning_words(x) for x in (W.get("warnings") or [])]
+        W["line"] = without_cleaning_words(W.get("line"))
+        W["error"] = None
+    except Exception as e:                               # noqa: BLE001 - said in the block; the shapefile stands
+        W = {"zip": None, "error": str(e) if isinstance(e, (ValueError, OSError)) else f"{type(e).__name__}: {e}",
+             "warnings": [], "notes": []}
+    with open(side, "w", encoding="utf-8") as fh:
+        json.dump({"sig": sig, "difm": {k: v for k, v in W.items() if k != "zip"}}, fh, indent=1, default=str)
+    return {"data": data, "zip": zp, "difm": W, "edited": EC}
+
+
+def _on_import_edits(K: dict, tag: str):
+    """The marks of the replay of the imported readings (step 2): merged into the edits file of the file (stage
+    'import': removed or put back, never kept), nothing cleaned (a cleaning of the file then says 'clean again')."""
+    W = apply_marks(tag, K, stage="import")
+    ref = W["refused"]
+    tail = ((f"; {len(ref):,} mark(s) not applied ({ref[0]['reason']})" if ref else "")
+            + (". The cleaning of this file is not made again by this: clean it again in step 3."
+               if has_cleaning(tag) else ""))
+    ss["imp_edits_msg"] = ((f"Edits by hand: {W['n_remove']:,} reading(s) removed"
+                            + (f" (and {W['n_keep']:,} kept by hand in step 3)" if W["n_keep"] else "")
+                            if W["path"] else "No reading removed by hand: the readings as imported")
+                           + (tail or "."))
+    ss["imp_edits_tail"] = tail                      # said once, on the edits line, when the file keeps edits
+    ss.setdefault("asis_make", {})[tag] = True       # edits made here: their files without cleaning follow them
+    st.rerun()
+
+
+def remove_import_edits(tag: str):
+    """'Remove all edits' of step 2: the edits file set aside (both steps' edits: it is one file), nothing cleaned."""
+    remove_edits(tag)
+    ss.pop("imp_edits_tail", None)
+    ss["imp_edits_msg"] = ("Every edit by hand of this file removed (steps 2 and 3)"
+                           + (": clean it again in step 3 for the automatic cleaning." if has_cleaning(tag) else "."))
+
+
+def without_cleaning_block(tag: str, D: dict, V1: dict, outline=None):
+    """Step 2, under the replay of the imported readings: the data used as it is (an export already clean, say),
+    with the edits by hand of Play the harvest: the edits line, 'Remove all edits', the strip and the map of the edited
+    data against step 1, and the downloads: the shapefile, the shapefile for DIFM and the edits file."""
+    msg, tail = ss.pop("imp_edits_msg", None), ss.pop("imp_edits_tail", None)
+    E = edits_of(tag)
+    has_edits = bool(E and not E.get("error") and (E.get("remove") or E.get("keep")))
+    if msg and not (has_edits and tail is not None):
+        st.success(msg, icon=":material/edit:")      # (after Apply with edits kept: said on the edits line below)
+    with st.container(key="use_as_is"):
+        st.markdown("**Without cleaning** · the data in use, with your edits by hand",
+                    help="For data that needs no cleaning (an export of a map already cleaned, say): remove readings by "
+                         "hand in Play the harvest (Edit points) and download the data as it is. Every cleaning of this "
+                         "file also removes them (step SM), with the same keys as the edits of step 3: one list of "
+                         "edits by hand per file. The keys use the record id and the time of each reading: another "
+                         "export of the same field can number its records again, so edits do not carry to another "
+                         "export.")
+        if E and E.get("error"):
+            st.error(f"The edits by hand of this file cannot be used: {E['error']}", icon=":material/error:")
+            return
+        if has_edits:
+            N = import_edits_counts(tag, D)
+            line = (f"Edits by hand: {N['removed']:,} reading(s) removed (marked in Play the harvest)"
+                    + (f"; {N['not_found']:,} removal(s) name no reading of this import (kept in the file)"
+                       if N["not_found"] else "")
+                    + (f"; {N['kept_keys']:,} reading(s) kept by hand in step 3" if N["kept_keys"] else "")
+                    + (tail or "") + (" " if (tail or "").endswith(".") else ". ")
+                    + "Every cleaning of this file removes them too (step SM).")
+            with st.container(horizontal=True, vertical_alignment="center"):
+                (st.success if msg and tail is not None else st.info)(line, icon=":material/edit:")
+                st.button("Remove all edits", key="imp_edits_remove", icon=":material/undo:",
+                          on_click=remove_import_edits, args=(tag,),
+                          help="Every edit by hand of this file, steps 2 and 3 (one edits file): it is set aside. "
+                               "Nothing is cleaned here; a cleaning of the file then says to clean it again.")
+        make = bool((ss.get("asis_make") or {}).get(tag))
+        try:
+            WF = without_cleaning_files(tag, make=make)
+        except Exception as e:                           # noqa: BLE001 - shown, never a crash of the page
+            st.error(f"The files without cleaning could not be written: {type(e).__name__}: {e}",
+                     icon=":material/error:")
+            return
+        if WF is None:
+            # nothing written until asked: opening a work (an older one too) adds no file to it and costs no time
+            st.button("Prepare the files without cleaning", key=f"asis_make_{file_key(tag)}",
+                      icon=":material/folder_zip:", on_click=lambda: ss.setdefault("asis_make", {}).__setitem__(
+                          tag, True),
+                      help="Writes the data in use" + (" without the readings removed by hand" if has_edits else "")
+                           + " as a shapefile, and the same readings in the layout DIFM reads, into the work folder "
+                             "(without_cleaning/), for the downloads. Made again by itself after an edit by hand "
+                             "here.")
+            return
+        EC = WF["edited"]
+        if EC:
+            badge_line("edits", f"{int(EC['n']):,} readings ({int(EC['n_removed']):,} removed by hand)",
+                       "The import in use without the readings removed by hand ("
+                       + ("byte for byte the import's records" if str(EC.get("way")).startswith("byte") else
+                          str(EC.get("way"))) + ").")
+            VE = dict(active_view(D), shp=EC["shp"])
+            mk = f"edit_{key_of(EC['shp'])}"
+            slot = st.container()
+            mb = map_box(mk, False)
+            with mb:
+                if mb.open:
+                    explorer(EC["shp"], key=mk, default="Yld_Vol_Dr" if "Yld_Vol_Dr" in read_points(
+                        EC["shp"], mtime(EC["shp"])).columns else None, outline=outline, height=480, extras=False,
+                        scale_of=V1.get("shp"), data="your edits (step 2)")
+            with slot:
+                data_strip(VE, "strip_ed", compare=V1, map_key=mk if mb.open else None)
+        Wd = WF["difm"] or {}
+        with st.container(horizontal=True):
+            download("Shapefile without cleaning (.zip)", WF["zip"], "application/zip", key=f"dl_asis_{file_key(tag)}", primary=True,
+                     icon=":material/cloud_download:",
+                     help=("The import in use without the readings removed by hand." if EC else
+                           "The import in use, as it is (no edit by hand)."))
+            if Wd.get("zip"):
+                download("For DIFM, without cleaning (.zip)", Wd["zip"], "application/zip", key=f"dl_asis_difm_{file_key(tag)}",
+                         icon=":material/upload_file:",
+                         help="The same readings in the layout of an SMS shapefile export, the layout DIFM reads "
+                              "(Yld_Vol_Dr as the yield; swath and moisture mapped). Nothing cleaned.")
+            ep = edits_path(tag)
+            if E and ep and os.path.isfile(ep):
+                download("Edits by hand (JSON)", ep, "application/json", key=f"dl_asis_ed_{file_key(tag)}",
+                         icon=":material/data_object:",
+                         help="The edits file of this file (oced-manual-edits, version 1): the command line takes it "
+                              "with --manual-edits.")
+        if Wd.get("error"):
+            st.warning(f"For DIFM, without cleaning: not written ({Wd['error']}). The shapefile is not affected.",
+                       icon=":material/warning:")
+        for w in Wd.get("warnings") or []:
+            st.warning(f"For DIFM, without cleaning: {w}.", icon=":material/warning:")
 
 
 def edits_line(R: dict | None) -> str:
@@ -4497,6 +5167,7 @@ def clean_one(tag: str, sset: dict, log=lambda m: None) -> dict:
     if not D.get("yield", True):
         return clean_applied(tag, sset, log=log)
     refresh_boundary(tag)
+    keep_small_area_file(tag)                 # (a small area of 0.3.6: its file out of the folder this cleaning empties)
     out = os.path.join(ss.workdir, "clean", tag)
     cdir = os.path.join(ss.workdir, "clean_shapefiles")
     os.makedirs(cdir, exist_ok=True)
@@ -4528,7 +5199,9 @@ def clean_one(tag: str, sset: dict, log=lambda m: None) -> dict:
                "boundary": boundary_of(tag) if settings.get("aoi") else None, "kind": "sms",
                "at": dt.datetime.now().strftime("%H:%M:%S")}
         difm_new_cleaning(tag, res)
-    return finish_cleaning(tag, res, lg_state)
+    res = finish_cleaning(tag, res, lg_state)
+    small_area_again(tag, res, ss.cleaned.get(tag), log=log)    # the small area kept with the file, measured again
+    return res
 
 
 def difm_map_column(R: dict | None) -> str | None:
@@ -5168,6 +5841,13 @@ def refresh_boundary(tag: str):
     """The boundary of `tag` read again just before a cleaning, so that the box, the outline on the clean maps and the
     'settings changed' check describe the file the engine clips to (it may have been edited on disk since Use)."""
     B = ss.boundary.get(tag)
+    FB = field_boundary()
+    if not B and FB and boundary_fingerprint(FB["path"]) != FB.get("fingerprint"):
+        # the work's field boundary (step 1) edited on disk since Use: read again (its polygons chosen again)
+        try:
+            use_field_boundary(("path", FB["path"]))
+        except Exception:                                # noqa: BLE001 - the box says it cannot be read
+            pass
     if not B or B.get("needs_choice") or not os.path.exists(B.get("path") or ""):
         return
     nb = load_boundary(tag, ("path", B["path"]), B.get("feature") or None)
@@ -5265,6 +5945,7 @@ def clean_applied(tag: str, aset: dict, log=lambda m: None) -> dict:
     if not aset.get("attributes"):
         raise ValueError("choose the attributes to clean (step 3)")
     refresh_boundary(tag)
+    keep_small_area_file(tag)                 # (a small area of 0.3.6: its file out of the folder this cleaning empties)
     out = os.path.join(ss.workdir, "clean", tag)
     cdir = os.path.join(ss.workdir, "clean_shapefiles")
     with cleaning_guard(tag, out, [os.path.join(cdir, f"{tag}_3s_clean")], longest=a3.REPORT_SUFFIX,
@@ -5379,7 +6060,8 @@ def work_record(name: str | None = None) -> dict:
                           smsset=ss.get("smsset"), a3set=merged(ss.a3set, "a3set"),
                           cleaned=merged(ss.cleaned, "cleaned"), app_version=VERSION,
                           created=(prev or {}).get("created"), combines=merged(ss.get("cfset") or {}, "combines"),
-                          inputs_left_out=ss.get("left_out") or [])
+                          inputs_left_out=ss.get("left_out") or [], field_files=ff(),
+                          small_area=merged(ss.get("small_area") or {}, "small_area"))
 
 
 def save_current(quiet: bool = False, even_empty: bool = False):
@@ -5461,6 +6143,31 @@ def restore_work(wd: str):
             ss.boundary[t] = load_boundary(t, ("path", B["path"]), B.get("feature") or None)
         except Exception as e:
             probs.append(f"{t}: the boundary {B.get('path')} could not be read ({e})")
+    FR = rec.get("field_files") or {}                  # 0.3.7: the work's field boundary and zone map
+    F = ff()
+    F["use"] = {t: u for t, u in (FR.get("use") or {}).items()}
+    F["feature"] = {t: [int(x) for x in v] for t, v in (FR.get("feature") or {}).items()}
+    F["found"] = [f for f in (FR.get("found") or []) if isinstance(f, dict)]
+    if FR.get("boundary"):
+        try:
+            F["boundary"] = load_boundary("", ("path", FR["boundary"]["path"]))
+        except Exception as e:
+            F["boundary"] = None
+            probs.append(f"the field files' boundary {FR['boundary'].get('path')} could not be read ({e})")
+    if FR.get("zones"):
+        Zr = FR["zones"]
+        if Zr.get("path") and os.path.exists(Zr["path"]):
+            F["zones"] = {k: Zr.get(k) for k in ("path", "name", "column", "fingerprint", "stamp")}
+        else:
+            probs.append(f"the field files' zone map {Zr.get('path')} could not be read (it is no longer there)")
+    for t, A_ in ss.away.items():                      # the small area of a file set aside, as saved
+        if t in (rec.get("small_area") or {}):
+            A_["small_area"] = rec["small_area"][t]
+    ss.small_area = {t: dict(A) for t, A in (rec.get("small_area") or {}).items() if t in ss.datasets}
+    for t, A in ss.small_area.items():
+        if not os.path.exists(str(A.get("path") or "")):
+            probs.append(f"{t}: the polygon file of its small area {A.get('path')} could not be read (it is no "
+                         "longer there)")
     for t, C in (rec.get("cleaned") or {}).items():
         if t not in ss.datasets:
             continue
@@ -5475,6 +6182,9 @@ def restore_work(wd: str):
             probs.append(f"{t}: its clean shapefile is no longer at {C.get('shp')}")
             resolved_by_clean.append(probs[-1])
             continue
+        # a moved or copied work: its cleaning record keeps the paths of the folder it was written in; they are put
+        # under this work's cleaning folder (Measure, Remove the small area and the 0.3.6 adoption then use its own)
+        ew.rebase_cleaning_files(R, os.path.dirname(os.path.abspath(C["json"])), wd)
         ss.cleaned[t] = {**C, "R": R, "config": C.get("config"),
                          "boundary": boundary_of(t) if (R.get("aoi") or R.get("boundary")) else None}
         why = C.get("clean_again") or (ew.clean_again_reason(R, C.get("flagged_shp"))
@@ -5491,6 +6201,23 @@ def restore_work(wd: str):
             ss.cleaned[t]["clean_again"] = why
             probs.append(f"{t}: {why}")
             resolved_by_clean.append(probs[-1])
+    for t, C in ss.cleaned.items():
+        # a small area measured by 0.3.6 (its record only; the polygon file in the cleaning's small_area_input/):
+        # kept with the file from now on (copied into small_area/<tag>/ before its next cleaning: keep_small_area_file)
+        SA0 = (C.get("R") or {}).get("small_area")
+        if t in ss.small_area or not isinstance(SA0, dict) or not SA0.get("file"):
+            continue
+        p0 = os.path.join((C["R"].get("files") or {}).get("dir") or os.path.dirname(C["shp"]), "small_area_input",
+                          str(SA0["file"]))
+        if not os.path.isfile(p0):
+            # given by its path in 0.3.6 (read where it was, not copied, and the record keeps its name only; the
+            # cleaning's small_area_input/ may still hold an earlier upload of another name): found again by its
+            # name next to the work's input or in the work, and taken only when it holds the same polygons (names
+            # and areas) as the record and gives its kept figures; an upload whose file is gone everywhere stays gone
+            p0 = find_036_small_area(t, SA0, wd, (C["R"].get("files") or {}).get("flagged_zip"))
+        if p0 and os.path.isfile(p0):
+            ss.small_area[t] = {"path": p0, "name": str(SA0["file"]),
+                                "rule": sarea.rule_key(SA0.get("rule") or sarea.DEFAULT_RULE)}
     # decoded or imported by an older version: a new cleaning does not change that (one line for the old decodes)
     olds = [t for t, D in ss.datasets.items() if old_decode(D)]
     if len(olds) == 1:
@@ -5793,6 +6520,11 @@ def action_tree():
     with st.expander("1 · Raw data", icon=":material/upload_file:", expanded=True):
         st.caption(f"{_tick(bool(DSx))} " + (html.escape(str(ss.get("input_label"))) if ss.get("input_label")
                                               else ("opened from a saved work" if DSx else "nothing opened")))
+        FBx, FZx = field_boundary(), field_zone_map()
+        if FBx or FZx:
+            st.caption(f"{_tick(True)} field files: " + " · ".join(x for x in (
+                (f"boundary {html.escape(FBx['name'])}" if FBx else ""),
+                (f"zones {html.escape(str(FZx.get('name')))}" if FZx else "")) if x))
         for t, D in DSx.items():
             st.button(t, key=f"tree_f_{key_of(t)}", type="tertiary", on_click=select_file, args=(t,),
                       icon=":material/arrow_right:" if t == ss.active else ":material/description:",
@@ -5812,8 +6544,11 @@ def action_tree():
         for t, D in DSx.items():
             B, G, C = boundary_of(t), ss.grower.get(t) or {}, ss.cleaned.get(t)
             lines = [f"**{html.escape(t)}**",
-                     f"{_tick(bool(B))} boundary: " + (f"{html.escape(B['name'])} · {B['area_ac']:,.2f} ac" if B
-                                                       else "none")]
+                     f"{_tick(bool(B))} boundary: " + (f"{html.escape(B['name'])} · {B['area_ac']:,.2f} ac"
+                                                       + (" · from the field files" if B.get("source") == "field"
+                                                          else " · own" if field_boundary() else "") if B
+                                                       else ("none for this file" if ff()["use"].get(t) == "none"
+                                                             else "none"))]
             if D.get("yield", True):
                 T_ = grower_ticket(G)
                 lines.append(f"{_tick(bool(T_))} grower's data: " + (
@@ -6368,6 +7103,12 @@ def starts_from_line(tag: str, D: dict, min3: float | None = None, pending: bool
             hlp.append("Not imported as SMS: S0 takes the minimum of step 3 (S0 minimum, in the settings).")
     elif kind == "as_is":
         hlp.append("A planter or sprayer file is used as written.")
+    E_ = edits_of(tag) if harvest else None
+    if E_ and not E_.get("error") and (E_.get("remove") or E_.get("keep")):
+        text += (f" · edits by hand: {len(E_.get('remove') or []):,} removed"
+                 + (f", {len(E_.get('keep') or []):,} kept" if E_.get("keep") else ""))
+        hlp.append("Edits by hand (Play the harvest of steps 2 and 3, one edits file): the cleaning removes the readings "
+                   "removed by hand in its step SM, after Optimize Swath Widths.")
     st.markdown(f"Starts from {brand.import_badge(kind)} {html.escape(text)}", unsafe_allow_html=True,
                 help=" ".join(hlp) or None)
     if pending:
@@ -6395,7 +7136,9 @@ def settings_summary(tag: str, IS_Y: bool, P0: dict, n_combines: int = 0) -> str
     validate · combine factor off', from the values on screen (the widgets' state, else the saved settings)."""
     TKs = file_key(tag)
     B = ss.boundary.get(tag)
-    bnd = "boundary ✓" if (B and not B.get("needs_choice")) else "boundary: choose the field" if B else "no boundary"
+    BR = boundary_of(tag)                                # the boundary used: own, or the field files' (0.3.7)
+    bnd = ("boundary ✓ (field files)" if (BR and BR.get("source") == "field") else
+           "boundary ✓" if (B and not B.get("needs_choice")) else "boundary: choose the field" if B else "no boundary")
     if not IS_Y:
         A = ss.a3set.get(tag) or {}
         k = ss.get(f"a3_k_{TKs}", A.get("k_sd", a3.DEFAULTS["k_sd"]))
@@ -6517,16 +7260,39 @@ def attr_cards(df: pd.DataFrame, col: str, base: pd.DataFrame | None = None, bas
     return cards
 
 
-def small_area_files(C: dict, source) -> str:
-    """The polygon file of the small area: source ('upload', [UploadedFile]) saved in small_area_input/ next to the
-    cleaning's files, or ('path', str) read in place. Returns its path; raises ValueError."""
+SA_DIR = "small_area"
+SA_MAP_MARGIN_M = 10.0           # the map draws the readings whose strip comes within this of a polygon
+SA_MAP_MAX = 6000                # at most this many readings drawn (the counted ones first); the map says so
+# the strips of the map: a reading the cleaning removed in orange, one removed by hand (Edit points) in purple
+SA_FILL = {"removed": [245, 166, 35, 120], "hand": [171, 71, 188, 130], "left_out": [0, 156, 222, 110],
+           "": [200, 210, 220, 55]}
+SA_LINE = {"removed": [245, 166, 35, 230], "hand": [171, 71, 188, 235], "left_out": [0, 156, 222, 230],
+           "": [120, 130, 145, 160]}
+
+
+def small_area_files(tag: str, source) -> str:
+    """The polygon file of the small area of a harvest file, kept in the work (<work>/small_area/<tag>/, outside
+    clean/<tag>/, so a new cleaning never deletes it): source ('upload', [UploadedFile]) saved there, or ('path', str)
+    copied there (a shapefile with its .shx, .dbf, .prj, .cpg). Returns its path; raises ValueError."""
     kind, val = source
+    d = os.path.join(ss.workdir, SA_DIR, tag)
     if kind == "path":
-        path = str(val or "").strip().strip('"')
-        if not path or not os.path.exists(path):
-            raise ValueError(f"not found on this computer: {path or '(empty)'}")
-        return path
-    d = os.path.join((C["R"].get("files") or {}).get("dir") or os.path.dirname(C["shp"]), "small_area_input")
+        src = str(val or "").strip().strip('"')
+        if not src or not os.path.isfile(src):
+            raise ValueError(f"not found on this computer: {src or '(empty)'}")
+        if os.path.splitext(src)[1].lower() not in er.AOI_EXTS:
+            raise ValueError("not a polygon file: a .zip, a .shp (with its .shx, .dbf and .prj), a .geojson, a "
+                             ".gpkg, a .kml or a .kmz")
+        if os.path.normcase(os.path.dirname(os.path.abspath(src))) == os.path.normcase(os.path.abspath(d)):
+            return os.path.abspath(src)                  # already the one kept in the work
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
+        base, ext = os.path.splitext(src)
+        parts = ([base + e for e in (".shp", ".shx", ".dbf", ".prj", ".cpg", ".qpj") if os.path.exists(base + e)]
+                 if ext.lower() == ".shp" else [src])
+        for q in parts:
+            shutil.copy2(q, os.path.join(d, os.path.basename(q)))
+        return os.path.join(d, os.path.basename(src))
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d, exist_ok=True)
     names = []
@@ -6538,36 +7304,392 @@ def small_area_files(C: dict, source) -> str:
     main = ([n for n in names if n.lower().endswith(".shp")] or
             [n for n in names if os.path.splitext(n)[1].lower() in er.AOI_EXTS])
     if not main:
+        shutil.rmtree(d, ignore_errors=True)
         raise ValueError("no polygon file among the files given: a .zip, a .shp (with its .shx, .dbf and .prj), a "
                          ".geojson, a .gpkg, a .kml or a .kmz")
     return os.path.join(d, main[0])
 
 
-def small_area_box(C: dict):
+def find_036_small_area(tag: str, SA0: dict, wd: str, flagged_zip: str | None = None) -> str | None:
+    """The polygon file of a small area measured by 0.3.6 that was given by its path (0.3.6 read it in place and its
+    record names the file only): looked for by its name in the work folder and in the folders of the work's input (the
+    file's input, its folder and the folder above), and taken only when it holds the polygons of the record (the same
+    names, the same areas to 1e-6) and, measured on the cleaning's flagged file, gives the record's kept figures (the
+    same readings and acres): the same polygons in the same place. None when not found."""
+    name = os.path.basename(str(SA0.get("file") or ""))
+    if not name:
+        return None
+    dirs = []
+    for r, ds, fs in os.walk(wd):
+        if os.path.relpath(r, wd).count(os.sep) > 3:
+            ds[:] = []
+            continue
+        if name in fs:
+            dirs.append(r)
+    D = (ss.datasets.get(tag) or {}) if isinstance(ss.get("datasets"), dict) else {}
+    IM = D.get("sms_import") if isinstance(D.get("sms_import"), dict) else {}
+    for root in (ew.input_root(D, wd), D.get("shp"), IM.get("all_readings"), ss.get("input_label")):
+        if not root or not os.path.isabs(str(root)):
+            continue
+        d0 = str(root) if os.path.isdir(str(root)) else os.path.dirname(str(root))
+        dirs += [d0, os.path.dirname(d0)]
+    want = [(str(p["name"]), float(p.get("area_ac") or 0)) for p in SA0.get("polygons") or []]
+    seen = set()
+    for d in dirs:
+        p = os.path.join(d, name)
+        if os.path.normcase(p) in seen or not os.path.isfile(p):
+            continue
+        seen.add(os.path.normcase(p))
+        try:
+            polys, _ = sarea.read_polygons(p)
+            crs = SA0.get("crs") or polys.estimate_utm_crs()
+            got = list(zip(polys["name"].astype(str), (polys.to_crs(crs).area / sarea.M2_PER_AC).tolist()))
+        except Exception:                                # noqa: BLE001 - not the file: looked for elsewhere
+            continue
+        if not (len(got) == len(want) and all(a == c and abs(b - d_) <= 1e-6 * max(1.0, d_)
+                                              for (a, b), (c, d_) in zip(got, want))):
+            continue
+        if flagged_zip and os.path.exists(flagged_zip):
+            try:
+                M = sarea.detail_of(flagged_zip, p, sarea.rule_key(SA0.get("rule") or sarea.DEFAULT_RULE),
+                                    margin_m=0.0)
+            except Exception:                            # noqa: BLE001 - cannot be checked: not taken
+                continue
+            same = all(int(q["kept"]["readings"]) == int(r["kept"]["readings"])
+                       and abs(float(q["kept"]["area_ac"] or 0) - float(r["kept"]["area_ac"] or 0))
+                       <= 1e-6 * max(1.0, float(r["kept"]["area_ac"] or 0))
+                       for q, r in zip(M["polygons"], SA0.get("polygons") or []))
+            if not same:
+                continue
+        return p
+    return None
+
+
+def keep_small_area_file(tag: str):
+    """Before a cleaning of tag: the polygon file of its small area kept where no cleaning deletes it. A small area of
+    0.3.6 has its file in the cleaning's folder (clean/<tag>/small_area_input/), which a new cleaning empties: it is
+    copied into <work>/small_area/<tag>/ first (small_area_files), and the small area points to the copy."""
+    A = (ss.get("small_area") or {}).get(tag)
+    if not A or not os.path.isfile(str(A.get("path") or "")):
+        return
+    d = os.path.abspath(os.path.join(ss.workdir, SA_DIR, tag))
+    if os.path.normcase(os.path.dirname(os.path.abspath(A["path"]))) == os.path.normcase(d):
+        return
+    A["path"] = small_area_files(tag, ("path", A["path"]))
+
+
+def small_area_extra(tag: str, res: dict, C_prev: dict | None) -> dict:
+    """What the record of a small area measured again after a cleaning adds (engine.run.small_area_after_clean's
+    extra): measured_after (the time of the cleaning), the edits' hash of this cleaning, and before: the figures of the
+    cleaning shown until now (its time, its edits' hash, per polygon the kept figures), when it was measured with the
+    same polygon file and rule."""
+    A = (ss.get("small_area") or {}).get(tag) or {}
+    prev = ((C_prev or {}).get("R") or {}).get("small_area") if C_prev else None
+    before = None
+    if prev and prev.get("file") == os.path.basename(str(A.get("path"))) and prev.get("rule") == A.get("rule"):
+        before = {"at": (C_prev or {}).get("at"),
+                  "edits": ((C_prev.get("R") or {}).get("manual_edits") or {}).get("sha256"),
+                  "polygons": [{"name": p["name"], "kept": dict(p["kept"])} for p in prev.get("polygons") or []]}
+    return {"measured_after": res.get("at"), "auto": True, "before": before,
+            "edits": ((res.get("R") or {}).get("manual_edits") or {}).get("sha256")}
+
+
+def small_area_again(tag: str, res: dict, C_prev: dict | None, log=lambda m: None):
+    """After every cleaning of a harvest file whose small area is kept in the work: the small area measured again on
+    the new cleaning (the reprocess after Edit points included). A polygon file gone or a failure is said in the log
+    and under the table (the cleaning stands)."""
+    A = (ss.get("small_area") or {}).get(tag)
+    if not A or res.get("kind") != "sms":
+        return
+    if not os.path.exists(str(A.get("path") or "")):
+        ss[f"sa_msg_{file_key(tag)}"] = (f"The small area was not measured again: its polygon file {A.get('path')} is "
+                                         "no longer there.")
+        return
+    try:
+        er.small_area_after_clean(res["R"], A["path"], A.get("rule") or sarea.DEFAULT_RULE, log=log,
+                                  extra=small_area_extra(tag, res, C_prev), **small_area_opts(tag, A))
+    except Exception as e:                               # noqa: BLE001 - the cleaning stands without it
+        ss[f"sa_msg_{file_key(tag)}"] = f"The small area was not measured again: {type(e).__name__}: {e}"
+
+
+def small_area_opts(tag: str, A: dict | None) -> dict:
+    """The small area's options kept with the file (method, calibration CV, interior cut) and the decoded file of
+    the harvest file (the readings the import left out), as engine.run.small_area_after_clean takes them."""
+    A = A or {}
+    return {"method": sarea.method_key(A.get("method") or sarea.DEFAULT_METHOD), "cv_pct": sarea.cv_value(A.get("cv")),
+            "interior_m": float(A.get("interior") or 0.0), "decoded": import_readings_of(tag)}
+
+
+def _sa_remove(tag: str):
+    """'Remove the small area': it is no longer kept for the file, and the cleaning's record and report lose it."""
+    (ss.get("small_area") or {}).pop(tag, None)
+    C = ss.cleaned.get(tag)
+    if C:
+        er.small_area_remove(C["R"], log=lambda m: None)
+    ss[f"sa_msg_{file_key(tag)}"] = "The small area was removed (its polygon file stays in the work folder)."
+    save_current(quiet=True)
+
+
+@st.cache_data(max_entries=6, show_spinner="Drawing the small area ...")
+def small_area_map_data(flagged_zip: str, mt: float, poly: str, poly_mt: float, rule: str, method: str = "ground",
+                        decoded: str | None = None, interior: float = 0.0) -> dict:
+    """The map of a small area (small_area.detail_of: the per-reading rows of measure(), within SA_MAP_MARGIN_M of the
+    polygons), as pydeck data in WGS 84: strips (every reading drawn: the whole strip, faint; a reading the cleaning
+    removed in orange), parts (the part counted, coloured by the yield used), the polygon lines and their sums, and
+    each reading's hover text (small_area.reading_text). At most SA_MAP_MAX readings (the counted ones first)."""
+    import geopandas as gpd
+    import matplotlib
+    # 0.3.7: the strips as grain / ground counts them (every reading as logged, clipped by the line), whatever the
+    # figure chosen; each hover says the grain, the clipped area, the part of the ground, SMS's query and the
+    # cleaned map average of the reading
+    M = sarea.detail_of(flagged_zip, poly, rule, margin_m=SA_MAP_MARGIN_M, method=method, decoded=decoded,
+                        interior_m=interior)
+    rows = []
+    for k, p in enumerate(M["polygons"]):
+        D = M["ground_rows"].get(p["name"])
+        if not D:
+            continue
+        for j in range(len(D["idx"])):
+            rows.append((0 if D["touch"][j] else 1, k, j))
+    n_all = len(rows)
+    rows.sort()
+    rows = rows[:SA_MAP_MAX]
+    yv = [float(M["ground_rows"][M["polygons"][k]["name"]]["yield"][j]) for c, k, j in rows if c == 0]
+    yv = np.asarray([v for v in yv if np.isfinite(v)], float)
+    lo, hi = (float(np.nanpercentile(yv, 2)), float(np.nanpercentile(yv, 98))) if len(yv) else (0.0, 1.0)
+    cm = matplotlib.colormaps["RdYlGn"]
+    fps, parts, meta = [], [], []
+    for c, k, j in rows:
+        name = M["polygons"][k]["name"]
+        D = M["ground_rows"][name]
+        fps.append(D["fp"][j])
+        parts.append(D["part"][j])
+        tip = "\n".join(sarea.ground_text(D, j, name, M["cleaned_rows"].get(name)))   # plain text: the lines
+        why = {"hand": "hand", "removed": "removed", "left_out": "left_out"}.get(str(D["status"][j]), "")
+        meta.append((why, float(D["yield"][j]), tip, bool(D["touch"][j])))
+    G1 = gpd.GeoSeries(fps, crs=M["crs"]).to_crs(4326) if fps else []
+    keep_parts = [q for q in parts if q is not None]
+    G2 = iter(gpd.GeoSeries(keep_parts, crs=M["crs"]).to_crs(4326)) if keep_parts else iter([])
+
+    def rings(g):
+        out = []
+        for q in getattr(g, "geoms", [g]):
+            if getattr(q, "geom_type", "") == "Polygon" and not q.is_empty:
+                out.append([[round(float(a), 8), round(float(b), 8)] for a, b in q.exterior.coords])
+        return out
+
+    strips, counted, pts = [], [], []
+    for g, q, (why, y, tip, cnt) in zip(G1, parts, meta):
+        for r in rings(g):
+            pts += r                                     # the view fits the strips drawn, not only the polygons
+            strips.append({"polygon": r, "tip": tip, "fill": SA_FILL.get(why, SA_FILL[""]),
+                           "line": SA_LINE.get(why, SA_LINE[""])})
+        if q is not None:
+            gq = next(G2)
+            t = 0.5 if not np.isfinite(y) else min(1.0, max(0.0, (y - lo) / (hi - lo if hi > lo else 1.0)))
+            col = [int(255 * v) for v in cm(t)[:3]] + [230]
+            for r in rings(gq):
+                counted.append({"polygon": r, "tip": tip, "fill": col})
+    PG = gpd.GeoSeries(M["geoms"], crs=M["crs"]).to_crs(4326)
+    lines = []
+    for p, g in zip(M["polygons"], PG):
+        tip = sarea.ground_sum_text(p) + "\n" + sarea.polygon_sum_text(p).replace(p["name"] + ":", "cleaned map:", 1)
+        for r in rings(g):
+            lines.append({"path": r, "tip": tip})
+            pts += r
+    n_hand = sum(1 for m in meta if m[0] == "hand")
+    n_auto = sum(1 for m in meta if m[0] == "removed")
+    n_left = sum(1 for m in meta if m[0] == "left_out")
+    return {"strips": strips, "parts": counted, "lines": lines, "n_drawn": len(rows), "n_all": n_all,
+            "n_hand": n_hand, "n_auto": n_auto, "n_left": n_left,
+            "lon": [a for a, b in pts], "lat": [b for a, b in pts], "lo": lo, "hi": hi,
+            "sums": [sarea.polygon_sum_text(p) for p in M["polygons"]], "rule_text": M["rule_text"]}
+
+
+def small_area_map(C: dict, SA: dict, path: str, tag: str | None = None):
+    """Under the small-area table: every reading near the polygons as its strip (faint; a reading the cleaning
+    removed in orange), the part counted strong (coloured by the yield used), the polygon lines (yellow); the mouse on
+    a reading (a tap on a phone) shows what the tool did with it and the calculation, on a polygon line its sum."""
+    if pdk is None:
+        return
+    fz = (C["R"].get("files") or {}).get("flagged_zip")
+    if not fz or not os.path.exists(fz) or not os.path.exists(path):
+        return
+    try:
+        dec = import_readings_of(tag) if tag else None
+        MD = small_area_map_data(fz, mtime(fz), path, mtime(path), SA.get("rule") or sarea.DEFAULT_RULE,
+                                 sarea.method_key(SA.get("method") or sarea.DEFAULT_METHOD), dec,
+                                 float(SA.get("interior_m") or 0.0))
+    except Exception as e:                               # noqa: BLE001 - the table stands without the map
+        st.caption(f"The map of the small area cannot be drawn: {type(e).__name__}: {e}")
+        return
+    if not MD["lon"]:
+        return
+    lay = [pdk.Layer("PolygonLayer", data=MD["strips"], get_polygon="polygon", get_fill_color="fill",
+                     get_line_color="line", line_width_min_pixels=1, stroked=True, filled=True, pickable=True,
+                     auto_highlight=True),
+           pdk.Layer("PolygonLayer", data=MD["parts"], get_polygon="polygon", get_fill_color="fill",
+                     get_line_color=[20, 24, 31, 200], line_width_min_pixels=1, stroked=True, filled=True,
+                     pickable=True, auto_highlight=True),
+           pdk.Layer("PathLayer", data=MD["lines"], get_path="path", get_color=[255, 214, 0], get_width=1,
+                     width_min_pixels=3, width_max_pixels=5, pickable=True)]
+    deck(lay, MD["lon"], MD["lat"], 460, max_zoom=20,
+         tooltip={"text": "{tip}", "style": {"backgroundColor": "#0B1F44", "color": "#FFFFFF", "fontSize": "12px",
+                                             "maxWidth": "380px", "whiteSpace": "pre-line"}})
+    st.caption(small_area_map_caption(MD, legacy=not SA.get("method")))
+
+
+def small_area_map_caption(MD: dict, legacy: bool = False) -> str:
+    """The caption under the small area's map. A record of 0.3.6 (legacy: its table is the cleaned map average) says
+    that the strips are drawn as grain / ground counts them and that Measure gives that figure beside the table."""
+    how = ("Grain / ground counts every one of them." if not legacy else
+           f"The strips are drawn as grain / ground (0.3.7) counts them; the table above is the "
+           f"{sarea.LEGACY_METHOD_TEXT}: Measure gives grain / ground beside it.")
+    return (f"Each reading's strip as logged (distance x width, ending at its logged point): faint grey, the "
+            f"part inside the line coloured by its yield ({MD['lo']:,.0f} red to {MD['hi']:,.0f} green bu/ac), "
+            "a reading the cleaning removed in orange"
+            + (f" ({MD['n_auto']:,} here)" if MD.get("n_hand") else "")
+            + (f", a reading removed by hand (Edit points) in purple ({MD['n_hand']:,} here)" if MD.get("n_hand")
+               else "")
+            + (f", a reading the import left out (from the decoded file) in blue ({MD['n_left']:,} here)"
+               if MD.get("n_left") else "")
+            + f", the polygons in yellow. {how} Point at a reading (tap on a "
+              "phone) for the grain counted, its clipped area, its part of the ground and what SMS's query and "
+              "the cleaned map average did with it; at a polygon's line for its sums."
+            + (f" Shown: {MD['n_drawn']:,} of the {MD['n_all']:,} readings near the polygons (the counted ones "
+               "first)." if MD["n_drawn"] < MD["n_all"] else ""))
+
+
+def small_area_figures(SA: dict, k: str):
+    """The small-area table that leads (0.3.7): per polygon grain / ground (bu/ac, grain bu, ground ac, ground % of
+    the polygon), the cleaned map average and SMS's query beside it, the spread inside the polygon and the calibration
+    range; the differences between polygons when a CV is given; the notes (decoded file, transients, duplicates). A
+    record of 0.3.6 has none of these: nothing is drawn (its table is the cleaned map average)."""
+    if not SA.get("method"):
+        return
+    rows = []
+    for p_ in SA["polygons"]:
+        G, Q = p_.get("ground") or {}, p_.get("sms") or {}
+        sp, ca = G.get("spread") or {}, p_.get("calibration") or {}
+        rows.append({"polygon": str(p_["name"]), "grain / ground": G.get("dry_yield_bu_ac"),
+                     "grain (bu)": G.get("grain_bu"), "ground (ac)": G.get("ground_ac"),
+                     "ground %": G.get("ground_pct"),
+                     "cleaned map": p_["kept"].get("dry_yield_bu_ac"),
+                     "SMS query": Q.get("dry_yield_bu_ac"),
+                     "spread ± %": sp.get("pct"),
+                     "calibration": (f"{ca['lo']:,.2f} – {ca['hi']:,.2f}" if ca.get("half") is not None
+                                                   else "-")})
+    fmt = {"grain / ground": "%.2f", "grain (bu)": "%.2f", "ground (ac)": "%.3f", "ground %": "%.0f",
+           "cleaned map": "%.2f", "SMS query": "%.2f", "spread ± %": "%.1f"}
+    st.dataframe(pd.DataFrame(rows), hide_index=True, key=f"sa_fig_{k}",
+                 column_config={c: st.column_config.NumberColumn(format=f) for c, f in fmt.items()})
+    D = SA.get("decoded") or {}
+    nread = ", ".join(f"{p_['name']} {int((p_.get('ground') or {}).get('readings') or 0):,} readings"
+                      for p_ in SA["polygons"])
+    st.caption(f"Dry yield in bu/ac. Grain / ground ({nread}): " + str(SA.get("ground_rule") or "") + ". Cleaned "
+               "map: the cleaned map average (0.3.6's figure); SMS query: as SMS's query of a polygon (whole strips "
+               "inside). Spread inside the polygon: how much the "
+               "yield varies along the passes inside the polygon (moving-block bootstrap, blocks of "
+               f"{sarea.BLOCK_M:g} m, {sarea.N_BOOT:,} draws, fixed seed); not the accuracy of the number. "
+               + (f"Calibration range (95 %): ± 1.96 x CV {float(SA['cv_pct']):g} % x the "
+                  f"{sarea.METHODS.get(SA['method'])}; it covers comparisons between polygons of the same combine "
+                  "and day; the absolute level also needs a scale level (grower's weight)."
+                  if SA.get("cv_pct") else "Give the calibration CV to see the calibration range."))
+    if D.get("note"):
+        st.warning(D["note"] + ".", icon=":material/info:")
+    elif D.get("added"):
+        st.caption(f"{int(D['added']):,} readings the import left out read from {D.get('file')}.")
+    for p_ in SA["polygons"]:
+        G = p_.get("ground") or {}
+        if G.get("transient_warning"):
+            st.warning(f"{p_['name']}: {G['transient_ground_pct']:.0f} % of the ground is the first or last "
+                       f"{sarea.TRANSIENT_M:g} m of a pass (the elevator filling or emptying reads low): consider the "
+                       "interior cut.", icon=":material/warning:")
+    for n_ in SA.get("notes") or []:
+        st.caption(n_)
+    if SA.get("pairs"):
+        st.markdown("**Differences between the polygons**",
+                    help="First minus second (bu/ac) with ± 1.96 x sqrt((CV y1)² + (CV y2)²): beyond the range, the "
+                         "difference is larger than the combine's calibration scatter explains.")
+        st.dataframe(pd.DataFrame([{"polygon": q["a"], "minus": q["b"], "difference (bu/ac)": q["diff"],
+                                    "± (95 %)": q["half"], "beyond the range": "yes" if q["beyond"] else "no"}
+                                   for q in SA["pairs"]]), hide_index=True, key=f"sa_pairs_{k}",
+                     column_config={c: st.column_config.NumberColumn(format="%.2f")
+                                    for c in ("difference (bu/ac)", "± (95 %)")})
+
+
+def small_area_box(C: dict, tag: str | None = None):
     """Step 3, under the clean map: the small area cut AFTER the whole-field cleaning (engine/clean/small_area.py,
     the same as the command line's --small-area / --edge-rule). A polygon file (one or several polygons) and an edge
     rule; per polygon the kept readings that count (readings, acres, total dry bu, area-weighted and plain mean, min,
-    max, SD, moisture) and the same without the cleaning, a CSV and a point shapefile, a line in the record."""
+    max, SD, moisture) and the same without the cleaning, a CSV, a point shapefile and a polygon shapefile of the
+    counted parts, a line in the record; the map of the cut with each reading's calculation. The polygon file and the
+    rule are kept with the file in the work and measured again after every cleaning of it (the reprocess after Edit
+    points included), with the figures before the edits beside the new ones."""
+    tag = tag or ss.active
     R = C["R"]
     fz = (R.get("files") or {}).get("flagged_zip")
     if not fz or not os.path.exists(fz):
         return
     k = key_of(C["shp"])
     SA = R.get("small_area")
-    with st.expander("Small area (cut after the cleaning)", icon=":material/crop_square:", expanded=bool(SA)):
+    A = (ss.get("small_area") or {}).get(tag)
+    with st.expander("Small area (cut after the cleaning)", icon=":material/crop_square:", expanded=bool(SA or A),
+                     key=f"sa_box_{k}"):
         st.caption("The 3-sigma limits stay those of the whole field: the readings the cleaning kept are counted in "
-                   "each polygon of the file you give. (The field of interest of step 1 cuts before the cleaning, "
-                   "so a small area there would get its limits from its own few readings.)")
-        up = st.file_uploader("Polygon file", accept_multiple_files=True, key=f"sa_up_{k}", type=BOUNDARY_TYPES,
-                              help="One or several polygons, each named by its name column (else numbered): a .zip, "
-                                   "the .shp + .shx + .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz.")
+                   "each polygon of the file you give. (The field boundary, step 1's field files or this file's own "
+                   "in step 3, cuts before the cleaning, so a small area there would get its limits from its own few "
+                   "readings.) Kept with this file: it is measured again after every cleaning of it, also after "
+                   "Edit points.")
+        msg = ss.pop(f"sa_msg_{file_key(tag)}", None)
+        if msg:
+            st.warning(msg, icon=":material/info:")
+        if SA and not A:
+            st.info(f"This small area was measured by an earlier version of OCED ({SA.get('file')}; its figures are "
+                    "the cleaned map average of 0.3.6) and its polygon file was not found again (a file given by its "
+                    "path was read where it was, not copied into the work): give the polygon file again and Measure "
+                    "to keep it with this file. Without it, the next cleaning of this file has no small area.",
+                    icon=":material/history:")
+        change = bool(ss.get(f"sa_change_{k}")) or not (SA and A)
+        go = False
+        if change:
+            up = st.file_uploader("Polygon file", accept_multiple_files=True, key=f"sa_up_{k}", type=BOUNDARY_TYPES,
+                                  help="One or several polygons, each named by its name column (else numbered): a "
+                                       ".zip, the .shp + .shx + .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml "
+                                       "or .kmz. It is copied into the work folder.")
+        else:
+            up = None
         with st.container(horizontal=True, vertical_alignment="bottom"):
-            spath = st.text_input("or a file on this computer", key=f"sa_path_{k}",
-                                  placeholder=r"C:\...\small area.zip")
-            rule = st.selectbox("Edge rule", list(sarea.EDGE_RULES), format_func=sarea.EDGE_RULES.get,
-                                index=list(sarea.EDGE_RULES).index(sarea.DEFAULT_RULE),
-                                key=f"sa_rule_{k}", width=330,
-                                help="Footprint clipped by the polygon's line (the default): every reading whose "
+            meths = list(sarea.METHODS)
+            m0 = sarea.method_key((A or {}).get("method") or sarea.DEFAULT_METHOD)
+            meth = st.selectbox("Figure", meths, format_func=sarea.METHODS.get, index=meths.index(m0),
+                                key=f"sa_meth_{k}", width=230,
+                                help="The figure the small area leads with; the three are always measured and shown. "
+                                     "Grain / ground (the default): " + sarea.METHOD_HELP["ground"] + ". It is the "
+                                     "one that agreed with the weigh wagon (2026 checks). Cleaned map average: "
+                                     + sarea.METHOD_HELP["cleaned"] + ". As SMS's query: " + sarea.METHOD_HELP["sms"]
+                                     + ".")
+            cv_in = st.number_input("Calibration CV (%)", 0.0, 50.0, float(sarea.cv_value((A or {}).get("cv")) or 0.0),
+                                    0.1, format="%.1f", key=f"sa_cv_{k}", width=170, help=sarea.CV_HELP)
+            int_in = st.number_input("Interior: m off each end", 0.0, 200.0, float((A or {}).get("interior") or 0.0),
+                                     1.0, format="%.0f", key=f"sa_int_{k}", width=190,
+                                     help="Metres taken off each end of every polygon along its long axis before it "
+                                          "is measured. The ends of a pass read low (the elevator filling and "
+                                          "emptying), so the interior reads higher than the whole pass. 0: the whole "
+                                          "polygon.")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            if change:
+                spath = st.text_input("or a file on this computer", key=f"sa_path_{k}",
+                                      placeholder=r"C:\...\small area.zip")
+            else:
+                spath = ""
+            rules = list(sarea.EDGE_RULES)
+            r0 = (A or {}).get("rule") if (A or {}).get("rule") in rules else sarea.DEFAULT_RULE
+            rule = st.selectbox("Edge rule (cleaned map average)", rules, format_func=sarea.EDGE_RULES.get,
+                                index=rules.index(r0), key=f"sa_rule_{k}", width=330,
+                                help="For the cleaned map average only (grain / ground always clips each strip by "
+                                     "the line; SMS's query always takes the whole strips inside). "
+                                     "Footprint clipped by the polygon's line (the default): every reading whose "
                                      "strip (its width x its distance, ending at the logged point) overlaps the "
                                      "polygon, with the area of the overlap only. Whole footprint inside: a reading "
                                      "counts when its strip lies entirely in the polygon, as SMS's query. The "
@@ -6575,22 +7697,52 @@ def small_area_box(C: dict):
                                      "reading is where the clean file has it (Optimize Swath Widths moves the strips "
                                      "it narrows); without it, as logged.")
             go = st.button("Measure", type="primary", icon=":material/calculate:", key=f"sa_go_{k}")
+            if not change:
+                st.button("Change the polygon file", key=f"sa_chg_{k}", icon=":material/edit:",
+                          on_click=lambda: ss.__setitem__(f"sa_change_{k}", True))
+            if SA or A:
+                st.button("Remove the small area", key=f"sa_rm_{k}", icon=":material/delete:", on_click=_sa_remove,
+                          args=(tag,), help="It is no longer measured after the cleanings of this file; the record and "
+                                            "the report of this cleaning lose it.")
         if go:
-            if not up and not (spath or "").strip():
-                st.toast("Upload a polygon file or type its path first", icon=":material/info:")
-            else:
-                try:
-                    path = small_area_files(C, ("upload", up) if up else ("path", spath))
-                    er.small_area_after_clean(R, path, rule, log=lambda m: None)
+            try:
+                if change and (up or (spath or "").strip()):
+                    path = small_area_files(tag, ("upload", up) if up else ("path", spath))
+                    name = (os.path.basename(up[0].name) if up else os.path.basename(str(spath).strip().strip('"')))
+                elif A and os.path.exists(str(A.get("path"))):
+                    path, name = A["path"], A.get("name") or os.path.basename(A["path"])
+                else:
+                    path = None
+                    st.toast("Upload a polygon file or type its path first", icon=":material/info:")
+                if path:
+                    A_new = {"path": path, "name": name, "rule": rule}
+                    if meth != sarea.DEFAULT_METHOD:
+                        A_new["method"] = meth
+                    if sarea.cv_value(cv_in):
+                        A_new["cv"] = float(cv_in)
+                    if float(int_in or 0) > 0:
+                        A_new["interior"] = float(int_in)
+                    ss.setdefault("small_area", {})[tag] = A_new
+                    er.small_area_after_clean(R, path, rule, log=lambda m: None,
+                                              extra={"measured_after": None, "auto": False, "before": None,
+                                                     "edits": (R.get("manual_edits") or {}).get("sha256")},
+                                              **small_area_opts(tag, A_new))
                     SA = R.get("small_area")
+                    ss[f"sa_change_{k}"] = False
                     save_current(quiet=True)
-                except ValueError as e:
-                    st.error(str(e), icon=":material/error:")
-                except Exception as e:                       # shown, never swallowed
-                    st.exception(e)
+                    st.rerun()
+            except ValueError as e:
+                st.error(str(e), icon=":material/error:")
+            except Exception as e:                       # shown, never swallowed
+                st.exception(e)
         if not SA:
             return
-        st.markdown(f"**{html.escape(str(SA['file']))}** · {html.escape(SA['rule_text'])}")
+        st.markdown(f"**{html.escape(str((A or {}).get('name') or SA['file']))}** · "
+                    f"{html.escape(sarea.method_text(SA))}"
+                    + (f" · interior: {float(SA['interior_m']):g} m off each end" if SA.get("interior_m") else "")
+                    + (f" · measured again after the cleaning of {html.escape(str(SA['measured_after']))}"
+                       if SA.get("auto") and SA.get("measured_after") else ""))
+        small_area_figures(SA, k)
         rows = []
         for p_ in SA["polygons"]:
             for s_, lab in (("kept", "cleaned"), ("raw", "as imported")):
@@ -6600,24 +7752,58 @@ def small_area_box(C: dict):
                              "dry yield (bu/ac)": f_["dry_yield_bu_ac"], "mean (bu/ac)": f_["mean_bu_ac"],
                              "min": f_["min_bu_ac"], "max": f_["max_bu_ac"], "SD": f_["sd_bu_ac"],
                              "moisture (%)": f_["moisture_mean_pct"],
-                             "removed by the cleaning": (", ".join(f"{a} {b}" for a, b in
-                                                                   (f_.get("removed_by_step") or {}).items()) or "0")
+                             "removed (by step)": (", ".join(
+                                 (f"by hand {b}" if a == me.STEP else f"{a} {b}")
+                                 for a, b in (f_.get("removed_by_step") or {}).items()) or "0")
                              if s_ == "raw" else ""})
         num = {c: st.column_config.NumberColumn(format="%.3f" if c == "area (ac)" else "%.2f")
                for c in ("area (ac)", "total dry bu", "dry yield (bu/ac)", "mean (bu/ac)", "min", "max", "SD",
                          "moisture (%)")}
+        st.markdown("**The cleaned map average in detail**" if SA.get("method") else
+                    f"**{sarea.LEGACY_METHOD_TEXT}**")
         st.dataframe(pd.DataFrame(rows), hide_index=True, column_config=num, key=f"sa_table_{k}")
-        st.caption("Dry yield = total dry bu / area (area-weighted, as the SMS summary); mean = the plain mean of "
-                   "the readings. Cleaned: the readings the whole-field cleaning kept (Yld_Vol_Dr x Swath_Scl over "
-                   "Dist_Opt x Wdth_Opt, as the clean file); as imported: every reading of the field, no cleaning.")
+        st.caption(f"Edge rule {SA['rule_text']}. Dry yield = total dry bu / area (area-weighted, as the SMS summary); "
+                   "mean = the plain mean of the readings. Cleaned: the readings the whole-field cleaning kept "
+                   "(Yld_Vol_Dr x Swath_Scl over Dist_Opt x Wdth_Opt, as the clean file); as imported: every reading "
+                   "of the field, no cleaning.")
+        BF = SA.get("before") or {}
+        if BF.get("polygons") and BF.get("edits") != SA.get("edits"):
+            prev = {p["name"]: p["kept"] for p in BF["polygons"]}
+            rows_b = []
+            for p_ in SA["polygons"]:
+                b, a = prev.get(p_["name"]) or {}, p_["kept"]
+                rows_b.append({"polygon": str(p_["name"]),
+                               "readings before": b.get("readings"), "readings after": a.get("readings"),
+                               "ac before": b.get("area_ac"), "ac after": a.get("area_ac"),
+                               "bu before": b.get("total_dry_bu"), "bu after": a.get("total_dry_bu"),
+                               "bu/ac before": b.get("dry_yield_bu_ac"), "bu/ac after": a.get("dry_yield_bu_ac")})
+            st.markdown("**Before and after the edits by hand**",
+                        help="The same polygons and rule on the cleaning shown before the reprocess with the edits "
+                             f"(of {BF.get('at') or '-'}) and on this one: the effect of the marks on each plot. The "
+                             "edits stay whole-field edits (one edits file, step SM, the field's limits).")
+            st.dataframe(pd.DataFrame(rows_b), hide_index=True, key=f"sa_before_{k}",
+                         column_config={c: st.column_config.NumberColumn(format="%.3f" if c.startswith("ac") else
+                                                                         "%.2f")
+                                        for c in ("ac before", "ac after", "bu before", "bu after", "bu/ac before",
+                                                  "bu/ac after")})
+        for line in [sarea.polygon_sum_text(p_) for p_ in SA["polygons"]]:
+            st.caption("Cleaned map average · " + line)
+        path_ = (A or {}).get("path")
+        if path_ and os.path.exists(path_):
+            small_area_map(C, SA, path_, tag)
         Fs = SA.get("files") or {}
         with st.container(horizontal=True):
-            for f_, lab, mime in ((Fs.get("csv"), "Small area table (.csv)", "text/csv"),
-                                  (Fs.get("zip"), "Small area points (.zip shapefile)", "application/zip")):
+            for i_, (f_, lab, mime) in enumerate(((Fs.get("csv"), "Small area table (.csv)", "text/csv"),
+                                                  (Fs.get("zip"), "Small area points (.zip shapefile)",
+                                                   "application/zip"),
+                                                  (Fs.get("parts_zip"), "Counted parts (.zip shapefile)",
+                                                   "application/zip"),
+                                                  (Fs.get("ground_zip"), "Grain / ground strips (.zip shapefile)",
+                                                   "application/zip"))):
                 if f_ and os.path.exists(f_):
                     with open(f_, "rb") as fh:
                         st.download_button(lab, fh.read(), file_name=os.path.basename(f_), mime=mime,
-                                           icon=":material/download:", key=f"sa_dl_{k}_{lab[-5:]}")
+                                           icon=":material/download:", key=f"sa_dl_{k}_{i_}")
 
 
 def result_numbers(tag: str, C: dict) -> dict | None:
@@ -8452,6 +9638,7 @@ def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
     pending = False
     # own settings that leave no reading with a position: the fields to change them open (steps 3 and 4 wait)
     no_reading = mode != "default" and not retry and not _located_count(D["shp"])
+    # (no icon: AppTest takes an expander with an icon for a status block; the opener's look comes from brand.py)
     with st.expander("Edit the settings", type="compact", key=f"fi_edit_{TKi}",
                      expanded=(mode == "default" or retry or no_reading)):
         with st.container(key=f"imp_panel_{TKm}"):
@@ -8752,6 +9939,8 @@ def _remove_away(t: str):
     with it; the files in the work folder stay. The work is saved without it."""
     ss.pop(f"rm_away_ask_{file_key(t)}", None)
     (ss.get("away") or {}).pop(t, None)
+    ff()["use"].pop(t, None)                             # its choices of the field files go with it
+    ff()["feature"].pop(t, None)
     ss.away_order = [x for x in (ss.get("away_order") or []) if x != t]
     drop_work_msg_file(t)                                # its 'it stays in this work' line no longer holds
     save_current(quiet=True, even_empty=True)
@@ -8810,7 +9999,8 @@ def end_of_page():
 # the input and its units, then the file's import line, its strip of cards, its map and the details.
 with st.container(border=True, key="oced_step_1"):
     brand.step_header(1, "Raw data", "Open the files of a combine, planter or sprayer")
-    with (st.expander("Open other data", type="compact", key="open_box") if ss.datasets else st.container()):
+    with (st.expander("Open other data", type="compact", key="open_box", icon=":material/folder_open:")
+          if ss.datasets else st.container()):
         c_up, c_path = st.columns([1.35, 1], vertical_alignment="bottom")
         with c_up:
             ups = st.file_uploader("Upload files", accept_multiple_files=True,
@@ -8838,13 +10028,16 @@ with st.container(border=True, key="oced_step_1"):
                         request_open(("path", p_in))
                     else:
                         st.toast("Upload files or type a path first", icon=":material/info:")
+    field_files_panel()                                  # the field boundary and zone map: always visible (0.3.7)
     if ss.open_request:
         req, ss.open_request = ss.open_request, None
+        pend = pending_field_files()                     # given in the panel before Open: kept for the new work
         with st.spinner("Unpacking and recognising the input ..."):
             opened = do_open(req)
         if opened:
             if req[0] == "upload":                       # the upload field empties: a path typed next is opened
                 ss.up_nonce = int(ss.get("up_nonce") or 0) + 1
+            ss["ff_msg"] = take_field_files(pend)
             st.rerun()
     if ss.open_error:
         st.error(ss.open_error, icon=":material/error:")
@@ -8909,7 +10102,7 @@ with st.container(border=True, key="oced_step_1"):
                     ss[f"src_box_{CK}"] = False
                 box_kw = {} if f"src_box_{CK}" in ss else {"expanded": True}
                 with st.expander("Extract more of this input" if k_ex else "Extract", key=f"src_box_{CK}",
-                                 on_change="rerun", **box_kw):
+                                 on_change="rerun", icon=":material/file_export:", **box_kw):
                     U = pd.DataFrame([dataclasses.asdict(u) for u in units])
                     U["field"] = U["field"].replace("", "(no field)")
                     U = U.sort_values(["field", "year", "start"], na_position="last").reset_index(drop=True)
@@ -8946,7 +10139,7 @@ with st.container(border=True, key="oced_step_1"):
                                       if any(import_mode(ss.datasets[t]) == "custom" for t in again) else "") + "]")
                     fid = cand["decoder"]
                     dflt = detect.default_options(fid)
-                    with st.expander("Decoding options", type="compact"):
+                    with st.expander("Decoding options", type="compact", key=f"dec_box_{CK}", icon=":material/tune:"):
                         kw = {}
                         if fid == "cnh_cn1":
                             kw["calibration"] = st.segmented_control(
@@ -9189,7 +10382,8 @@ with st.container(border=True, key="oced_step_1"):
                      help="Its cleaning, boundary and grower's data go with it; the files in the work folder stay."):
             if D.get("src") and D.get("src") == ss.get("last_cand"):
                 ss.cands, ss.last_cand = None, None     # the list of step 1 would import the export again
-            for d_ in (ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set, ss.cfset):
+            for d_ in (ss.datasets, ss.cleaned, ss.boundary, ss.grower, ss.a3set, ss.cfset, ss.small_area,
+                       ff()["use"], ff()["feature"]):
                 d_.pop(ss.active, None)
             drop_work_msg_file(ss.active)
             ss.active = next(iter(ss.datasets), None)
@@ -9243,7 +10437,8 @@ with st.container(border=True, key="oced_step_1"):
         download("Extracted points (.zip)", V1["zip"], "application/zip", key=f"dl_ext_{ss.active}",
                  help="Every decoded reading, before the import as SMS.")
     if (N1["located"] if _norm_p(V1["shp"]) == _norm_p(D["shp"]) else _located_count(D["shp"])):
-        brand.next_step(3, "Cleaning", note="2 · Import settings only to change them")
+        brand.next_step(3, "Cleaning", note="2 · Play, edit by hand and download without cleaning, or change the "
+                                            "import")
     else:                                                # the page stops after step 2: its settings first
         brand.next_step(2, "Import settings", note="nothing to clean yet")
 
@@ -9260,8 +10455,16 @@ with st.container(border=True, key="oced_step_2"):
     OPX = operation_of(D["shp"], mtime(D["shp"]))
     n_located = located_in(df0)
     if n_located and D.get("yield", True):               # the harvest replay of the readings in use (replay_view.py)
+        IE = import_edits_of(ss.active)
+        if IE is None and (edits_of(ss.active) or {}).get("error"):
+            st.error(f"The edits by hand of this file cannot be used: {edits_of(ss.active)['error']}",
+                     icon=":material/error:")
         replay_view.section(D["shp"], f"imp_{key_of(D['shp'])}", outline=B_["outline"] if B_ else None,
-                            raw_root=lambda: _raw_root(D), title=ss.active, field=ss.active)
+                            raw_root=lambda: _raw_root(D), title=ss.active, field=ss.active,
+                            label="Play the harvest · zone map · edit points", edits=IE,
+                            on_edits=(lambda K, _t=ss.active: _on_import_edits(K, _t)) if IE is not None else None,
+                            field_zone=field_zone_map(), on_field_column=set_field_zone_column)
+        without_cleaning_block(ss.active, D, V1, outline=B_["outline"] if B_ else None)
     if n_located:
         brand.next_step(3, "Cleaning")
 if not n_located:
@@ -9301,8 +10504,8 @@ with st.container(border=True, key="oced_step_3"):
         starts_from_line(ss.active, D)
         st.caption("S0 import check → S1 clip → 3-sigma per attribute", help=A3_SEQ_HELP)
     set_key = f"set_box_{TK}_{key_of(str(C_prev.get('at')) + '|' + str(mtime(C_prev['shp'])))}" if folded else None
-    set_box = (st.expander("Settings · " + settings_summary(ss.active, IS_Y, P0, len(MCH)), key=set_key)
-               if folded else st.container())
+    set_box = (st.expander("Settings · " + settings_summary(ss.active, IS_Y, P0, len(MCH)), key=set_key,
+                           icon=":material/tune:") if folded else st.container())
     with set_box:
         if IS_Y:
             with st.container(key="method_panel"):
@@ -9342,7 +10545,7 @@ with st.container(border=True, key="oced_step_3"):
                         flt[a] = st.toggle(f"{fid} {a}", value=bool(P0.get(a, D0[a])),
                                            key="t_moist" if a == "moisture" else "t_speed")
                     yld = st.toggle("S5 dry yield", value=bool(P0.get("yield", D0["yield"])), key="t_yield")
-                with st.expander("More settings", type="compact", key="more_sms"):
+                with st.expander("More settings", type="compact", key="more_sms", icon=":material/tune:"):
                     with st.container(horizontal=True, vertical_alignment="bottom"):
                         fo_opts = list(sms.FILTER_ORDER_LABELS)
                         f_order = st.selectbox("Order of the filters", fo_opts, index=fo_opts.index(f_order0),
@@ -9382,276 +10585,370 @@ with st.container(border=True, key="oced_step_3"):
             ss.smsset = dict(sset)
         else:
             sset = a3_panel(ss.active, OPX, df0)
-        clip = bool(sset.get("clip", True))
-        # ---- the field boundary and the grower's data of the file on screen (each file keeps its own)
-        c_b, c_g = st.columns(2, gap="medium")
-        with c_b:
-            with st.container(key=f"field_box_b_{TK}"):
-                st.markdown("**Field boundary (S1)**")
-                B = ss.boundary.get(ss.active)
-                if B:
-                    if B["needs_choice"]:
-                        st.info(f"{B['name']} · {len(B.get('fields') or [])} fields in one file",
-                                icon=":material/crop_free:")
-                    else:
-                        st.success(f"{B['name']} · " + (f"{chosen_fields(B)} · " if B.get("feature")
-                                                         else f"{B['n_polygons']} polygon(s) · ")
-                                   + f"{B['area_ac']:,.2f} ac" + ("" if clip else " · S1 is off: not clipped"),
-                                   icon=":material/crop_free:")
-                    if B.get("fields") and (B["needs_choice"] or B.get("feature")):
-                        opts = [int(f["index"]) for f in B["fields"]]
-                        lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])} "
-                                                f"({float(f.get('area_ac') or 0):,.2f} ac)" for f in B["fields"]}
-                        sel = st.multiselect("This file holds several fields: which one is this field?", opts,
-                                             default=[v for v in (B.get("feature") or []) if v in opts],
-                                             key=f"bnd_feat_{TK}", format_func=lab.get,
-                                             placeholder="choose the field ...",
-                                             help="Several polygons together = one field drawn in parts (their union).")
-                        if sorted(sel) != sorted(B.get("feature") or []):
-                            try:
-                                if sel:
-                                    nb = load_boundary(ss.active, ("path", B["path"]), feature=sel)
-                                    nb["fields"] = nb["fields"] or B["fields"]
-                                else:
-                                    nb = dict(B, feature=None, needs_choice=True, outline=[])
-                                ss.boundary[ss.active] = nb
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e), icon=":material/error:")
-                        if B["needs_choice"]:
-                            st.warning("Choose the field: until then the file is cleaned without the clip.",
-                                       icon=":material/warning:")
-                    if B.get("is_plan"):
-                        st.caption(":orange[Looks like a trial plan]",
-                                   help="This file looks like a trial plan (plots): S1 clips to the plots, not to a "
-                                        "field boundary. Give the field boundary to keep the alleys and the border.")
-                    for w in B.get("warnings") or []:
-                        st.caption(w)
-                    if st.button("Remove the boundary", icon=":material/delete:", key=f"bnd_rm_{TK}"):
-                        ss.boundary.pop(ss.active, None)
+    clip = bool(sset.get("clip", True))     # (0.3.7: the boxes below stay open after a cleaning; only the method folds)
+    # ---- the field boundary and the grower's data of the file on screen (each file keeps its own)
+    c_b, c_g = st.columns(2, gap="medium")
+    with c_b:
+        with st.container(key=f"field_box_b_{TK}"):
+            st.markdown("**Field boundary (S1)**")
+            B = ss.boundary.get(ss.active)
+            FBS = field_boundary_status(ss.active)        # the work's field boundary (step 1) for this file
+            use_ = ff()["use"].get(ss.active)
+            other_k = f"bnd_other_{TK}"
+            own_input = False                             # the uploader / path / Use of this file's own boundary
+            if use_ == "none" and not B:
+                st.info("No boundary for this file (the field files' boundary is not used): every reading goes into "
+                        "the cleaning. Give this file's own boundary below to clip it.", icon=":material/crop_free:")
+                if FBS["FB"] and st.button("Use the field files' boundary", key=f"bnd_ff_back_{TK}",
+                                           icon=":material/undo:"):
+                    ff()["use"].pop(ss.active, None)
+                    save_current(quiet=True)
+                    st.rerun()
+                own_input = True
+            elif not B and FBS["B"] and not ss.get(other_k):
+                RB = FBS["B"]
+                st.success(f"From the field files (step 1): {RB['name']} · "
+                           + (f"{chosen_fields(RB)} · " if RB.get("feature") else f"{RB['n_polygons']} polygon(s) · ")
+                           + f"{RB['area_ac']:,.2f} ac" + ("" if clip else " · S1 is off: not clipped"),
+                           icon=":material/crop_free:")
+                st.caption(f"{100 * float(FBS['share'] or 0):.0f} % of this file's readings lie inside it (+ "
+                           f"{er.AOI_BUFFER_M:g} m); every file of the work without its own boundary uses it.")
+                FBf = FBS["FB"]
+                if FBf.get("needs_choice") and FBf.get("fields"):
+                    opts = [int(f["index"]) for f in FBf["fields"]]
+                    lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])} "
+                                            f"({float(f.get('area_ac') or 0):,.2f} ac)" for f in FBf["fields"]}
+                    sel = st.multiselect("The field files hold several fields: which one is this field?", opts,
+                                         default=[v for v in (FBS["feature"] or []) if v in opts],
+                                         key=f"ff_feat_{TK}", format_func=lab.get, placeholder="choose the field ...",
+                                         help="Chosen for this file: the polygon holding most of its readings. "
+                                              "Several polygons together = one field drawn in parts (their union).")
+                    if sorted(sel) != sorted(FBS["feature"] or []):
+                        ff()["feature"][ss.active] = [int(x) for x in sel]
+                        save_current(quiet=True)
                         st.rerun()
+                if RB.get("is_plan"):
+                    st.caption(":orange[Looks like a trial plan]",
+                               help="This file looks like a trial plan (plots): S1 clips to the plots, not to a "
+                                    "field boundary. Give the field boundary to keep the alleys and the border.")
+                with st.container(horizontal=True):
+                    if st.button("Use another for this file", key=f"bnd_ff_other_{TK}", icon=":material/edit:",
+                                 help="This file gets its own boundary (it wins over the field files' one)."):
+                        ss[other_k] = True
+                        st.rerun()
+                    if st.button("No boundary for this file", key=f"bnd_ff_none_{TK}", icon=":material/block:",
+                                 help="This file is cleaned without the clip; the other files keep the field "
+                                      "files' boundary."):
+                        ff()["use"][ss.active] = "none"
+                        save_current(quiet=True)
+                        st.rerun()
+            elif B:
+                if B["needs_choice"]:
+                    st.info(f"{B['name']} · {len(B.get('fields') or [])} fields in one file",
+                            icon=":material/crop_free:")
                 else:
-                    bup = st.file_uploader("Boundary file", accept_multiple_files=True,
-                                           key=f"bnd_up_{TK}_{int(ss.get('up_nonce') or 0)}", type=BOUNDARY_TYPES,
-                                           help="A .zip (a shapefile or an SMS 'Boundaries' export), the .shp + .shx "
-                                                "+ .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz. "
-                                                "Without a boundary S1 is skipped and every reading of the file goes "
-                                                "into the cleaning.")
-                    with st.container(horizontal=True, vertical_alignment="bottom"):
-                        bpath = st.text_input("or a file on this computer", key=f"bnd_path_{TK}",
-                                              placeholder=r"C:\...\field boundary.zip")
-                        use_b = st.button("Use", type="primary", icon=":material/crop_free:", key=f"bnd_use_{TK}")
-                    if use_b:
-                        if not bup and not (bpath or "").strip():
-                            st.toast("Upload a boundary file or type its path first", icon=":material/info:")
-                        else:
-                            try:
-                                ss.boundary[ss.active] = load_boundary(ss.active, ("upload", bup) if bup
-                                                                       else ("path", bpath))
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e), icon=":material/error:")
-                            except Exception as e:                       # shown, never swallowed
-                                st.exception(e)
-        with c_g:
-            if not IS_Y:
-                with st.container(key=f"field_box_g_{TK}"):
-                    st.markdown("**What the file is**", help="Recognised from the column names. The grower's data "
-                                                             "(total weight, moisture, bushel weight) apply to harvest "
-                                                             "files.")
-                    rows_i = [("Operation", OPX["label"]),
-                              ("Applied rate", ", ".join(OPX["rates"]) or "none found (choose the attributes at the left)"),
-                              ("Target rate", ", ".join(OPX["targets"]) or "-"), ("Speed", OPX["speed"] or "-"),
-                              ("Machine", OPX["machine"] or "-"), ("Dataset", OPX["dataset"] or "-")]
-                    if OPX["product"]:
-                        pv = df0[OPX["product"]].astype(str).replace({"": np.nan, "nan": np.nan}).dropna().unique()
-                        rows_i.append(("Product", ", ".join(map(str, pv[:5])) + (f" … ({len(pv)})" if len(pv) > 5
-                                                                                 else "")))
-                    st.dataframe(pd.DataFrame(rows_i, columns=["", "in this file"]), hide_index=True)
-            else:
-                G0 = ss.grower.get(ss.active) or {}
-                with st.expander("Grower's weight · optional", key=f"gw_box_{TK}", expanded=bool(G0.get("weight"))):
-                    with st.container(horizontal=True, vertical_alignment="bottom"):
-                        g_unit_prev = ss.get(f"gw_u_{TK}", G0.get("unit") or "lb")
-                        per_ac = g_unit_prev == "bu/ac"
-                        g_w = st.number_input("Yield of the field" if per_ac else "Total weight of the field", 0.0,
-                                              1e12, value=G0.get("weight"), step=1.0 if per_ac else 100.0,
-                                              key=f"gw_w_{TK}",
-                                              format=("%.2f" if per_ac else "%.3f" if g_unit_prev == "t" else "%.0f"),
-                                              placeholder="optional",
-                                              help="What the grower got for this field (scale tickets or the grain "
-                                                   "cart), as written, in the unit at the right; bu/ac when the "
-                                                   "grower gives the yield per acre (it is made a total with the "
-                                                   "acres).")
-                        g_unit = st.segmented_control("Unit", list(er.TICKET_UNITS), default=G0.get("unit") or "lb",
-                                                      required=True, key=f"gw_u_{TK}",
-                                                      format_func=TICKET_UNIT_LABEL.get)
-                    B_g = boundary_of(ss.active)
-                    # the boundary's acres only when S1 clips to it: with the clip off the monitor total is the whole
-                    # file's, and the engine then takes the area harvested
-                    B_c = B_g if (B_g and clip) else None
-                    g_area = None
-                    if g_unit == "bu/ac":
-                        ph = (f"empty = the boundary, {B_c['area_ac']:,.2f} ac" if B_c else
-                              "empty = the area harvested (every strip once)"
-                              + (" - S1 is off: type the grower's acres" if B_g else ""))
-                        g_area = st.number_input("Acres the yield is over", 0.0, 1e7, value=G0.get("area_ac"),
-                                                 step=1.0, key=f"gw_a_{TK}", format="%.2f", placeholder=ph,
-                                                 help="The grower's acres for this yield. Empty: the field "
-                                                      "boundary's area; without a boundary or with the clip off, the "
-                                                      "area harvested, every strip once. bu/ac x acres = the "
-                                                      "grower's total in bushels.")
-                    with st.container(horizontal=True, vertical_alignment="bottom"):
-                        g_basis = st.segmented_control("Weighed", ["wet", "dry"], default=G0.get("basis") or "wet",
-                                                       required=True, key=f"gw_b_{TK}",
-                                                       format_func={"wet": "As delivered (wet)",
-                                                                    "dry": "At the standard moisture"}.get,
-                                                       help="As delivered: compared with the monitor's wet total (or, "
-                                                            "with the grain moisture, brought to the standard "
-                                                            "moisture, one-sided: grain drier than the standard stays "
-                                                            "as weighed). At the standard moisture: compared with the "
-                                                            "file's dry total.")
-                        g_m = st.number_input("Grain moisture (%)", 0.0, 60.0, value=G0.get("moisture"), step=0.1,
-                                              key=f"gw_m_{TK}", placeholder="optional", disabled=g_basis != "wet",
-                                              help="The moisture of the grain the grower weighed: the weight is "
-                                                   "brought to the standard moisture and compared with the "
-                                                   "monitor's dry total.")
-                        g_tw = st.number_input("Bushel weight (lb/bu)", 1.0, 100.0, value=G0.get("test_weight"),
-                                               step=0.1, key=f"gw_tw_{TK}", placeholder="optional",
-                                               help="The weight of the grower's bushel. A weight in lb, kg or t is "
-                                                    "compared as a mass, in the file's bushels: this value is then "
-                                                    "only reported. Bushels (bu, bu/ac) use it only when you say "
-                                                    "below that they are bushels of this weight.")
-                    g_bush = G0.get("bushels") or "given"
-                    if g_unit in ("bu", "bu/ac") and g_tw:
-                        g_bush = st.segmented_control("The grower's bushels are", list(GROWER_BUSHELS),
-                                                      default=G0.get("bushels") or "given", required=True,
-                                                      key=f"gw_bu_{TK}", format_func=GROWER_BUSHELS.get,
-                                                      help="As given: trade bushels (an elevator's weight / its "
-                                                           "standard bushel), compared as they are. Bushels of the "
-                                                           "bushel weight above: measured by volume, so converted "
-                                                           "through its mass (bu x that weight / the file's bushel "
-                                                           "weight).") or "given"
-                    g_use = st.segmented_control("Use it to", list(GROWER_USE),
-                                                 default=G0.get("use") or "validate", required=True,
-                                                 key=f"gw_use_{TK}", format_func=GROWER_USE.get, disabled=not g_w,
-                                                 help="Validate: the monitor's total against the grower's, L = "
-                                                      "grower / monitor and a verdict; the clean file does not "
-                                                      "change. Adjust: also Yld_Level = the dry yield x the combine "
-                                                      "factor x L in the clean file, and the weight may confirm a "
-                                                      "combine factor above the max; the monitor's columns stay as "
-                                                      "logged.")
-                    with st.expander("More", type="compact", key=f"gw_more_{TK}"):
-                        with st.container(horizontal=True, vertical_alignment="bottom"):
-                            crops = [None] + sorted(common.CROPS)
-                            g_crop = st.selectbox("Crop", crops, index=crops.index(G0.get("crop"))
-                                                  if G0.get("crop") in crops else 0, key=f"gw_c_{TK}",
-                                                  format_func=lambda c: "from the file" if c is None else c,
-                                                  help="For the standard moisture and the crop's bushel weight when "
-                                                       "the file does not give them.")
-                            g_sm = st.number_input("Standard moisture (%)", 0.0, 40.0, value=G0.get("std_moisture"),
-                                                   step=0.5, key=f"gw_sm_{TK}", placeholder="decoder / crop table")
-                            bf_opts = list(BUSHEL_FROM_LABEL)
-                            g_bf = st.selectbox("Bushel of the monitor's total", bf_opts,
-                                                index=bf_opts.index(G0.get("bushel_from") if G0.get("bushel_from")
-                                                                    in bf_opts else "file"),
-                                                key=f"gw_bf_{TK}", format_func=BUSHEL_FROM_LABEL.get,
-                                                help="The file's (the default): its own wet mass / wet volume, the "
-                                                     "bushel the monitor's volume columns are in. The declared one: "
-                                                     "the import's weight to volume, else the crop table, for a file "
-                                                     "whose mass column is not in lb/ac (the cleaning warns when the "
-                                                     "two differ by more than 0.5 %).")
-                    ss.grower[ss.active] = {"weight": float(g_w) if g_w else None, "unit": g_unit or "lb",
-                                            "basis": g_basis or "wet", "moisture": g_m if g_basis == "wet" else None,
-                                            "test_weight": g_tw, "crop": g_crop, "std_moisture": g_sm,
-                                            "use": g_use or "validate", "area_ac": g_area or None,
-                                            "bushels": g_bush if (g_unit in ("bu", "bu/ac") and g_tw) else None,
-                                            "bushel_from": g_bf if g_bf != "file" else None}
-                    T_ = grower_ticket(ss.grower[ss.active])
-                    if T_ is not None:
+                    st.success(f"{B['name']} · " + (f"{chosen_fields(B)} · " if B.get("feature")
+                                                     else f"{B['n_polygons']} polygon(s) · ")
+                               + f"{B['area_ac']:,.2f} ac" + ("" if clip else " · S1 is off: not clipped"),
+                               icon=":material/crop_free:")
+                if B.get("fields") and (B["needs_choice"] or B.get("feature")):
+                    opts = [int(f["index"]) for f in B["fields"]]
+                    lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])} "
+                                            f"({float(f.get('area_ac') or 0):,.2f} ac)" for f in B["fields"]}
+                    sel = st.multiselect("This file holds several fields: which one is this field?", opts,
+                                         default=[v for v in (B.get("feature") or []) if v in opts],
+                                         key=f"bnd_feat_{TK}", format_func=lab.get,
+                                         placeholder="choose the field ...",
+                                         help="Several polygons together = one field drawn in parts (their union).")
+                    if sorted(sel) != sorted(B.get("feature") or []):
                         try:
-                            conv = er.ticket_conversion(T_, test_weight=settings_of(ss.active, sset).get(
-                                "test_weight_lb_bu"), shp=D["shp"], crop=g_crop,
-                                area_ac=(B_c["area_ac"] if B_c else None), area_source="the field boundary")
+                            if sel:
+                                nb = load_boundary(ss.active, ("path", B["path"]), feature=sel)
+                                nb["fields"] = nb["fields"] or B["fields"]
+                            else:
+                                nb = dict(B, feature=None, needs_choice=True, outline=[])
+                            ss.boundary[ss.active] = nb
+                            st.rerun()
                         except ValueError as e:
-                            conv = {"error": str(e), "text": str(e)}
-                        if conv.get("error"):
-                            st.warning(f"{er.ticket_label(T_)}: {conv['error']}", icon=":material/warning:")
-                        else:
-                            # the totals in one line (a yield per acre: over its acres first), the rest behind "?"
-                            per_ac_ = (f"x {float(conv['area_ac']):,.2f} ac "
-                                       if T_.get("unit") == "bu/ac" and conv.get("area_ac") else "")
-                            short = (f"{per_ac_}= {conv['lb']:,.0f} lb · {conv['bu']:,.2f} bu at "
-                                     f"{float(conv['test_weight']):.2f} lb/bu"
-                                     if (conv.get("lb") is not None and conv.get("bu") is not None
-                                         and conv.get("test_weight")) else conv["text"])
-                            st.caption(short, help=f"{er.ticket_label(T_)} {conv['text']}"
-                                       + (f"; {T_['moisture_pct']:g} % grain moisture"
-                                          if T_["moisture_pct"] is not None else "")
-                                       + ("; weighed as delivered." if T_["basis"] == "wet" else
-                                          "; at the standard moisture.")
-                                       + (f" The grower's bushel weight {float(g_tw):.2f} lb/bu is reported, not "
-                                          "used: the weight is compared as a mass."
-                                          if (g_tw and g_unit in ("lb", "kg", "t")) else ""))
-        # ---- several combines: the combine factor, switched on by the user, beside the passes side by side
-        if IS_Y:
-            CF0 = combine_settings(ss.active)
-            if len(MCH) < 2:
-                st.caption("One combine: no combine factor.",
-                           help=(f"Read from {mbasis}." if mbasis.startswith("the ") else
-                                 mbasis[:1].upper() + mbasis[1:] + ".") + " A combine factor needs two combines or "
-                                                                          "more.")
-                cf_on, cf_m, cf_ref, cf_max, cf_tc = (False, CF0["method"], CF0["reference"], CF0["max_pct"],
-                                                      CF0["ticket_confirms"])
+                            st.error(str(e), icon=":material/error:")
+                    if B["needs_choice"]:
+                        st.warning("Choose the field: until then the file is cleaned without the clip.",
+                                   icon=":material/warning:")
+                if B.get("is_plan"):
+                    st.caption(":orange[Looks like a trial plan]",
+                               help="This file looks like a trial plan (plots): S1 clips to the plots, not to a "
+                                    "field boundary. Give the field boundary to keep the alleys and the border.")
+                for w in B.get("warnings") or []:
+                    st.caption(w)
+                if FBS["FB"]:
+                    st.caption("This file's own boundary (the field files' boundary of step 1 is not used for it).")
+                with st.container(horizontal=True):
+                    if FBS["FB"] and st.button("Back to the field files' boundary", key=f"bnd_ff_back2_{TK}",
+                                               icon=":material/undo:"):
+                        ss.boundary.pop(ss.active, None)
+                        ff()["use"].pop(ss.active, None)
+                        save_current(quiet=True)
+                        st.rerun()
+                    if st.button("Remove the boundary", icon=":material/delete:", key=f"bnd_rm_{TK}",
+                                 help="Then the field files' boundary applies again, when there is one."):
+                        ss.boundary.pop(ss.active, None)
+                        if ff()["use"].get(ss.active) == "own":
+                            ff()["use"].pop(ss.active, None)
+                        st.rerun()
             else:
-                with st.container(key=f"field_box_m_{TK}"):
-                    st.markdown(f"**Combine factor** · {len(MCH)} combines",
-                                help=f"The combines from {mbasis}, with their readings and mean dry yield in the table. "
-                                     "Off by default: you decide, from the passes side by side at the right.")
-                    c_l, c_r = st.columns([1, 1.15], gap="medium")
-                    with c_l:
-                        cf_on = st.toggle("Apply the combine factor", value=CF0["on"], key=f"cf_on_{TK}",
-                                          help="It runs after the 3-sigma steps on the kept readings and applies a "
-                                               "factor to a combine only where the passes side by side prove it "
-                                               "(Yld_Harm = the cleaned yield x the factor).")
-                        cf_m_now = ss.get(f"cf_m_{TK}") if ss.get(f"cf_m_{TK}") in CF_HELP else CF0["method"]
-                        cf_m = st.segmented_control("How to compute the factor", CF_METHODS, default=CF0["method"],
-                                                    required=True, key=f"cf_m_{TK}", format_func=CF_LABEL.get,
-                                                    disabled=not cf_on, help=CF_HELP[cf_m_now]) or "auto"
-                        names_m = [r["combine"] for r in MCH]
-                        with st.container(horizontal=True, vertical_alignment="bottom"):
-                            refs = ["auto"] + names_m
-                            cf_ref = st.selectbox("Reference combine", refs,
-                                                  index=refs.index(CF0["reference"]) if CF0["reference"] in refs else 0,
-                                                  key=f"cf_ref_{TK}", disabled=not cf_on,
-                                                  format_func=lambda m: "auto (the most kept readings)" if m == "auto"
-                                                  else m)
-                            cf_max = st.number_input("Max factor (%)", 1.0, 50.0, CF0["max_pct"], 1.0,
-                                                     key=f"cf_max_{TK}", disabled=not cf_on,
-                                                     help="A proven difference larger than this is reported but not "
-                                                          "applied, unless the grower's weight confirms it (with "
-                                                          "'Validate and adjust the yields' only).")
-                        # 'Validate only' changes nothing in the clean file: the weight then confirms no factor (the
-                        # engine reports the factor it would confirm)
-                        g_use_now = ss.get(f"gw_use_{TK}") or (ss.grower.get(ss.active) or {}).get("use") or "validate"
-                        cf_tc = st.toggle("The grower's weight may confirm a factor above the max",
-                                          value=CF0["ticket_confirms"], key=f"cf_tc_{TK}", disabled=not cf_on,
-                                          help="With 'Validate and adjust the yields': applied when the monitor total "
-                                               "with the factor closes with the grower's weight (within 1 %) and "
-                                               "without it does not (more than 3 %). With 'Validate only' the weight "
-                                               "confirms nothing; the Combines tab says which factor it would "
-                                               "confirm.")
-                        if cf_on and cf_tc and g_use_now != "adjust":
-                            st.caption("Validate only: the grower's weight confirms no factor (it is compared, never "
-                                       "applied).")
-                        st.dataframe(pd.DataFrame(MCH), hide_index=True,
-                                     column_config={"readings": st.column_config.NumberColumn(format="%d"),
-                                                    "mean dry yield (bu/ac)": st.column_config.NumberColumn(
-                                                        format="%.2f")})
-                    with c_r:
-                        seam_box = st.container()        # filled after the cleaning of this run (below)
-            ss.cfset[ss.active] = {"on": bool(cf_on) and len(MCH) >= 2, "method": cf_m, "reference": cf_ref,
-                                   "max_pct": float(cf_max), "ticket_confirms": bool(cf_tc)}
+                if FBS["FB"] and FBS["why"] in ("cover", "choice") and not ss.get(other_k):
+                    st.info((f"The field files' boundary holds {100 * float(FBS['share'] or 0):.0f} % of this file's "
+                             "readings: not used for it (another field?). Give this file's own boundary."
+                             if FBS["why"] == "cover" else
+                             "The field files hold several fields and none is chosen for this file: choose it, or "
+                             "give this file's own boundary."), icon=":material/crop_free:")
+                    if FBS["why"] == "choice":
+                        FBf = FBS["FB"]
+                        opts = [int(f["index"]) for f in FBf.get("fields") or []]
+                        lab = {int(f["index"]): f"{f['index']} · {f.get('name') or 'polygon ' + str(f['index'])}"
+                               for f in FBf.get("fields") or []}
+                        sel = st.multiselect("Which one is this field?", opts, default=[], key=f"ff_feat0_{TK}",
+                                             format_func=lab.get, placeholder="choose the field ...")
+                        if sel:
+                            ff()["feature"][ss.active] = [int(x) for x in sel]
+                            save_current(quiet=True)
+                            st.rerun()
+                elif ss.get(other_k) and FBS["FB"]:
+                    st.caption("This file's own boundary: give it below.")
+                    if st.button("Back to the field files' boundary", key=f"bnd_ff_back3_{TK}",
+                                 icon=":material/undo:"):
+                        ss.pop(other_k, None)
+                        st.rerun()
+                own_input = True
+            if own_input:
+                bup = st.file_uploader("Boundary file", accept_multiple_files=True,
+                                       key=f"bnd_up_{TK}_{int(ss.get('up_nonce') or 0)}", type=BOUNDARY_TYPES,
+                                       help="A .zip (a shapefile or an SMS 'Boundaries' export), the .shp + .shx "
+                                            "+ .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz. "
+                                            "Without a boundary S1 is skipped and every reading of the file goes "
+                                            "into the cleaning.")
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    bpath = st.text_input("or a file on this computer", key=f"bnd_path_{TK}",
+                                          placeholder=r"C:\...\field boundary.zip")
+                    use_b = st.button("Use", type="primary", icon=":material/crop_free:", key=f"bnd_use_{TK}")
+                if use_b:
+                    if not bup and not (bpath or "").strip():
+                        st.toast("Upload a boundary file or type its path first", icon=":material/info:")
+                    else:
+                        try:
+                            ss.boundary[ss.active] = load_boundary(ss.active, ("upload", bup) if bup
+                                                                   else ("path", bpath))
+                            if FBS["FB"]:
+                                ff()["use"][ss.active] = "own"
+                            else:                        # (a 'none' left from before: the own boundary applies)
+                                ff()["use"].pop(ss.active, None)
+                            ss.pop(other_k, None)
+                            save_current(quiet=True)
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e), icon=":material/error:")
+                        except Exception as e:                       # shown, never swallowed
+                            st.exception(e)
+    with c_g:
+        if not IS_Y:
+            with st.container(key=f"field_box_g_{TK}"):
+                st.markdown("**What the file is**", help="Recognised from the column names. The grower's data "
+                                                         "(total weight, moisture, bushel weight) apply to harvest "
+                                                         "files.")
+                rows_i = [("Operation", OPX["label"]),
+                          ("Applied rate", ", ".join(OPX["rates"]) or "none found (choose the attributes at the left)"),
+                          ("Target rate", ", ".join(OPX["targets"]) or "-"), ("Speed", OPX["speed"] or "-"),
+                          ("Machine", OPX["machine"] or "-"), ("Dataset", OPX["dataset"] or "-")]
+                if OPX["product"]:
+                    pv = df0[OPX["product"]].astype(str).replace({"": np.nan, "nan": np.nan}).dropna().unique()
+                    rows_i.append(("Product", ", ".join(map(str, pv[:5])) + (f" … ({len(pv)})" if len(pv) > 5
+                                                                             else "")))
+                st.dataframe(pd.DataFrame(rows_i, columns=["", "in this file"]), hide_index=True)
+        else:
+            G0 = ss.grower.get(ss.active) or {}
+            with st.expander("Grower's weight · optional", key=f"gw_box_{TK}", expanded=bool(G0.get("weight")),
+                             icon=":material/scale:"):
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    g_unit_prev = ss.get(f"gw_u_{TK}", G0.get("unit") or "lb")
+                    per_ac = g_unit_prev == "bu/ac"
+                    g_w = st.number_input("Yield of the field" if per_ac else "Total weight of the field", 0.0,
+                                          1e12, value=G0.get("weight"), step=1.0 if per_ac else 100.0,
+                                          key=f"gw_w_{TK}",
+                                          format=("%.2f" if per_ac else "%.3f" if g_unit_prev == "t" else "%.0f"),
+                                          placeholder="optional",
+                                          help="What the grower got for this field (scale tickets or the grain "
+                                               "cart), as written, in the unit at the right; bu/ac when the "
+                                               "grower gives the yield per acre (it is made a total with the "
+                                               "acres).")
+                    g_unit = st.segmented_control("Unit", list(er.TICKET_UNITS), default=G0.get("unit") or "lb",
+                                                  required=True, key=f"gw_u_{TK}",
+                                                  format_func=TICKET_UNIT_LABEL.get)
+                B_g = boundary_of(ss.active)
+                # the boundary's acres only when S1 clips to it: with the clip off the monitor total is the whole
+                # file's, and the engine then takes the area harvested
+                B_c = B_g if (B_g and clip) else None
+                g_area = None
+                if g_unit == "bu/ac":
+                    ph = (f"empty = the boundary, {B_c['area_ac']:,.2f} ac" if B_c else
+                          "empty = the area harvested (every strip once)"
+                          + (" - S1 is off: type the grower's acres" if B_g else ""))
+                    g_area = st.number_input("Acres the yield is over", 0.0, 1e7, value=G0.get("area_ac"),
+                                             step=1.0, key=f"gw_a_{TK}", format="%.2f", placeholder=ph,
+                                             help="The grower's acres for this yield. Empty: the field "
+                                                  "boundary's area; without a boundary or with the clip off, the "
+                                                  "area harvested, every strip once. bu/ac x acres = the "
+                                                  "grower's total in bushels.")
+                with st.container(horizontal=True, vertical_alignment="bottom"):
+                    g_basis = st.segmented_control("Weighed", ["wet", "dry"], default=G0.get("basis") or "wet",
+                                                   required=True, key=f"gw_b_{TK}",
+                                                   format_func={"wet": "As delivered (wet)",
+                                                                "dry": "At the standard moisture"}.get,
+                                                   help="As delivered: compared with the monitor's wet total (or, "
+                                                        "with the grain moisture, brought to the standard "
+                                                        "moisture, one-sided: grain drier than the standard stays "
+                                                        "as weighed). At the standard moisture: compared with the "
+                                                        "file's dry total.")
+                    g_m = st.number_input("Grain moisture (%)", 0.0, 60.0, value=G0.get("moisture"), step=0.1,
+                                          key=f"gw_m_{TK}", placeholder="optional", disabled=g_basis != "wet",
+                                          help="The moisture of the grain the grower weighed: the weight is "
+                                               "brought to the standard moisture and compared with the "
+                                               "monitor's dry total.")
+                    g_tw = st.number_input("Bushel weight (lb/bu)", 1.0, 100.0, value=G0.get("test_weight"),
+                                           step=0.1, key=f"gw_tw_{TK}", placeholder="optional",
+                                           help="The weight of the grower's bushel. A weight in lb, kg or t is "
+                                                "compared as a mass, in the file's bushels: this value is then "
+                                                "only reported. Bushels (bu, bu/ac) use it only when you say "
+                                                "below that they are bushels of this weight.")
+                g_bush = G0.get("bushels") or "given"
+                if g_unit in ("bu", "bu/ac") and g_tw:
+                    g_bush = st.segmented_control("The grower's bushels are", list(GROWER_BUSHELS),
+                                                  default=G0.get("bushels") or "given", required=True,
+                                                  key=f"gw_bu_{TK}", format_func=GROWER_BUSHELS.get,
+                                                  help="As given: trade bushels (an elevator's weight / its "
+                                                       "standard bushel), compared as they are. Bushels of the "
+                                                       "bushel weight above: measured by volume, so converted "
+                                                       "through its mass (bu x that weight / the file's bushel "
+                                                       "weight).") or "given"
+                g_use = st.segmented_control("Use it to", list(GROWER_USE),
+                                             default=G0.get("use") or "validate", required=True,
+                                             key=f"gw_use_{TK}", format_func=GROWER_USE.get, disabled=not g_w,
+                                             help="Validate: the monitor's total against the grower's, L = "
+                                                  "grower / monitor and a verdict; the clean file does not "
+                                                  "change. Adjust: also Yld_Level = the dry yield x the combine "
+                                                  "factor x L in the clean file, and the weight may confirm a "
+                                                  "combine factor above the max; the monitor's columns stay as "
+                                                  "logged.")
+                with st.expander("More", type="compact", key=f"gw_more_{TK}"):
+                    with st.container(horizontal=True, vertical_alignment="bottom"):
+                        crops = [None] + sorted(common.CROPS)
+                        g_crop = st.selectbox("Crop", crops, index=crops.index(G0.get("crop"))
+                                              if G0.get("crop") in crops else 0, key=f"gw_c_{TK}",
+                                              format_func=lambda c: "from the file" if c is None else c,
+                                              help="For the standard moisture and the crop's bushel weight when "
+                                                   "the file does not give them.")
+                        g_sm = st.number_input("Standard moisture (%)", 0.0, 40.0, value=G0.get("std_moisture"),
+                                               step=0.5, key=f"gw_sm_{TK}", placeholder="decoder / crop table")
+                        bf_opts = list(BUSHEL_FROM_LABEL)
+                        g_bf = st.selectbox("Bushel of the monitor's total", bf_opts,
+                                            index=bf_opts.index(G0.get("bushel_from") if G0.get("bushel_from")
+                                                                in bf_opts else "file"),
+                                            key=f"gw_bf_{TK}", format_func=BUSHEL_FROM_LABEL.get,
+                                            help="The file's (the default): its own wet mass / wet volume, the "
+                                                 "bushel the monitor's volume columns are in. The declared one: "
+                                                 "the import's weight to volume, else the crop table, for a file "
+                                                 "whose mass column is not in lb/ac (the cleaning warns when the "
+                                                 "two differ by more than 0.5 %).")
+                ss.grower[ss.active] = {"weight": float(g_w) if g_w else None, "unit": g_unit or "lb",
+                                        "basis": g_basis or "wet", "moisture": g_m if g_basis == "wet" else None,
+                                        "test_weight": g_tw, "crop": g_crop, "std_moisture": g_sm,
+                                        "use": g_use or "validate", "area_ac": g_area or None,
+                                        "bushels": g_bush if (g_unit in ("bu", "bu/ac") and g_tw) else None,
+                                        "bushel_from": g_bf if g_bf != "file" else None}
+                T_ = grower_ticket(ss.grower[ss.active])
+                if T_ is not None:
+                    try:
+                        conv = er.ticket_conversion(T_, test_weight=settings_of(ss.active, sset).get(
+                            "test_weight_lb_bu"), shp=D["shp"], crop=g_crop,
+                            area_ac=(B_c["area_ac"] if B_c else None), area_source="the field boundary")
+                    except ValueError as e:
+                        conv = {"error": str(e), "text": str(e)}
+                    if conv.get("error"):
+                        st.warning(f"{er.ticket_label(T_)}: {conv['error']}", icon=":material/warning:")
+                    else:
+                        # the totals in one line (a yield per acre: over its acres first), the rest behind "?"
+                        per_ac_ = (f"x {float(conv['area_ac']):,.2f} ac "
+                                   if T_.get("unit") == "bu/ac" and conv.get("area_ac") else "")
+                        short = (f"{per_ac_}= {conv['lb']:,.0f} lb · {conv['bu']:,.2f} bu at "
+                                 f"{float(conv['test_weight']):.2f} lb/bu"
+                                 if (conv.get("lb") is not None and conv.get("bu") is not None
+                                     and conv.get("test_weight")) else conv["text"])
+                        st.caption(short, help=f"{er.ticket_label(T_)} {conv['text']}"
+                                   + (f"; {T_['moisture_pct']:g} % grain moisture"
+                                      if T_["moisture_pct"] is not None else "")
+                                   + ("; weighed as delivered." if T_["basis"] == "wet" else
+                                      "; at the standard moisture.")
+                                   + (f" The grower's bushel weight {float(g_tw):.2f} lb/bu is reported, not "
+                                      "used: the weight is compared as a mass."
+                                      if (g_tw and g_unit in ("lb", "kg", "t")) else ""))
+    # ---- several combines: the combine factor, switched on by the user, beside the passes side by side
+    if IS_Y:
+        CF0 = combine_settings(ss.active)
+        if len(MCH) < 2:
+            st.caption("One combine: no combine factor.",
+                       help=(f"Read from {mbasis}." if mbasis.startswith("the ") else
+                             mbasis[:1].upper() + mbasis[1:] + ".") + " A combine factor needs two combines or "
+                                                                      "more.")
+            cf_on, cf_m, cf_ref, cf_max, cf_tc = (False, CF0["method"], CF0["reference"], CF0["max_pct"],
+                                                  CF0["ticket_confirms"])
+        else:
+            with st.container(key=f"field_box_m_{TK}"):
+                st.markdown(f"**Combine factor** · {len(MCH)} combines",
+                            help=f"The combines from {mbasis}, with their readings and mean dry yield in the table. "
+                                 "Off by default: you decide, from the passes side by side at the right.")
+                c_l, c_r = st.columns([1, 1.15], gap="medium")
+                with c_l:
+                    cf_on = st.toggle("Apply the combine factor", value=CF0["on"], key=f"cf_on_{TK}",
+                                      help="It runs after the 3-sigma steps on the kept readings and applies a "
+                                           "factor to a combine only where the passes side by side prove it "
+                                           "(Yld_Harm = the cleaned yield x the factor).")
+                    cf_m_now = ss.get(f"cf_m_{TK}") if ss.get(f"cf_m_{TK}") in CF_HELP else CF0["method"]
+                    cf_m = st.segmented_control("How to compute the factor", CF_METHODS, default=CF0["method"],
+                                                required=True, key=f"cf_m_{TK}", format_func=CF_LABEL.get,
+                                                disabled=not cf_on, help=CF_HELP[cf_m_now]) or "auto"
+                    names_m = [r["combine"] for r in MCH]
+                    with st.container(horizontal=True, vertical_alignment="bottom"):
+                        refs = ["auto"] + names_m
+                        cf_ref = st.selectbox("Reference combine", refs,
+                                              index=refs.index(CF0["reference"]) if CF0["reference"] in refs else 0,
+                                              key=f"cf_ref_{TK}", disabled=not cf_on,
+                                              format_func=lambda m: "auto (the most kept readings)" if m == "auto"
+                                              else m)
+                        cf_max = st.number_input("Max factor (%)", 1.0, 50.0, CF0["max_pct"], 1.0,
+                                                 key=f"cf_max_{TK}", disabled=not cf_on,
+                                                 help="A proven difference larger than this is reported but not "
+                                                      "applied, unless the grower's weight confirms it (with "
+                                                      "'Validate and adjust the yields' only).")
+                    # 'Validate only' changes nothing in the clean file: the weight then confirms no factor (the
+                    # engine reports the factor it would confirm)
+                    g_use_now = ss.get(f"gw_use_{TK}") or (ss.grower.get(ss.active) or {}).get("use") or "validate"
+                    cf_tc = st.toggle("The grower's weight may confirm a factor above the max",
+                                      value=CF0["ticket_confirms"], key=f"cf_tc_{TK}", disabled=not cf_on,
+                                      help="With 'Validate and adjust the yields': applied when the monitor total "
+                                           "with the factor closes with the grower's weight (within 1 %) and "
+                                           "without it does not (more than 3 %). With 'Validate only' the weight "
+                                           "confirms nothing; the Combines tab says which factor it would "
+                                           "confirm.")
+                    if cf_on and cf_tc and g_use_now != "adjust":
+                        st.caption("Validate only: the grower's weight confirms no factor (it is compared, never "
+                                   "applied).")
+                    st.dataframe(pd.DataFrame(MCH), hide_index=True,
+                                 column_config={"readings": st.column_config.NumberColumn(format="%d"),
+                                                "mean dry yield (bu/ac)": st.column_config.NumberColumn(
+                                                    format="%.2f")})
+                with c_r:
+                    seam_box = st.container()        # filled after the cleaning of this run (below)
+        ss.cfset[ss.active] = {"on": bool(cf_on) and len(MCH) >= 2, "method": cf_m, "reference": cf_ref,
+                               "max_pct": float(cf_max), "ticket_confirms": bool(cf_tc)}
 
     save_requested()                     # Save: every setting of the file on screen is read in this run by now
     EDS = edits_of(ss.active) if D.get("yield", True) else None
@@ -9661,11 +10958,12 @@ with st.container(border=True, key="oced_step_3"):
                 st.error(f"The edits by hand of this file cannot be used: {EDS['error']}", icon=":material/error:")
             else:
                 st.info(f"Edits by hand for this file: {len(EDS.get('remove') or []):,} reading(s) removed and "
-                        f"{len(EDS.get('keep') or []):,} kept by hand (marked in Play the harvest of the cleaning). "
-                        "Every cleaning of this file applies them.", icon=":material/edit:")
+                        f"{len(EDS.get('keep') or []):,} kept by hand (marked in Play the harvest of steps 2 and 3: "
+                        "one list per file). Every cleaning of this file applies them.", icon=":material/edit:")
             if st.button("Remove all edits", key="edits_remove", icon=":material/undo:",
-                         help="The edits file is set aside and the file cleaned again without it: the automatic "
-                              "cleaning, the same files as before any edit."):
+                         help="Every edit by hand of this file, steps 2 and 3 (one edits file): it is set aside and the "
+                              "file cleaned again without it: the automatic cleaning, the same files as before any "
+                              "edit."):
                 remove_edits(ss.active)
                 ss["reprocess"] = ss.active
                 ss["edits_msg"] = "Every edit by hand removed: the automatic cleaning."
@@ -9808,7 +11106,7 @@ with st.container(border=True, key="oced_step_3"):
         if edits_line(R):
             st.caption(f"The clean map includes the edits by hand ({me.title_label(R).lower()}).")
         if not A3:                                       # the small area cut after the cleaning
-            small_area_box(C)
+            small_area_box(C, ss.active)
         if not A3:                                       # the harvest replay of the cleaning (replay_view.py)
             def _on_edits(K, _t=ss.active):
                 """The player's marks as reading keys: the edits file written, the file cleaned again (the edits file
@@ -9824,11 +11122,18 @@ with st.container(border=True, key="oced_step_3"):
                                    + (f"; {len(ref):,} mark(s) not applied ({ref[0]['reason']})" if ref else "") + ".")
                 ss["reprocess"] = _t
                 st.rerun()
+            A_ = (ss.get("small_area") or {}).get(ss.active)
+            fz_ = (R.get("files") or {}).get("flagged_zip")
+            sa_arg = ((fz_, A_["path"], mtime(A_["path"]), A_.get("rule") or sarea.DEFAULT_RULE)
+                      if (A_ and R.get("small_area") and fz_ and os.path.exists(fz_)
+                          and os.path.exists(str(A_.get("path")))) else None)
             replay_view.section(C.get("flagged_shp"), f"clean_{key_of(C['shp'])}", kind="clean",
                                 outline=C["boundary"]["outline"] if C.get("boundary") else None,
                                 raw_root=lambda: _raw_root(D), steps=replay_view.rp.step_names_of(R), title=ss.active,
                                 field=ss.active, record=C.get("json"),
-                                on_edits=_on_edits if C.get("kind") == "sms" else None)
+                                on_edits=_on_edits if C.get("kind") == "sms" else None,
+                                label="Play the harvest · zone map · edit points", field_zone=field_zone_map(),
+                                on_field_column=set_field_zone_column, small_area=sa_arg)
         # ---- the details, in tabs
         RM = R.get("machines") if not A3 else None
         tab_names = ((["Yield path"] if not A3 else []) + ["Steps", "Limits", "Removed points"]
@@ -10158,7 +11463,8 @@ with st.container(border=True, key="oced_step_4"):
     brand.step_header(4, "Clean files and reports",
                       "The clean shapefile, the file for DIFM and the report of each cleaned file")
     if not ss.cleaned:
-        st.info("Clean a file in step 3: its clean shapefile appears here.", icon=":material/info:")
+        st.info("Clean a file in step 3: its clean shapefile appears here. Without a cleaning, the data in use and its "
+                "file for DIFM are downloaded in step 2 (Without cleaning).", icon=":material/info:")
     else:
         kinds = {"a3" if c.get("kind") == "a3" else "harvest" for c in ss.cleaned.values()}
         flagged = "; ".join(

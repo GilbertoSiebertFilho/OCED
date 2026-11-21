@@ -55,6 +55,16 @@ summary (P['manual']). With edit=True (the app) it also carries P['edit']: wheth
 (every reading of the file, not thinned) and a token of the flagged file; edit_keys() turns the player's marks
 (combine number, reading index) into the engine's reading keys (manual_edits.flagged_keys) and refuses a reading cut
 by the import range, the clip or the swath step. Nothing here writes an edits file or runs a cleaning.
+
+The imported readings with edits by hand (the app's step 2, 0.3.7): replay_payload(..., kind="import", edits=E) gives
+the readings of E's remove list (keys of manual_edits.file_keys, the same as the cleaning's) the fate 'removed by hand'
+(Rem_By SM, mark R), so the totals, acres and zone statistics count the edited data, and with edit=True P['edit'] has
+stage 'import': a click removes any reading or puts back one removed by hand; nothing is kept by hand before a
+cleaning. edit_keys(..., stage="import") turns those marks into keys of the import file.
+
+A small area (engine/clean/small_area.py, step 3 of the app): small_area=X (small_area.replay_part) puts the polygons
+on the replay of a cleaning (P['small_area']: rings, names, the box to zoom to) and each counted reading's polygon and
+share in the columns 'sp' / 'ss' (the card says them).
 """
 from __future__ import annotations
 
@@ -89,7 +99,7 @@ PALETTE_CAT = ["#FFC20E", "#00E5FF", "#FF4FA3", "#76FF03", "#FF8F00", "#B388FF",
                "#90A4AE", "#1DE9B6", "#F4FF81"]          # the app's categorical palette (app/oced.py PALETTE_CAT)
 UTC_FORMATS = ("jd_jdl", "jd_gs3_rcd")                   # the decoders that write UTC times (engine/difm.py)
 STEP_NAMES = {"S0": "S0 import check", "S1": "S1 clip to the boundary", "S2": "S2 Optimize Swath Widths",
-              "S3": "S3", "S4": "S4", "S5": "S5 dry yield"}
+              "S3": "S3", "S4": "S4", "S5": "S5 dry yield", "SM": "SM removed by hand"}
 _ZONED = re.compile(r"\d{2}:\d{2}(:\d{2}(\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})$")   # an ISO time with its zone
 _STAMP = re.compile(r"(\d{2})/(\d{2})/(\d{2})-(\d{2}):(\d{2}):(\d{2})")
 
@@ -465,7 +475,8 @@ def _short_name(machine: str) -> str:
 def replay_payload(path: str, kind: str = "auto", outline=None, title: str | None = None, makes: dict | None = None,
                    hints: dict | None = None, steps: dict | None = None, max_bytes: int = MAX_BYTES,
                    yield_col: str | None = None, g=None, rows: bool = False, zones=None,
-                   zone_column: str | None = None, record: dict | None = None, edit: bool = False) -> dict:
+                   zone_column: str | None = None, record: dict | None = None, edit: bool = False,
+                   edits: dict | None = None, small_area: dict | None = None) -> dict:
     """The data of the player for a point file (see the module text). kind: "import", "clean" (a flagged file: Keep
     and Rem_By) or "auto". outline: the field boundary as rings of [lon, lat]. makes: {combine id: make key} set by
     the caller (wins over everything). hints: make_hints() of the raw data. steps: {Rem_By code: name} of the
@@ -475,13 +486,18 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
     "zones" (zone_part) and each combine the column "zb" (zone index x 2 + border flag of each reading); without it
     the payload is the same as before. record: the cleaning record (R) of a flagged file, for the limits of each combine
     and the summary of the edits by hand; edit: the app's replay of a cleaning, where readings can be marked (see the
-    module text; rows are then always carried). Pure: reads the files, writes nothing."""
+    module text; rows are then always carried). edits: the edits file of the file (manual_edits.read_edits, {} for
+    none yet) on the replay of the imported readings: its removals are shown removed by hand, and with edit=True the
+    readings can be removed or put back (stage 'import'). small_area: small_area.replay_part() of the cleaning shown
+    (kind 'clean'). Pure: reads the files, writes nothing."""
     if g is None:
         g = _read(path)
     fields = [c for c in g.columns if c != "geometry"]
     det = yield_clean.detect_columns(fields)
     if kind == "auto":
         kind = "clean" if ("Keep" in fields and "Rem_By" in fields) else "import"
+    imp_ed = kind == "import" and edits is not None          # the imported readings with edits by hand (step 2)
+    fated = kind == "clean" or imp_ed                         # readings with a fate: kept / removed
     sms_out = "Swath_Scl" in fields
     n_file = len(g)
     lon = g.geometry.x.to_numpy(float) if n_file else np.zeros(0)
@@ -509,6 +525,18 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
     keep = (pd.to_numeric(g["Keep"], errors="coerce").fillna(1).to_numpy(int) if kind == "clean" and "Keep" in g
             else np.ones(n_file, int))
     remby = _text(g["Rem_By"]) if kind == "clean" and "Rem_By" in g else np.full(n_file, "", object)
+    imp_keys = None
+    if imp_ed:
+        from engine.clean import manual_edits as me
+        imp_keys = np.asarray([str(k) for k in me.file_keys(path)[0]], dtype=object)
+        if len(imp_keys) != n_file:
+            raise ValueError("the edits by hand cannot be laid on this file: its table and its keys differ in length")
+        rm_set = {str(k) for k in (edits.get("remove") or [])}
+        hit = np.fromiter((k in rm_set for k in imp_keys.tolist()), bool, n_file)
+        keep = keep.copy()
+        keep[hit] = 0
+        remby = remby.copy()
+        remby[hit] = me.STEP
     card = {}                                   # a cleaning: the values its filters compared, where they differ
     if kind == "clean":
         if "Swath_Scl" in g and ycol == det.get("yield"):
@@ -524,6 +552,10 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
                 if not np.allclose(np.nan_to_num(v[0], nan=-1.0), np.nan_to_num(base[k], nan=-1.0), atol=1e-9)}
     man = _text(g["Man_Edit"]) if kind == "clean" and "Man_Edit" in g else None
     rauto = _text(g["Rem_Auto"]) if man is not None and "Rem_Auto" in g else None
+    if imp_ed:                                    # removed by hand: mark R; the automatic fate of every reading: kept
+        man = np.where(remby == "SM", "R", "").astype(object)
+        rauto = np.full(n_file, "", object)
+    sa_cols = (small_area or {}).get("by_row") if kind == "clean" else None
     rows = rows or edit
     mcol = det.get("machine")
     machines = _text(g[mcol]) if mcol else np.full(n_file, "", object)
@@ -626,15 +658,18 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
             moved = (st_ == 0) & (ra_ != remby[idx])
             cols["e"] = st_ | (moved.astype(np.int64) << 2) | (np.array([auto_idx.get(x, 0) for x in ra_], np.int64)
                                                               << 3)
+        if sa_cols is not None:                   # the small area: the polygon (1-based, 0 none) and share (0.1 %)
+            cols["sp"] = np.asarray(sa_cols["poly"], np.int64)[idx]
+            cols["ss"] = np.asarray(sa_cols["share"], np.int64)[idx]
         if zm is not None:
             cols["zb"] = zi_all[idx] * 2 + bd_all[idx].astype(np.int64)
             zst["zi"].append(zi_all[idx])
             zst["bd"].append(bd_all[idx])
             zst["a"].append(area_ac)
             zst["y"].append(yld[idx])
-            zst["use"].append(keep[idx] == 1 if kind == "clean" else np.ones(len(idx), bool))
+            zst["use"].append(keep[idx] == 1 if fated else np.ones(len(idx), bool))
             zst["c"].append(np.full(len(idx), ci, np.int64))
-        all_y.append(yld[idx][keep[idx] == 1] if kind == "clean" else yld[idx])
+        all_y.append(yld[idx][keep[idx] == 1] if fated else yld[idx])
         all_m.append(moi[idx])
         all_s.append(spd[idx])
         mk_given = makes.get(m)
@@ -650,7 +685,7 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
             "color": PALETTE_CAT[ci % len(PALETTE_CAT)], "make": mk, "make_why": why, "model": model,
             "n": int(len(idx)), "runs": runs, "cols": cols,
             # the acres of the readings counted (a cleaning: the kept ones), as the bushels and the panel's numbers
-            "area_ac": float(area_ac[keep[idx] == 1].sum()) if kind == "clean" else float(area_ac.sum()),
+            "area_ac": float(area_ac[keep[idx] == 1].sum()) if fated else float(area_ac.sum()),
             "bu": float(np.nansum(np.where(y_ok, yld[idx], 0.0) * area_ac)),
             "t0": float(t_m[0]) if len(idx) else None, "t1": float(t_m[-1]) if len(idx) else None,
         })
@@ -695,7 +730,7 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
     area_tot = sum(C["area_ac"] for C in out_c)
     bu_tot = sum(C["bu"] for C in out_c)
     removed = {}
-    if kind == "clean":
+    if fated:
         for c in codes:
             removed[c] = int(sum(1 for x, k in zip(remby[ok], keep[ok]) if x == c and not k))
     P = {
@@ -722,6 +757,20 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
                    "kept": int((keep[ok] == 1).sum()), "removed": int((keep[ok] != 1).sum())},
         "bytes": int(total_bytes),
     }
+    if imp_ed:
+        P["step_names"] = {c: step_names.get(c) or step_names.get(c[:2]) or c for c in (set(codes) | set(auto_codes))}
+        P["auto_codes"] = auto_codes
+        P["manual"] = manual_part(None, man[ok], rauto[ok], remby[ok])
+        P["manual"]["stage"] = "import"
+        if edit:
+            shared, in_group = (_shared_groups(g, out_c, np.ones(n_file, bool), keys=imp_keys) if thin == 1
+                                else ([], np.zeros(n_file, bool)))
+            P["edit"] = edit_part(path, thin, n_used, n_file, g, kept_outside=int((~ok & ~in_group).sum()),
+                                  stage="import", edits=edits)
+            if shared:
+                P["edit"]["shared"] = shared
+    if kind == "clean" and small_area:
+        P["small_area"] = {k: v for k, v in small_area.items() if k != "by_row"}
     if kind == "clean":
         P["step_names"] = {c: step_names.get(c) or step_names.get(c[:2]) or c for c in (set(codes) | set(auto_codes))}
         if card:
@@ -789,10 +838,11 @@ def manual_part(R: dict | None, man, rauto, remby) -> dict:
     return out
 
 
-def _file_token(path: str, n_file: int) -> str:
-    """The token of the flagged file a payload was built from: md5 of its .dbf (every value and mark) and the count."""
+def _file_token(path: str, n_file: int, extra: str = "") -> str:
+    """The token of the flagged file a payload was built from: md5 of its .dbf (every value and mark) and the count
+    (extra: the edits' sha256 of a replay of the imported readings, so marks made before another Apply are refused)."""
     import hashlib
-    h = hashlib.md5(str(n_file).encode())
+    h = hashlib.md5(str(n_file).encode() + (b"|" + str(extra).encode() if extra else b""))
     dbf = os.path.splitext(path)[0] + ".dbf" if path and not path.lower().endswith(".zip") else None
     try:
         with open(dbf if dbf and os.path.exists(dbf) else path, "rb") as fh:
@@ -803,14 +853,16 @@ def _file_token(path: str, n_file: int) -> str:
     return h.hexdigest()
 
 
-def _shared_groups(g, out_c: list, fate) -> tuple:
+def _shared_groups(g, out_c: list, fate, keys=None) -> tuple:
     """The readings of the player that share a reading key with another record of the file (manual_edits.flagged_keys:
     the engine removes or keeps every record of a key together): [{m: [[combine num, index], ...], hn: records of the
     key not in the player, hk: those of them kept when the marks do not name the key}], and the file rows they cover
     (left out of kept_outside: the player counts them per group). [] when every key is the file's only record."""
     from engine.clean import manual_edits as me
     F = pd.DataFrame(g.drop(columns="geometry")) if "geometry" in g else g
-    keys = pd.Series([str(k) for k in me.flagged_keys(F)[0]], index=range(len(F)))
+    if keys is None:                                     # a flagged file; the import's keys are given (file_keys)
+        keys = me.flagged_keys(F)[0]
+    keys = pd.Series([str(k) for k in keys], index=range(len(F)))
     in_group = np.zeros(len(F), bool)
     dup = keys.duplicated(keep=False)
     if not dup.any():
@@ -828,13 +880,32 @@ def _shared_groups(g, out_c: list, fate) -> tuple:
     return out, in_group
 
 
-def edit_part(path: str, thin: int, n_used: int, n_file: int, g, kept_outside: int = 0) -> dict:
+def edit_part(path: str, thin: int, n_used: int, n_file: int, g, kept_outside: int = 0, stage: str = "clean",
+              edits: dict | None = None) -> dict:
     """P['edit'] of the app's replay of a cleaning: ok when every reading is in the player (not thinned); why: the
     reason when not; token: of the flagged file (the marks sent back must name it); min_kept: the fewest kept readings
     a clean file can have (yield_clean.MIN_KEPT: fewer and the cleaning stops); kept_outside: the kept readings of the
     file that are not in the player (no position or time) with the fate the marks give them, which the player adds
-    to its count of what the marks leave (replay_payload also adds 'shared': the readings that share a key)."""
+    to its count of what the marks leave (replay_payload also adds 'shared': the readings that share a key).
+    stage 'import' (the replay of the imported readings with its edits file, step 2): any reading can be removed and a
+    reading removed by hand put back; nothing is kept by hand; the token is the import's .dbf with the edits' sha256;
+    min_kept 1 (the warning is only 'every reading removed': nothing is cleaned here)."""
     fields = set(g.columns)
+    if stage == "import":
+        if thin > 1:
+            ok, why = False, (f"this field has too many readings to edit here ({n_file:,}): the replay shows 1 in "
+                              f"{thin}, and a reading you cannot see is never marked")
+        else:
+            ok, why = True, ""
+        out = {"ok": ok, "why": why, "stage": "import",
+               "token": _file_token(path, n_file, (edits or {}).get("sha256") or "none"), "n": int(n_used),
+               "min_kept": 1, "kept_outside": int(kept_outside),
+               "rule": "remove: any reading; put back: a reading removed by hand (nothing is kept by hand before a "
+                       "cleaning)"}
+        if n_used < n_file:
+            out["note"] = (f"{n_file - n_used:,} reading(s) of the file have no position or time and are not in the "
+                           "replay: they keep their fate")
+        return out
     if not {"Keep", "Rem_By"} <= fields:
         ok, why = False, "this file is not the flagged file of a cleaning (no Keep / Rem_By)"
     elif thin > 1:
@@ -842,7 +913,7 @@ def edit_part(path: str, thin: int, n_used: int, n_file: int, g, kept_outside: i
                           "and a reading you cannot see is never marked")
     else:
         ok, why = True, ""
-    out = {"ok": ok, "why": why, "token": _file_token(path, n_file), "n": int(n_used),
+    out = {"ok": ok, "why": why, "stage": "clean", "token": _file_token(path, n_file), "n": int(n_used),
            "min_kept": int(yield_clean.MIN_KEPT), "kept_outside": int(kept_outside),
            "rule": "remove: a kept reading; keep: a reading the moisture, speed or yield filter removed; the import "
                    "range (S0), the clip (S1) and the swath step (S2) cannot be undone by hand"}
@@ -852,7 +923,7 @@ def edit_part(path: str, thin: int, n_used: int, n_file: int, g, kept_outside: i
     return out
 
 
-def edit_keys(P: dict, marks: dict, flagged) -> dict:
+def edit_keys(P: dict, marks: dict, flagged, stage: str | None = None) -> dict:
     """The player's marks -> the engine's reading keys. marks: {token, remove: [[combine num, index], ...], keep:
     [...]} (index: the reading's place in its combine, in the payload's order); P: the payload they were made on
     (built with edit=True: its combines carry rows); flagged: the flagged file (path or DataFrame) of that payload.
@@ -861,14 +932,24 @@ def edit_keys(P: dict, marks: dict, flagged) -> dict:
     by hand: out; kept by hand: in; an edit of the cleaning shown that the marks no longer hold: its automatic fate,
     Rem_Auto; any other: its fate now), an estimate only, since the 3-sigma limits are computed again with the edits
     (readings come back or go); the cleaning itself stops below min_kept (yield_clean.MIN_KEPT). Raises ValueError
-    when the marks are not of this payload (token) or the payload cannot be edited."""
+    when the marks are not of this payload (token) or the payload cannot be edited. Also 'seen': the key of every
+    reading of the payload (manual_edits.merge_marks keeps the edits of the readings the replay does not show).
+    stage 'import' (P['edit']['stage']; flagged = the import file the payload was built from): a remove mark on any
+    reading, keep marks refused; the keys are manual_edits.file_keys of that file."""
     from engine.clean import manual_edits as me
     E = P.get("edit") or {}
+    stage = stage or E.get("stage") or "clean"
+    if stage != (E.get("stage") or "clean"):
+        raise ValueError(f"these marks are of the {stage} stage, the replay is of the {E.get('stage') or 'clean'} stage")
     if not E.get("ok"):
         raise ValueError("this replay cannot be edited: " + (E.get("why") or "no edit data"))
     if str((marks or {}).get("token")) != str(E.get("token")):
-        raise ValueError("the marks were made on another version of this cleaning (it changed since the replay was "
-                         "built): nothing was applied, mark the readings again")
+        raise ValueError(("the marks were made on another version of these readings or of their edits by hand (they "
+                          "changed since the replay was built)" if stage == "import" else
+                          "the marks were made on another version of this cleaning (it changed since the replay was "
+                          "built)") + ": nothing was applied, mark the readings again")
+    if stage == "import":
+        return _import_edit_keys(P, marks, flagged)
     F = flagged if isinstance(flagged, pd.DataFrame) else _read(flagged)
     if "geometry" in F:
         F = pd.DataFrame(F.drop(columns="geometry"))
@@ -912,9 +993,39 @@ def edit_keys(P: dict, marks: dict, flagged) -> dict:
     auto_kept = (_text(F["Rem_Auto"]) == "") if "Rem_Auto" in F else kept_now
     dropped_edit = np.isin(man.astype(str), ["R", "K"]) & ~is_rm & ~is_kp
     kept_after = int((is_kp | (~is_rm & np.where(dropped_edit, auto_kept, kept_now))).sum())
+    seen = sorted({str(keys[int(r)]) for C in P["combines"] for r in (C.get("rows") or [])})
     return {"remove": sorted(out["remove"]), "keep": sorted(out["keep"]), "refused": out["refused"],
             "n_remove": len(out["remove"]), "n_keep": len(out["keep"]), "kept_after": kept_after,
-            "min_kept": int(yield_clean.MIN_KEPT), "key_info": info}
+            "min_kept": int(yield_clean.MIN_KEPT), "key_info": info, "seen": seen, "stage": "clean"}
+
+
+def _import_edit_keys(P: dict, marks: dict, src) -> dict:
+    """edit_keys of the replay of the imported readings (stage 'import'): src = the import file (a path, or its table
+    read with geopandas in its own CRS). Every remove mark names a reading; a keep mark is refused."""
+    from engine.clean import manual_edits as me
+    keys, info = me.file_keys(src)
+    keys = [str(k) for k in keys]
+    if len(keys) != int(P.get("n_file", -1)):
+        raise ValueError("the import file does not match the replay (another number of readings): nothing applied")
+    by_num = {int(C["num"]): C for C in P["combines"]}
+    rm, refused = set(), []
+    for _it in (marks.get("keep") or []):
+        refused.append({"num": None, "i": None, "mark": "keep",
+                        "reason": "the imported readings are removed or put back, never kept by hand"})
+    for it in (marks.get("remove") or []):
+        try:
+            num, i = int(it[0]), int(it[1])
+            if i < 0:
+                raise IndexError
+            r = int(by_num[num]["rows"][i])
+        except (KeyError, IndexError, TypeError, ValueError):
+            refused.append({"num": None, "i": None, "mark": "remove", "reason": "not a reading of this replay"})
+            continue
+        rm.add(keys[r])
+    is_rm = np.fromiter((k in rm for k in keys), bool, len(keys))
+    seen = sorted({keys[int(r)] for C in P["combines"] for r in (C.get("rows") or [])})
+    return {"remove": sorted(rm), "keep": [], "refused": refused, "n_remove": len(rm), "n_keep": 0,
+            "kept_after": int((~is_rm).sum()), "min_kept": 1, "key_info": info, "seen": seen, "stage": "import"}
 
 
 def zone_part(zm, info: dict, arr: dict, names: list, center, kind: str) -> dict:

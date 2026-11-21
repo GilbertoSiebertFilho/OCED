@@ -40,7 +40,7 @@ NAME = "OCED"
 LONG_NAME = "OCED — Olds College Extract Data"
 TAGLINE = "Olds College Extract Data · raw yield data to clean shapefiles with the SMS 3-sigma sequence"
 ORG = "Olds College Smart Farm (OFPE)"
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 
 # ---- palette (hex strings; BRAND.md)
 NAVY = "#00358E"            # primary: buttons, headings, tree group titles, active states, lines and fits in figures
@@ -93,6 +93,62 @@ def page_icon():
         return icon
     except Exception:                                         # pragma: no cover - a missing/odd file: the path works too
         return LOGO_SHIELD
+
+
+# ---- the openers of inputs (0.3.7): a folded section (expander), a popover or a switch that holds a file to give, a
+# value or a choice that changes a result; they share one look (navy edge, tinted head, bold navy label, light-blue
+# icon) so that they stand out from the read-only details (logs, import details, about ...), which keep the plain
+# look. The keys are prefixes of the st-key-* classes of the keyed elements of app/oced.py and app/replay_view.py;
+# tests/test_brand_openers.py checks that every keyed expander and popover is in one tuple or in READ_ONLY_KEYS.
+OPENER_KEYS = ("open_box", "src_box_", "fi_edit_", "set_box_", "gw_box_", "replay_box_", "sa_box_", "ff_box")
+OPENER_KEYS_INNER = ("dec_box_", "more_sms", "gw_more_")          # an input opener inside another one
+OPENER_POPOVERS = ("mk_pop_",)
+OPENER_TOGGLES = ("fi_def_", "nw_adv_")
+READ_ONLY_KEYS = ("map_box_",)                                  # keyed openers that hold no input (a view)
+
+
+def _sel(prefixes, tail: str) -> str:
+    """One CSS selector list: the element `tail` directly under each keyed element whose key starts with a prefix
+    (the direct child keeps a nested opener from taking its parent's rule)."""
+    return ", ".join(f'.stApp [class*="st-key-{p}"] > {tail}' for p in prefixes)
+
+
+def opener_css(navy: str, blue: str, heading: str, tint: str, edge: str, card: str) -> str:
+    """The rules of the input openers (OPENER_KEYS, OPENER_KEYS_INNER, OPENER_POPOVERS, OPENER_TOGGLES), checked on
+    Streamlit 1.61.1: a keyed expander is div.st-key-<key> > [data-testid=stExpander] > details > summary; a keyed
+    popover's button is [data-testid=stPopoverButton] inside div.st-key-<key>; a keyed toggle is div.st-key-<key> >
+    [data-testid=stCheckbox]. Only light-dark() tokens of _css() and the brand's fixed accents."""
+    exp = '[data-testid="stExpander"] > details'
+    navy_edge = f"light-dark({navy}, {blue})"          # the navy edge, light blue on a dark page (it must be seen)
+    return f"""
+/* ---- openers of inputs (0.3.7): navy edge, tinted head, bold navy label, light-blue icon; the read-only details
+   (logs, import details, about ...) keep the plain look of every other expander */
+{_sel(OPENER_KEYS, exp)} {{
+  border: 1px solid {edge}; border-left: 5px solid {navy_edge}; border-radius: 12px; background: {card}; overflow: hidden; }}
+{_sel(OPENER_KEYS, exp + ' > summary')} {{ background: {tint}; padding-top: 0.7rem; padding-bottom: 0.7rem; }}
+{_sel(OPENER_KEYS, exp + ' > summary p')} {{ font-weight: 700; font-size: 1.0rem; color: {heading}; }}
+{_sel(OPENER_KEYS, exp + ' > summary [data-testid="stIconMaterial"]')} {{ color: {blue}; }}
+{_sel(OPENER_KEYS, exp + ' > summary:hover')} {{ background: light-dark(#DCEAFB, rgba(0,156,222,0.22)); }}
+/* inner openers: the same edge in light blue, thinner, no tint */
+{_sel(OPENER_KEYS_INNER, exp)} {{ border-left: 3px solid {blue}; border-radius: 10px; }}
+{_sel(OPENER_KEYS_INNER, exp + ' > summary p')} {{ font-weight: 700; color: {heading}; }}
+{_sel(OPENER_KEYS_INNER, exp + ' > summary [data-testid="stIconMaterial"]')} {{ color: {blue}; }}
+/* popovers that hold a choice, and the switches that open settings */
+{", ".join(f'.stApp [class*="st-key-{p}"] [data-testid="stPopoverButton"]' for p in OPENER_POPOVERS)} {{
+  background: {tint}; border: 1px solid {navy}; color: {heading}; font-weight: 600; }}
+{", ".join(f'.stApp [class*="st-key-{p}"] [data-testid="stPopoverButton"] p' for p in OPENER_POPOVERS)} {{
+  font-weight: 600; color: {heading}; }}
+{_sel(OPENER_TOGGLES, '[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] p')} {{
+  font-weight: 700; color: {heading}; }}
+/* the field files of step 1: a tinted panel with the navy edge (two slots: boundary, zone map) */
+.stApp .st-key-ff_box {{ background: {card}; border: 1px solid {edge}; border-left: 5px solid {navy_edge};
+  border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
+.stApp [class*="st-key-ff_slot_"] {{ background: {tint}; border: 1px solid {edge}; border-radius: 10px;
+  padding: 0.6rem 0.85rem 0.7rem !important; }}
+/* the block 'Without cleaning' of step 2 */
+.stApp .st-key-use_as_is {{ background: {card}; border: 1px solid {edge}; border-left: 5px solid {blue};
+  border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
+"""
 
 
 def _css() -> str:
@@ -275,7 +331,8 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 .oced-badge {{ display: inline-block; font-size: 0.74rem; font-weight: 700; padding: 0.05rem 0.5rem;
   border-radius: 999px; margin-right: 0.4rem; vertical-align: 0.08rem; letter-spacing: 0.02em; white-space: nowrap; }}
 .oced-badge-default {{ background: {navy}; color: #FFFFFF; border: 1px solid {navy}; }}
-.oced-badge-custom {{ background: {LIGHT_BLUE_TEXT}; color: #FFFFFF; border: 1px solid {LIGHT_BLUE_TEXT}; }}
+.oced-badge-custom, .oced-badge-edits {{ background: {LIGHT_BLUE_TEXT}; color: #FFFFFF;
+  border: 1px solid {LIGHT_BLUE_TEXT}; }}
 .oced-badge-as_is, .oced-badge-as_logged {{ background: transparent; color: {link}; border: 1px solid {blue}; }}
 .oced-badge-older, .oced-badge-failed {{ background: transparent; color: light-dark({ORANGE_TEXT}, {ORANGE});
   border: 1px solid {ORANGE}; }}
@@ -325,9 +382,6 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 /* ---- the boxes of step 3 (boundary, grower's data, combine factor): white with a navy edge */
 .stApp [class*="st-key-field_box_"] {{ background: {card}; border: 1px solid {edge2}; border-left: 5px solid {navy};
   border-radius: 12px; padding: 0.75rem 1.05rem 0.85rem !important; }}
-/* the grower's weight of step 3: an expander with the navy edge of the boxes beside it */
-.stApp [class*="st-key-gw_box_"] details {{ border-left: 5px solid {navy}; border-radius: 12px; }}
-.stApp [class*="st-key-gw_box_"] [class*="st-key-gw_more_"] details {{ border-left-width: 1px; }}
 .oced-verdict {{ border-radius: 10px; padding: 0.6rem 0.9rem; font-size: 0.95rem; border: 1px solid {edge2}; }}
 /* ---- the result strip of step 3: the titles take two lines in every card, so the values line up; the note under
    the value is a small box (not the rounded pill of st.metric) whose text wraps inside it; one row on a wide
@@ -354,6 +408,7 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 .oced-legend {{ display: flex; align-items: center; gap: 0.6rem; margin: 0.35rem 0 0.2rem; font-size: 0.86rem;
   color: {body}; }}
 .oced-bar {{ flex: 1; height: 14px; border-radius: 7px; border: 1px solid {edge2}; }}
+{opener_css(navy, blue, heading, tint, edge, card)}
 </style>"""
 
 
@@ -369,7 +424,7 @@ def step_header(num: int, title: str, subtitle: str = "") -> None:
 
 # the import of a file, as a badge: kind -> its words (the .oced-badge-<kind> classes of inject())
 BADGE_WORDS = {"default": "SMS default", "custom": "Your settings", "as_is": "As it is", "as_logged": "As logged",
-               "older": "Older rule", "failed": "Import failed"}
+               "older": "Older rule", "failed": "Import failed", "edits": "Your edits"}
 
 
 def import_badge(kind: str) -> str:
@@ -419,5 +474,5 @@ def rule():
 
 
 def footer_caption() -> str:
-    """The sidebar footer: 'OCED 0.3.6 · Olds College Smart Farm (OFPE)'."""
+    """The sidebar footer: 'OCED 0.3.7 · Olds College Smart Farm (OFPE)'."""
     return f"{NAME} {VERSION} · {ORG}"

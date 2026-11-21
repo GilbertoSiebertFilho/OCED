@@ -260,8 +260,10 @@ def test_app_marks_reprocess_and_remove_all_edits(tmp_path, monkeypatch):
     _open(at, keys)
     pl = _players(at)
     kinds = sorted((k, _payload(h)["kind"]) for k, h, _ in pl)
-    assert kinds == [("iframe", "import"), ("two-way", "clean")]              # no edit mode on the imported readings
-    html = next(h for k, h, _ in pl if k == "two-way")
+    # 0.3.7: the imported readings have Edit points too (stage 'import': removed or put back, nothing cleaned)
+    assert kinds == [("two-way", "clean"), ("two-way", "import")]
+    assert _payload(next(h for k, h, _ in pl if _payload(h)["kind"] == "import"))["edit"]["stage"] == "import"
+    html = next(h for k, h, _ in pl if k == "two-way" and _payload(h)["kind"] == "clean")
     assert '"edit": true' in html and not os.path.exists(os.path.join(wd, "edits"))
     assert {p: _md5(p) for p in auto_md5} == auto_md5                         # opening it changes nothing
     # the marks the player would send: 5 kept readings removed, 3 the moisture / speed filters removed kept, and one
@@ -298,7 +300,7 @@ def test_app_marks_reprocess_and_remove_all_edits(tmp_path, monkeypatch):
     # the replay comes back with the edited cleaning: its marks, the record's totals beside the automatic ones (the
     # sections opened again: AppTest keeps no expander state across the st.rerun() of the reprocess)
     _open(at, keys)
-    P1 = _payload(next(h for k, h, _ in _players(at) if k == "two-way"))
+    P1 = _payload(next(h for k, h, _ in _players(at) if k == "two-way" and _payload(h)["kind"] == "clean"))
     assert P1["manual"]["removed_by_hand"] == 5 and P1["manual"]["kept_by_hand"] == 3
     assert P1["manual"]["automatic"]["ALL"]["points"] == C0["R"]["n_kept"]
     assert P1["edit"]["token"] != P["edit"]["token"]
@@ -334,9 +336,11 @@ def test_app_marks_of_an_older_version_of_the_cleaning_apply_nothing(tmp_path, m
 # ------------------------------------------------------------------------------------------------ marks that stop it
 def _version(at):
     """The version the two-way player was mounted with (its html's hash and the tries of the marks)."""
-    for e in at.get("bidi_component"):
+    for e in at.get("bidi_component"):          # the replay of the cleaning (0.3.7: step 2's is two-way too)
         if "oced_replay_player" in str(getattr(e.proto, "component_name", "")):
-            return json.loads(e.proto.json)["v"]
+            d = json.loads(e.proto.json)
+            if _payload(d["html"])["kind"] == "clean":
+                return d["v"]
     return None
 
 

@@ -291,6 +291,51 @@ def flagged_keys(flagged) -> tuple:
     return reading_keys(F, kc, ll)
 
 
+def file_keys(src) -> tuple:
+    """(keys, info) of every reading of the point file a cleaning reads (the import in use; a path, or that file read
+    with geopandas in its own CRS), in its row order: the keys the cleaning gives the same readings (prepare(): the
+    same columns; the position, when the file has neither a record id nor a time, as the flagged file's X_log / Y_log
+    read back). The replay of the imported readings (step 2 of the app) marks readings with them, so a reading removed
+    by hand there is the same key as in the replay of its cleaning."""
+    if isinstance(src, (str, os.PathLike)):
+        import geopandas as gpd
+        g0 = gpd.read_file(os.fspath(src))
+    else:
+        g0 = src
+    kc = key_columns(g0.columns)
+    ll = _lonlat_of(g0) if (not kc.get("order") and not kc.get("time")) else None
+    return reading_keys(g0.drop(columns="geometry") if "geometry" in g0 else g0, kc, ll)
+
+
+MERGE_STAGES = ("import", "clean")
+
+
+def merge_marks(E_old, marks: dict, seen, stage: str) -> dict:
+    """The edits file's two lists after the marks of one replay (one edits file per harvest file, whichever replay the
+    marks come from). E_old: the edits now (read_edits, or None); marks: {remove, keep} keys the replay sends (all its
+    marks, those it shows of E_old included); seen: the keys of every reading of that replay; stage: 'import' (the
+    replay of the imported readings, step 2: it removes or puts back, never keeps) or 'clean' (the replay of a
+    cleaning). A key the replay does not show is kept as it is (a removal made in step 2 outside the boundary stays
+    through every reprocess of step 3):
+        remove = (old remove - seen) | the marks' removes
+        keep   = (old keep - seen) | the marks' keeps        (clean)
+        keep   = old keep - the marks' removes               (import: a reading removed there leaves 'keep')
+    Returns {remove, keep} (sorted; never a key in both: a removal wins)."""
+    if stage not in MERGE_STAGES:
+        raise ValueError(f"merge_marks: stage {stage!r} is not one of {MERGE_STAGES}")
+    seen = {str(k) for k in (seen or ())}
+    old_r = {str(k) for k in ((E_old or {}).get("remove") or [])}
+    old_k = {str(k) for k in ((E_old or {}).get("keep") or [])}
+    m_r = {str(k) for k in ((marks or {}).get("remove") or [])}
+    m_k = {str(k) for k in ((marks or {}).get("keep") or [])}
+    if stage == "import" and m_k:
+        raise ValueError("merge_marks: the replay of the imported readings removes or puts back readings, it never "
+                         "keeps them by hand")
+    remove = (old_r - seen) | m_r
+    keep = ((old_k - seen) | m_k) if stage == "clean" else (old_k - m_r)
+    return {"remove": sorted(remove), "keep": sorted(keep - remove)}
+
+
 XLOG_DECIMALS = 12           # the flagged file writes X_log / Y_log (WGS 84) with 12 decimals (yield_clean.write_all)
 
 

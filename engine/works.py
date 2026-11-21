@@ -38,6 +38,14 @@ Record, version 1:
                                                  boundary [path, fields, fingerprint], grower, combines), its boundary
                                                  path relative like the others, so that a change made after the
                                                  cleaning and saved with the work still says 'clean again'
+    field_files  (0.3.7, optional; absent in older works: they open as before, without field files)
+              {boundary: {path, feature, fingerprint} | None,        the field boundary given once for the work
+               zones: {path, name, column, fingerprint, stamp} | None,    the work's management zone map
+               use: {tag: 'own' | 'none'} (absent = the field boundary),
+               feature: {tag: [polygon indices]} (the polygon of a several-field boundary file each file uses),
+               found: [{path, name, kinds, n_polygons, area_ac}]}   polygon files found in the input (never applied)
+    small_area  (0.3.7, optional) {tag: {path, name, rule}}  the small area kept per harvest file, measured again
+                after every cleaning of it (its polygon file copied into the work, small_area/<tag>/)
 A folder written before saved works existed (decoded/ and clean/<tag>/*_cleaning.json, no oced_work.json) is listed
 with legacy=True, its record rebuilt in memory from those files; nothing is written into it until it is saved. Such a
 record holds no inputs_left_out of its own: inputs_left_out(record) takes what its files carry (the decode reports
@@ -106,6 +114,46 @@ def resolve_moved(path, workdir: str):
             if os.path.exists(cand):
                 return cand
     return path
+
+
+def rebase_cleaning_files(R: dict, clean_dir: str, workdir: str) -> dict:
+    """A cleaning record (its JSON, read from `clean_dir`, the folder that holds it in this work) whose paths were
+    written in another folder (the work moved or copied: the JSON keeps them absolute): every path of R['files'] (the
+    figures too) and of R['small_area']['files'] that lies in the folder the cleaning was written in (R['files']['dir'],
+    else the folder of R['files']['json']) is put under `clean_dir`, whether that file is there or not (a file the
+    copy lacks is never looked for in the folder it was copied from); any other absolute path is resolved by
+    resolve_moved. In place; returns R. Nothing is written to disk (opening a work writes nothing)."""
+    F = R.get("files") if isinstance(R, dict) else None
+    if not isinstance(F, dict) or not clean_dir:
+        return R
+    old = F.get("dir") or (os.path.dirname(str(F["json"])) if F.get("json") else None)
+    if not old:
+        return R
+    o, n = _norm(old), os.path.abspath(clean_dir)
+
+    def fix(p):
+        if not isinstance(p, str) or not p or not os.path.isabs(p):
+            return p
+        q = _norm(p)
+        if q == o:
+            return n
+        if q.startswith(o + os.sep):
+            return os.path.join(n, os.path.relpath(os.path.abspath(p), os.path.abspath(old)))
+        return resolve_moved(p, workdir) if workdir else p
+
+    def walk(d):
+        for k, v in list(d.items()):
+            if isinstance(v, dict):
+                walk(v)
+            elif isinstance(v, str):
+                d[k] = fix(v)
+    if _norm(old) == _norm(clean_dir):
+        return R
+    walk(F)
+    SA = R.get("small_area")
+    if isinstance(SA, dict) and isinstance(SA.get("files"), dict):
+        walk(SA["files"])
+    return R
 
 
 def _paths(d, keys, fn):
@@ -225,8 +273,9 @@ def _json_default(v):
 # ================================================================================================ save / load
 def make_record(workdir: str, name: str, *, input_label=None, active=None, datasets=None, boundary=None, grower=None,
                 smsset=None, a3set=None, cleaned=None, app_version=None, created=None, combines=None,
-                inputs_left_out=None) -> dict:
-    """A record from the app's state; every path inside the work folder made relative."""
+                inputs_left_out=None, field_files=None, small_area=None) -> dict:
+    """A record from the app's state; every path inside the work folder made relative. field_files and small_area
+    (0.3.7) are written only when the work has them (an older work's record is unchanged)."""
     ds = {}
     for t, D in (datasets or {}).items():
         d = {k: v for k, v in D.items() if k != "df"}
@@ -246,13 +295,46 @@ def make_record(workdir: str, name: str, *, input_label=None, active=None, datas
             c[k] = relpath(C.get(k), workdir)
         c["config"] = _config_paths(C.get("config"), lambda p: relpath(p, workdir))
         cl[t] = c
-    return {"version": SCHEMA_VERSION, "name": clean_name(name) or folder_name(workdir),
-            "created": created or _now(), "updated": _now(), "app_version": app_version,
-            "input_label": input_label, "inputs_left_out": [str(w) for w in (inputs_left_out or [])],
-            "active": active, "datasets": ds, "boundary": bd,
-            "grower": {t: dict(G) for t, G in (grower or {}).items() if G},
-            "smsset": dict(smsset) if smsset else None, "a3set": {t: dict(A) for t, A in (a3set or {}).items()},
-            "combines": {t: dict(c) for t, c in (combines or {}).items() if c}, "cleaned": cl}
+    rec = {"version": SCHEMA_VERSION, "name": clean_name(name) or folder_name(workdir),
+           "created": created or _now(), "updated": _now(), "app_version": app_version,
+           "input_label": input_label, "inputs_left_out": [str(w) for w in (inputs_left_out or [])],
+           "active": active, "datasets": ds, "boundary": bd,
+           "grower": {t: dict(G) for t, G in (grower or {}).items() if G},
+           "smsset": dict(smsset) if smsset else None, "a3set": {t: dict(A) for t, A in (a3set or {}).items()},
+           "combines": {t: dict(c) for t, c in (combines or {}).items() if c}, "cleaned": cl}
+    ff = field_files_record(field_files, lambda p: relpath(p, workdir))
+    if ff:
+        rec["field_files"] = ff
+    sa = {t: {"path": relpath(A.get("path"), workdir), "name": A.get("name") or os.path.basename(str(A.get("path"))),
+              "rule": A.get("rule"),
+              # 0.3.7: the figure, the calibration CV and the interior cut, kept only when not the default
+              **{k: A[k] for k in ("method", "cv", "interior") if A.get(k) not in (None, "", 0, 0.0, "ground")}}
+          for t, A in (small_area or {}).items() if A and A.get("path")}
+    if sa:
+        rec["small_area"] = sa
+    return rec
+
+
+def field_files_record(ff, fn) -> dict | None:
+    """The work's field files (0.3.7) as kept in the record, fn applied to every path (relpath on save, the absolute
+    path on load); None when the work has none (no boundary, no zone map, nothing found, no choice per file)."""
+    if not isinstance(ff, dict):
+        return None
+    B, Z = ff.get("boundary"), ff.get("zones")
+    out = {"boundary": ({"path": fn(B["path"]), "feature": list(B.get("feature") or []) or None,
+                         "fingerprint": B.get("fingerprint")} if isinstance(B, dict) and B.get("path") else None),
+           "zones": ({"path": fn(Z["path"]), "name": Z.get("name") or os.path.basename(str(Z["path"])),
+                      "column": Z.get("column"), "fingerprint": Z.get("fingerprint"),
+                      "stamp": list(Z.get("stamp") or []) or None} if isinstance(Z, dict) and Z.get("path") else None),
+           "use": {str(t): str(u) for t, u in (ff.get("use") or {}).items() if u in ("own", "none")},
+           "feature": {str(t): [int(x) for x in v] for t, v in (ff.get("feature") or {}).items() if v},
+           "found": [{"path": fn(f["path"]), "name": f.get("name") or os.path.basename(str(f["path"])),
+                      "kinds": list(f.get("kinds") or []), "n_polygons": f.get("n_polygons"),
+                      "area_ac": f.get("area_ac")} for f in (ff.get("found") or []) if isinstance(f, dict)
+                     and f.get("path")]}
+    if not (out["boundary"] or out["zones"] or out["use"] or out["feature"] or out["found"]):
+        return None
+    return out
 
 
 def save_work(workdir: str, record: dict) -> str:
@@ -299,6 +381,11 @@ def absolute(rec: dict, workdir: str) -> dict:
     rec["datasets"] = {t: _dataset_paths({**D, **{k: abspath(D.get(k), workdir) for k in PATH_KEYS_D}}, back)
                        for t, D in (rec.get("datasets") or {}).items()}
     rec["boundary"] = {t: {**B, "path": back(B.get("path"))} for t, B in (rec.get("boundary") or {}).items()}
+    if rec.get("field_files"):
+        rec["field_files"] = field_files_record(rec["field_files"], back)
+    if rec.get("small_area"):
+        rec["small_area"] = {t: {**A, "path": back(A.get("path"))} for t, A in rec["small_area"].items()
+                             if isinstance(A, dict) and A.get("path")}
     rec["cleaned"] = {t: {**C, **{k: back(C.get(k)) for k in PATH_KEYS_C},
                           "config": _config_paths(C.get("config"), lambda p: os.path.abspath(back(p)))}
                       for t, C in (rec.get("cleaned") or {}).items()}

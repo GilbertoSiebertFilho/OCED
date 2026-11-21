@@ -5,9 +5,89 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.6** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.7** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.7:* the field files at the start, openers that stand out, Play the harvest and Edit points after
+the raw data, the small area read reading by reading and kept with the file, and the small area's yield as grain /
+ground. The whole-field cleaning is not changed (the same files, byte for byte).
+- **The small area's yield is grain / ground** (step 3, the default; command line `--small-area-method
+  ground|cleaned|sms`). Every reading inside the polygon counts, whatever the cleaning did with it (kept, removed by a
+  step, removed by hand) and also the readings the import left out below its minimum yield (read from the work's
+  decoded file of that harvest file, with the import's own weight to volume and dry moisture). Each reading's strip
+  is taken as logged (its width x its distance, ending at its logged point, its heading turned from true north to
+  the map's grid north) and clipped by the polygon's line. Grain = dry yield x logged area x the share inside;
+  ground = the area the clipped strips cover, overlaps counted once; the yield = grain / ground. *Why:* checked
+  against the weigh wagon in 2026 (a canola and a wheat trial), the average of the cleaned map read the plots high
+  and flattened the differences between them (it leaves out the low readings of a no-grain patch but keeps their
+  ground out of the area too), while grain / ground came within the scale's own load-to-load scatter in both crops.
+  Beside it the table always
+  shows the **cleaned map average** (the 0.3.6 figure, under the edge rule) and **as SMS's query** (the kept readings
+  whose whole strip is inside, their grain over their own area: the figure SMS gives for a polygon). A small area of
+  0.3.6 opens as *cleaned map average (0.3.6)*. When the decoded file is not there (a flagged file given alone),
+  grain / ground is computed from the flagged file only and the box and the record say so.
+- **The ranges of the small area**: the *spread inside the polygon* (a moving-block bootstrap along each pass,
+  blocks of about 30 m, 4,000 draws, a fixed seed: how much the yield varies along the passes inside the polygon,
+  not the accuracy of the number) and, when you give the combine's calibration CV (`--small-area-cv PCT`), the
+  *calibration range* (+- 1.96 x CV x the yield) and a table of the differences between every pair of polygons with
+  +- 1.96 x sqrt((CV y1)^2 + (CV y2)^2). The calibration range covers comparisons between polygons of the same
+  combine and day; the absolute level also needs a scale level (the grower's weight). The CV is measured on the combine
+  itself (monitor against the scale, load by load). *Interior* (`--small-area-interior M`) takes M metres off each end of
+  every polygon along its long axis (the ends of a pass read low while the elevator fills and empties, so the
+  interior reads higher than the whole pass); a warning says when more than 15 % of a polygon's ground is the first
+  or last 10 m of a pass.
+- **The hover of the small area's map** now shows each reading as grain / ground counts it: the grain counted
+  (yield x logged area x share inside), its clipped area, its part of the ground (after the overlaps with earlier
+  readings), whether SMS's query counts it (its whole strip inside) and what the cleaned map average counted. A new
+  download, `<tag>_small_area_ground.zip`, holds every clipped strip (`SA_Grain` sums to the grain, `SA_GrndAc` to
+  the ground).
+- **Step 3's boundary**: *No boundary for this file* now offers the upload / path / *Use* of the file's own boundary,
+  and removing the field boundary of step 1 clears the per-file choices made about it.
+- **Copied or moved works** read and write their own cleaning folder: the paths of a cleaning record written in
+  another folder are put under the work's own, so Measure and *Remove the small area* never touch the folder a work
+  was copied from. A small area of 0.3.6 given by its path (not copied into the work) is found again next to the input
+  when the file there holds the same polygons.
+- **Field files** (step 1, always visible, optional): one field boundary and one management zone map for every
+  harvest file of the work, given before or after the data is opened (files given before Open are used when it
+  opens). A file uses the field boundary when at least 20 % of its readings lie inside it (+ 50 m), the CLI's
+  field-of-interest rule; of a boundary file of several fields, each file takes the polygon holding most of its
+  readings (changeable in step 3). Step 3's box says *From the field files*, with *Use another for this file* (its
+  own boundary wins) and *No boundary for this file*; a file the boundary does not cover gets none, and the box says
+  so. Polygon files carried with the data (a boundary shapefile in the zip, say) are listed as *Found in the input*
+  and used only by a click. The zone map shows in both replays of every file; a file can have its own. Saved with the
+  work (`field_files` in oced_work.json; uploads kept in `field_files/`).
+- **Openers that hold an input** (Open other data, Extract, Decoding options, Edit the settings, Settings, More
+  settings, Grower's weight, Play the harvest, Small area, Make of each combine) share one look: a navy edge (light
+  blue on a dark page), a tinted head, a bold label and an icon; read-only details keep the plain look. After a
+  cleaning only the method folds into *Settings*: the boundary, the grower's weight and the combine factor stay open.
+- **Play the harvest · zone map · edit points after the raw data** (step 2, for data that needs no cleaning, an
+  export of a map already cleaned, say): *Edit points* removes a reading by hand (click, or Shift + drag / Box) and
+  puts back one removed by hand; *Apply these edits* cleans nothing. Under it, **Without cleaning**: the edits line,
+  *Remove all edits*, the strip and the map of the edited data, and the downloads: the shapefile (the import in use
+  without the readings removed by hand, its records byte for byte), the shapefile for DIFM of the same readings, and
+  the edits file. These files are written only when asked for (*Prepare the files without cleaning*) or after an edit
+  in step 2, into `without_cleaning/`: opening a work, an older one too, adds nothing to it. One edits file per harvest file for both replays (`edits/<tag>/<tag>_manual_edits.json`): a
+  reading removed in step 2 is removed by every cleaning of the file (step SM, after Optimize Swath Widths, so S1, S2
+  and the monitor total are those of the automatic cleaning), shows as removed by hand in step 3's replay and can be
+  put back there; each replay keeps the edits of the readings it does not show. A cleaned file is not cleaned again
+  by step 2: it says *clean again*. The keys use the record id and the time: edits do not carry to another export of
+  the same field.
+- **The small area, reading by reading** (step 3): under its table a map of every reading near the polygons, its
+  strip faint, the part counted coloured by the yield used, a reading the cleaning removed in orange, one removed by
+  hand (Edit points) in purple; the mouse on a reading shows its combine, time and record, the yield used (or
+  *Removed by hand (Edit points)*), its strip, what the edge rule did (e.g. *33 % inside: 0.00158 of 0.00481 ac
+  counted; 67 % cut off: 0.00323 ac*) and the calculation (*61.99 bu/ac x 0.00158 ac = 0.0976 bu, counted in Plot A*).
+  The figures come from engine/clean/small_area.py `measure()`'s own rows (the table is their sum). New downloads:
+  the point shapefile carries `SA_Share` and `SA_Bu`, and `<tag>_small_area_parts.zip` is a polygon shapefile of the
+  counted parts (`SA_Share`, `SA_Area_ac`, `SA_Bu`, `SA_Rule`, `SA_Why`; `SA_Bu` sums to the table's total).
+- **The small area kept with the file**: its polygon file (copied into `small_area/<tag>/`) and rule are saved with
+  the work and measured again after every cleaning of the file, the reprocess after Edit points included (*measured
+  again after the cleaning of hh:mm*), with a table of the figures before and after the edits by hand; the replay of
+  the cleaning draws the polygons in yellow (a button zooms to them) and the card of a reading says its polygon and
+  the share of its strip counted. *Remove the small area* takes it away. A small area measured by 0.3.6 is kept with
+  the file when its polygon file is still in the cleaning's folder (it is copied into `small_area/<tag>/` before the
+  next cleaning); otherwise the box asks for the polygon file again.
 
 *Changes in 0.3.6:* a small area cut after the cleaning, the total in bushels, and boxes that follow the attribute
 on the map. Step 3 has *Small area (cut after the cleaning)* under the clean map (command line: `--small-area FILE

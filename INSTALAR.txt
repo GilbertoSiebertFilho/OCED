@@ -1,7 +1,7 @@
 OCED - Olds College Extract Data - instalação num computador novo
 ================================================================
 
-Versão 0.3.6 (a versão aparece na barra de título e no painel lateral do app).
+Versão 0.3.7 (a versão aparece na barra de título e no painel lateral do app).
 
 O OCED abre os arquivos que vêm das máquinas (colheitadeiras, plantadeiras e pulverizadores: cartões e logs brutos,
 dados ISOXML e exportações de pontos), importa-os como o Ag Leader SMS, mostra o mapa de cada atributo, limpa os
@@ -52,6 +52,11 @@ Onde ficam os resultados
    - sections\ (só para exportações do Operations Center por seção: o arquivo reduzido a uma leitura por segundo);
    - superseded\<data-hora>\ (uma limpeza que deixou de valer porque o arquivo foi extraído ou importado de novo:
      guardada aqui, não apagada);
+   - field_files\ (o boundary e o mapa de zonas do trabalho, quando enviados pelo navegador no passo 1);
+   - edits\<nome>\ (as leituras removidas ou mantidas à mão, <nome>_manual_edits.json, um arquivo para os passos 2
+     e 3, e a cópia editada <nome>_edited.shp) e without_cleaning\ (os arquivos do passo 2 sem limpeza: o shapefile e
+     o shapefile para o DIFM);
+   - small_area\<nome>\ (o arquivo de polígonos da área pequena, guardado com o trabalho);
    - oced_work.json (o trabalho salvo: abre de novo pelo painel lateral, também depois de mover a pasta).
    Os mesmos arquivos são baixados pelos botões do passo 4. Para gravar a colheita limpa no formato bruto do
    monitor (passo 4), o cartão ou os logs de onde ela foi extraída precisam continuar no computador (na pasta
@@ -61,6 +66,50 @@ Onde ficam os resultados
    feche a janela preta do app e abra-o de novo com dois cliques em run_oced.bat, ou de um Prompt de Comando novo
    (o setx não muda o Prompt de Comando em que foi digitado). Os trabalhos salvos e o cn1_card_names.json (os nomes
    de cartão Case IH já dados) ficam na pasta antiga: para mantê-los, mova-os para a pasta nova com o app fechado.
+
+Novidades da 0.3.7
+   - Passo 1, "Field files" (sempre visível, opcional): um boundary e um mapa de zonas para todos os arquivos do
+     trabalho, dados antes ou depois de abrir os dados. Um arquivo usa o boundary quando pelo menos 20 % das suas
+     leituras estão dentro dele (+ 50 m); num arquivo de vários talhões, cada arquivo pega o polígono com mais
+     leituras. No passo 3, "Use another for this file" dá um boundary próprio ao arquivo e "No boundary for this
+     file" limpa sem o recorte. Um arquivo de polígonos que veio junto com os dados aparece como "Found in the input"
+     e só é usado com um clique.
+   - Os botões que abrem opções (Open other data, Extract, Settings, Grower's weight, Play the harvest, Small area
+     ...) têm agora uma borda azul-marinho e o título em negrito; depois de limpar, só o método fica dobrado em
+     Settings: o boundary, o peso do produtor e o fator de colhedora ficam abertos.
+   - Passo 2, "Play the harvest · zone map · edit points": remove leituras à mão ou devolve as removidas, sem
+     limpar; em "Without cleaning" baixa o shapefile e o shapefile para o DIFM dos dados com essas edições. Esses
+     arquivos só são gravados quando pedidos ("Prepare the files without cleaning") ou depois de uma edição no
+     passo 2: abrir um trabalho, também um antigo, não grava nada nele. As edições valem também para toda limpeza
+     do arquivo (passo SM), num só arquivo de edições com o passo 3.
+   - Passo 3, área pequena: o mapa de cada leitura perto dos polígonos, com o corte, quanto foi cortado e o cálculo
+     ao passar o mouse (a leitura removida à mão em Edit points aparece em roxo e diz "Removed by hand"); o
+     shapefile das partes contadas; a área pequena fica guardada com o arquivo e é medida de novo depois de cada
+     limpeza (também depois de Edit points), com os números antes e depois das edições. A área pequena de um
+     trabalho da 0.3.6 fica guardada também, se o arquivo de polígonos ainda estiver na pasta da limpeza.
+   - Passo 3, área pequena: o número agora é grão / chão (o padrão). Contam todas as leituras dentro do polígono,
+     o que a limpeza fez com elas (mantidas, removidas por um passo ou à mão) e também as que a importação deixou
+     de fora abaixo do mínimo (lidas do arquivo decodificado do trabalho). A faixa de cada leitura é a registrada
+     (largura x distância, terminando no ponto registrado, o rumo corrigido do norte verdadeiro para o norte da
+     grade), recortada pela linha do polígono. Grão = produtividade seca x área registrada x parte dentro; chão = a
+     área coberta pelas faixas recortadas, sobreposições uma vez; produtividade = grão / chão. Por quê: na
+     validação de 2026 com a carreta de pesagem (um ensaio de canola e um de trigo), a média do mapa limpo lia os
+     plots alto e achatava as diferenças; grão / chão ficou dentro da variação da própria balança nas duas culturas.
+     Ao lado aparecem sempre a "cleaned map average" (o número da 0.3.6) e "as SMS's query" (as faixas inteiras
+     dentro, como o SMS). Uma área pequena da 0.3.6 abre como "cleaned map average (0.3.6)". Sem o arquivo
+     decodificado, o cálculo usa só o arquivo flagged, e o app avisa.
+   - Faixas da área pequena: a "spread inside the polygon" (bootstrap em blocos de ~30 m ao longo das passadas:
+     quanto a produtividade varia dentro do polígono, não a exatidão do número) e, quando se dá o CV da calibração da
+     colhedora, a "calibration range" (± 1,96 x CV x produtividade) e a tabela das diferenças entre os polígonos. O CV se
+     mede na própria colhedora (monitor contra a balança, carga a carga). "Interior" tira N metros de cada ponta do
+     polígono (as pontas da passada leem baixo). Linha de comando: --small-area-method ground|cleaned|sms,
+     --small-area-cv PCT, --small-area-interior M.
+   - Passo 3, boundary: "No boundary for this file" agora oferece o upload / caminho / Use do boundary próprio do
+     arquivo, e remover o boundary do passo 1 limpa as escolhas por arquivo.
+   - Trabalho copiado ou movido: Measure e "Remove the small area" usam a pasta do próprio trabalho, nunca a de onde
+     ele foi copiado. Uma área pequena da 0.3.6 dada pelo caminho é encontrada de novo ao lado da entrada quando o
+     arquivo ali tem os mesmos polígonos.
+   - A limpeza do talhão inteiro não muda: os mesmos arquivos, byte a byte.
 
 Dados ISOXML (ISO 11783)
    Além dos cartões e logs (Case IH / New Holland .cn1, John Deere .jdl e GreenStar 3), o passo 1 lê os dados de

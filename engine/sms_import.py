@@ -1072,6 +1072,61 @@ def left_out_readings(shp: str, R: dict):
     return res
 
 
+def all_import_values(shp: str, R: dict | None):
+    """Every reading of `shp` (the file of every reading an import was made from: its record's all_readings) with
+    what Import as SMS with the settings R computes for it (the same computation as apply; read only, used by the small
+    area's grain / ground, engine/clean/small_area.py): a GeoDataFrame in the file's coordinates with step ('' the
+    import keeps it, else the left-out step that took it), dry_bu_ac (bu/ac in R's weight to volume and dry moisture,
+    as imported), moisture, distance_ft, width_ft (after a manual swath, the manual width), heading (deg, as logged),
+    machine, time, dataset and order (as text; '' when the file has no such column). R None: the yields as the file
+    gives them (Yld_Vol_Dr or the dry yield found), every reading kept."""
+    import pyogrio
+    from engine.clean import yield_clean as yc
+    g = pyogrio.read_dataframe(shp)
+    C = yc.detect_columns([c for c in g.columns if c != "geometry"])
+    n = len(g)
+    nan = np.full(n, np.nan)
+    if R:
+        rep = {"left_out": {}, "left_out_by_group": {}, "notes": [], "own_yields": False,
+               "applied": {"manual_swath": False, "manual_moisture": False, "flow_shift": False,
+                           "weight_and_moisture": False, "start_stop_delay": False, "yield_limits": False}}
+        X = _import_values(g, C, R, rep) if n else {"keep": np.ones(0, bool), "masks": {}, "vals": {},
+                                                     "moisture": None, "width": None}
+        keep, vals = X["keep"], X["vals"]
+        step = np.full(n, "", dtype=object)
+        for k, m in X["masks"].items():
+            step[np.asarray(m, bool)] = k
+        dry = vals.get("dry_vol") if vals.get("dry_vol") is not None else nan
+        moist, width = X["moisture"], X["width"]
+    else:
+        Y = yield_columns(g.columns, C)
+        dry = _num(g, Y.get("dry_vol")) if Y.get("dry_vol") else nan
+        step = np.full(n, "", dtype=object)
+        moist, width = _num(g, C.get("moisture")), _num(g, C.get("width_ft"))
+    dist = _num(g, C.get("distance_ft"))
+    if dist is None and C.get("speed_mph") and C.get("duration_s"):
+        dist = _num(g, C["speed_mph"]) * 1.46667 * _num(g, C["duration_s"])
+
+    def txt(key):
+        c = C.get(key)
+        if not c or c not in g.columns:
+            return np.full(n, "", dtype=object)
+        return np.array(["" if (v is None or (isinstance(v, float) and np.isnan(v))) else
+                         (str(int(v)) if isinstance(v, (int, np.integer)) or (isinstance(v, float) and
+                                                                             float(v).is_integer()) else str(v))
+                         for v in g[c].tolist()], dtype=object)
+    res = g[["geometry"]].copy()
+    res["step"] = step
+    res["dry_bu_ac"] = np.asarray(dry, float)
+    res["moisture"] = np.asarray(moist if moist is not None else nan, float)
+    res["distance_ft"] = np.asarray(dist if dist is not None else nan, float)
+    res["width_ft"] = np.asarray(width if width is not None else nan, float)
+    res["heading"] = np.asarray(_num(g, C.get("heading")) if C.get("heading") else nan, float)
+    for k in ("machine", "time", "dataset", "order"):
+        res[k] = txt(k)
+    return res
+
+
 def _write_gdal(out_shp, g, rows, patch, extra=()):
     """The records `rows` of g with the patched cells and the extra columns ((name, type, values, width, decimals)),
     through GDAL (+ a UTF-8 .cpg)."""
