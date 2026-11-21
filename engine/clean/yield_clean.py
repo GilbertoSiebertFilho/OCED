@@ -1234,6 +1234,8 @@ def too_few_message(cascade, n_in, n_kept) -> str:
         "F2": "is the speed range right for this machine (the speed column must be in mph)?",
         "F8": "the overlap threshold removes most of the field: check the swath width, or raise / switch off F8.",
         "F9": "check the wet-mass column and its unit (lb/ac), or the F9 range.",
+        "SM": f"these are the readings removed by hand (the edits file): leave at least {MIN_KEPT} readings kept, or "
+              "remove the edits by hand.",
     }
     on = [c for c in cascade if c["on"] and c["removed"] + c["remaining"] > 0]
     if not on:

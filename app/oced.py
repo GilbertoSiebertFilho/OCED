@@ -157,6 +157,7 @@ with _engine_lock():
     from engine import sms_import as si  # noqa: E402
     from engine.clean import applied3s as a3  # noqa: E402
     from engine.clean import manual_edits as me  # noqa: E402
+    from engine.clean import small_area as sarea  # noqa: E402
     from engine.clean import sms3sigma as sms  # noqa: E402
     from engine.clean import yield_clean as yc  # noqa: E402
     from engine.formats import common, detect  # noqa: E402
@@ -1496,6 +1497,46 @@ def remove_edits(tag: str) -> bool:
         return False
     os.replace(p, p[:-len(".json")] + "_removed.json")
     return True
+
+
+def edits_bytes(tag: str) -> bytes | None:
+    """The edits file of tag as it is on disk (its bytes), None without one: kept before the replay's marks are
+    written, so that a cleaning that stops with them can put it back (restore_edits)."""
+    p = edits_path(tag)
+    if not p or not os.path.isfile(p):
+        return None
+    with open(p, "rb") as fh:
+        return fh.read()
+
+
+def files_stamp(paths) -> list:
+    """[size, modification time (ns)] of the .shp and .dbf of each shapefile in paths (None: missing): whether the files
+    of the cleaning shown are still the ones the replay's marks were made on."""
+    out = []
+    for p in paths:
+        for e in (".shp", ".dbf"):
+            f = os.path.splitext(p)[0] + e if p else None
+            try:
+                s_ = os.stat(f)
+                out.append([s_.st_size, s_.st_mtime_ns])
+            except (OSError, TypeError):
+                out.append(None)
+    return out
+
+
+def restore_edits(tag: str, before: bytes | None) -> None:
+    """The edits file of tag put back as it was before the replay's marks (edits_bytes: the same bytes, so its hash
+    and the cleaning shown agree again; None: no edits file, the automatic cleaning)."""
+    p = edits_path(tag)
+    if not p:
+        return
+    if before is None:
+        if os.path.isfile(p):
+            os.remove(p)
+        return
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "wb") as fh:
+        fh.write(before)
 
 
 def apply_marks(tag: str, K: dict) -> dict:
@@ -6389,6 +6430,196 @@ def settings_summary(tag: str, IS_Y: bool, P0: dict, n_combines: int = 0) -> str
     return " · ".join(parts)
 
 
+def total_bu_of(df: pd.DataFrame, col) -> float | None:
+    """The total bushels of a yield column (bu/ac): sum of (yield x area) over the readings with both, the area being
+    distance x width (as the SMS Summary's total). None without the distance and width columns."""
+    if df is None or not col or col not in df:
+        return None
+    a = area_of(df)
+    if a is None:
+        return None
+    v = pd.to_numeric(df[col], errors="coerce").to_numpy(float)
+    ok = np.isfinite(v) & np.isfinite(a) & (a > 0)
+    return float((v[ok] * a[ok]).sum()) if ok.any() else None
+
+
+def attr_meta(df: pd.DataFrame, col) -> tuple[str, str, str]:
+    """(label, unit, kind) of a column as the map's pills name it: ATTR_INFO, else the detected key's DET_INFO, else
+    the column itself (numeric)."""
+    if col in ATTR_INFO:
+        return ATTR_INFO[col]
+    det = yc.detect_columns([c for c in df.columns if c not in ("lon", "lat")])
+    k = {v: k for k, v in det.items() if v}.get(col)
+    return DET_INFO[k] if k in DET_INFO else (str(col), "", "viridis")
+
+
+def is_yield_attr(df: pd.DataFrame, col) -> bool:
+    """A yield attribute (a per-acre volume, bu/ac): the boxes then also show its total in bushels."""
+    return bool(col) and attr_meta(df, col)[1] == "bu/ac"
+
+
+def total_label(df: pd.DataFrame, col) -> str:
+    """'Total wet bu' for a wet yield, else 'Total dry bu'."""
+    return "Total wet bu" if attr_meta(df, col)[0].lower().startswith("wet") else "Total dry bu"
+
+
+def chosen_attr(map_key: str | None, df: pd.DataFrame) -> str | None:
+    """The attribute chosen on the pills of the map under the boxes (explorer key map_key), when it is a numeric column
+    of df; None otherwise (the boxes then show their default attribute)."""
+    if not map_key or df is None:
+        return None
+    c = ss.get(f"attr_{map_key}")
+    if not c or c not in df.columns or c in ("lon", "lat"):
+        return None
+    if attr_meta(df, c)[2] in ("cat", "time"):
+        return None
+    return c if pd.to_numeric(df[c], errors="coerce").notna().any() else None
+
+
+def _lower_label(lab: str) -> str:
+    """'Moisture' -> 'moisture' in 'Mean moisture'; a label with capitals inside (an acronym, a column name) stays."""
+    return lab[:1].lower() + lab[1:] if lab[:1].isupper() and (len(lab) < 2 or lab[1:2].islower()) else lab
+
+
+def attr_cards(df: pd.DataFrame, col: str, base: pd.DataFrame | None = None, base_word: str | None = None,
+               suffix: str = "", help_word: str = "the readings") -> list:
+    """The boxes of one attribute (the one chosen on the map): its plain mean, its area-weighted average (the SMS
+    Average) and, for a yield attribute, its total in bushels, with its unit; each with its difference to the same
+    column of base (when base has it), followed by base_word ('vs step 1')."""
+    lab, unit, _ = attr_meta(df, col)
+    u = f" {unit}" if unit else ""
+    bb = base if (base is not None and col in base) else None
+    name = _lower_label(lab)
+
+    def d(a, b, unit_=u):
+        if a is None or b is None:
+            return None
+        x = a - b
+        return ("0" if abs(x) < 0.005 else f"{x:+,.2f}") + unit_ + (f" {base_word}" if base_word else "")
+    m, av = _mean_of(df, col), avg_of(df, col)
+    cards = []
+    if m is not None:
+        cards.append({"label": f"Mean {name}{suffix}", "value": f"{m:,.2f}{u}",
+                      "delta": d(m, _mean_of(bb, col) if bb is not None else None),
+                      "help": f"The plain mean of {col} over {help_word} (as SMS Edit Legend)."})
+    if av is not None:
+        cards.append({"label": f"Average {name}{suffix}" + (" (SMS)" if per_area(unit) else ", area-weighted"),
+                      "value": f"{av:,.2f}{u}", "delta": d(av, avg_of(bb, col) if bb is not None else None),
+                      "help": f"{col} weighted by the area of each reading (distance x width): sum of (value x area) / "
+                              "sum of area" + (", the SMS summary's Average." if per_area(unit) else ".")})
+    if is_yield_attr(df, col):
+        t = total_bu_of(df, col)
+        if t is not None:
+            cards.append({"label": total_label(df, col) + suffix, "value": f"{t:,.1f} bu",
+                          "delta": d(t, total_bu_of(bb, col) if bb is not None else None, " bu"),
+                          "help": f"The total of {col}: sum of (yield x distance x width) over {help_word} (the "
+                                  "average x the area)."})
+    return cards
+
+
+def small_area_files(C: dict, source) -> str:
+    """The polygon file of the small area: source ('upload', [UploadedFile]) saved in small_area_input/ next to the
+    cleaning's files, or ('path', str) read in place. Returns its path; raises ValueError."""
+    kind, val = source
+    if kind == "path":
+        path = str(val or "").strip().strip('"')
+        if not path or not os.path.exists(path):
+            raise ValueError(f"not found on this computer: {path or '(empty)'}")
+        return path
+    d = os.path.join((C["R"].get("files") or {}).get("dir") or os.path.dirname(C["shp"]), "small_area_input")
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d, exist_ok=True)
+    names = []
+    for f in val:
+        n = os.path.basename(f.name)
+        with open(os.path.join(d, n), "wb") as fh:
+            fh.write(f.getbuffer())
+        names.append(n)
+    main = ([n for n in names if n.lower().endswith(".shp")] or
+            [n for n in names if os.path.splitext(n)[1].lower() in er.AOI_EXTS])
+    if not main:
+        raise ValueError("no polygon file among the files given: a .zip, a .shp (with its .shx, .dbf and .prj), a "
+                         ".geojson, a .gpkg, a .kml or a .kmz")
+    return os.path.join(d, main[0])
+
+
+def small_area_box(C: dict):
+    """Step 3, under the clean map: the small area cut AFTER the whole-field cleaning (engine/clean/small_area.py,
+    the same as the command line's --small-area / --edge-rule). A polygon file (one or several polygons) and an edge
+    rule; per polygon the kept readings that count (readings, acres, total dry bu, area-weighted and plain mean, min,
+    max, SD, moisture) and the same without the cleaning, a CSV and a point shapefile, a line in the record."""
+    R = C["R"]
+    fz = (R.get("files") or {}).get("flagged_zip")
+    if not fz or not os.path.exists(fz):
+        return
+    k = key_of(C["shp"])
+    SA = R.get("small_area")
+    with st.expander("Small area (cut after the cleaning)", icon=":material/crop_square:", expanded=bool(SA)):
+        st.caption("The 3-sigma limits stay those of the whole field: the readings the cleaning kept are counted in "
+                   "each polygon of the file you give. (The field of interest of step 1 cuts before the cleaning, "
+                   "so a small area there would get its limits from its own few readings.)")
+        up = st.file_uploader("Polygon file", accept_multiple_files=True, key=f"sa_up_{k}", type=BOUNDARY_TYPES,
+                              help="One or several polygons, each named by its name column (else numbered): a .zip, "
+                                   "the .shp + .shx + .dbf + .prj of a shapefile, a .geojson, .gpkg, .kml or .kmz.")
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            spath = st.text_input("or a file on this computer", key=f"sa_path_{k}",
+                                  placeholder=r"C:\...\small area.zip")
+            rule = st.selectbox("Edge rule", list(sarea.EDGE_RULES), format_func=sarea.EDGE_RULES.get,
+                                index=list(sarea.EDGE_RULES).index(sarea.DEFAULT_RULE),
+                                key=f"sa_rule_{k}", width=330,
+                                help="Footprint clipped by the polygon's line (the default): every reading whose "
+                                     "strip (its width x its distance, ending at the logged point) overlaps the "
+                                     "polygon, with the area of the overlap only. Whole footprint inside: a reading "
+                                     "counts when its strip lies entirely in the polygon, as SMS's query. The "
+                                     "reading's point inside: when its point is in the polygon. After the cleaning a "
+                                     "reading is where the clean file has it (Optimize Swath Widths moves the strips "
+                                     "it narrows); without it, as logged.")
+            go = st.button("Measure", type="primary", icon=":material/calculate:", key=f"sa_go_{k}")
+        if go:
+            if not up and not (spath or "").strip():
+                st.toast("Upload a polygon file or type its path first", icon=":material/info:")
+            else:
+                try:
+                    path = small_area_files(C, ("upload", up) if up else ("path", spath))
+                    er.small_area_after_clean(R, path, rule, log=lambda m: None)
+                    SA = R.get("small_area")
+                    save_current(quiet=True)
+                except ValueError as e:
+                    st.error(str(e), icon=":material/error:")
+                except Exception as e:                       # shown, never swallowed
+                    st.exception(e)
+        if not SA:
+            return
+        st.markdown(f"**{html.escape(str(SA['file']))}** · {html.escape(SA['rule_text'])}")
+        rows = []
+        for p_ in SA["polygons"]:
+            for s_, lab in (("kept", "cleaned"), ("raw", "as imported")):
+                f_ = p_[s_]
+                rows.append({"polygon": str(p_["name"]), "readings": lab, "count": f_["readings"],
+                             "area (ac)": f_["area_ac"], "total dry bu": f_["total_dry_bu"],
+                             "dry yield (bu/ac)": f_["dry_yield_bu_ac"], "mean (bu/ac)": f_["mean_bu_ac"],
+                             "min": f_["min_bu_ac"], "max": f_["max_bu_ac"], "SD": f_["sd_bu_ac"],
+                             "moisture (%)": f_["moisture_mean_pct"],
+                             "removed by the cleaning": (", ".join(f"{a} {b}" for a, b in
+                                                                   (f_.get("removed_by_step") or {}).items()) or "0")
+                             if s_ == "raw" else ""})
+        num = {c: st.column_config.NumberColumn(format="%.3f" if c == "area (ac)" else "%.2f")
+               for c in ("area (ac)", "total dry bu", "dry yield (bu/ac)", "mean (bu/ac)", "min", "max", "SD",
+                         "moisture (%)")}
+        st.dataframe(pd.DataFrame(rows), hide_index=True, column_config=num, key=f"sa_table_{k}")
+        st.caption("Dry yield = total dry bu / area (area-weighted, as the SMS summary); mean = the plain mean of "
+                   "the readings. Cleaned: the readings the whole-field cleaning kept (Yld_Vol_Dr x Swath_Scl over "
+                   "Dist_Opt x Wdth_Opt, as the clean file); as imported: every reading of the field, no cleaning.")
+        Fs = SA.get("files") or {}
+        with st.container(horizontal=True):
+            for f_, lab, mime in ((Fs.get("csv"), "Small area table (.csv)", "text/csv"),
+                                  (Fs.get("zip"), "Small area points (.zip shapefile)", "application/zip")):
+                if f_ and os.path.exists(f_):
+                    with open(f_, "rb") as fh:
+                        st.download_button(lab, fh.read(), file_name=os.path.basename(f_), mime=mime,
+                                           icon=":material/download:", key=f"sa_dl_{k}_{lab[-5:]}")
+
+
 def result_numbers(tag: str, C: dict) -> dict | None:
     """The numbers of a cleaning that step 3 shows (the strip and the yield path): the clean file against the import
     it started from, the combine factor and the grower's data. None when the clean file has no value to show."""
@@ -6403,6 +6634,7 @@ def result_numbers(tag: str, C: dict) -> dict | None:
     X = {"A3": A3, "L": L, "CL": L.get("closure") or {}, "step": 2 if other else start_step(D),
          "start": cleaning_start_word(tag), "other": other, "FM": R.get("final_map") or {},
          "area": (float(a_[np.isfinite(a_)].sum()) or None) if a_ is not None else None}
+    X["cdf"], X["raw"] = cdf, raw
     if A3:
         col = R.get("main")
         unit = (R.get("units") or {}).get(col) if isinstance(R.get("units"), dict) else None
@@ -6414,7 +6646,9 @@ def result_numbers(tag: str, C: dict) -> dict | None:
     ycol = (R.get("columns") or {}).get("yield") or cc.get("yield")
     rcol = yc.detect_columns([c for c in raw.columns if c not in ("lon", "lat")]).get("yield")
     X.update(ycol=ycol, raw_m=None if other else _mean_of(raw, rcol), cl_m=_mean_of(cdf, ycol),
-             raw_a=None if other else avg_of(raw, rcol), cl_a=avg_of(cdf, ycol))
+             raw_a=None if other else avg_of(raw, rcol), cl_a=avg_of(cdf, ycol),
+             raw_t=None if other else total_bu_of(raw, rcol), cl_t=total_bu_of(cdf, ycol))
+    X["cdf"], X["raw"] = cdf, (None if other else raw)
     if X["cl_m"] is None:
         return None
     # the combine factor (several combines, when switched on and proven): Yld_Harm = the cleaned yield x the factor
@@ -6450,11 +6684,12 @@ def result_numbers(tag: str, C: dict) -> dict | None:
     return X
 
 
-def result_strip(tag: str, C: dict):
+def result_strip(tag: str, C: dict, map_key: str | None = None):
     """Step 3's strip after a cleaning (key res_cards): the readings kept, the area of the kept readings, the mean
     and the average dry yield of the clean file against the import it started from; the final yield when a
     correction was applied (the grower's weight with 'adjust', the combine factor) and the monitor against the
-    grower's weight when it was only compared."""
+    grower's weight when it was only compared; the total dry bushels. With another attribute chosen on the clean map
+    (map_key; default the step 3 map of C), the mean, average (and total, for a yield) of that attribute instead."""
     X = result_numbers(tag, C)
     if X is None:
         return
@@ -6484,6 +6719,13 @@ def result_strip(tag: str, C: dict):
 
     def vs(a, b, unit):
         return None if (a is None or b is None) else f"{a - b:+.2f} {unit} vs step {s}".replace("  ", " ")
+    # the boxes follow the attribute chosen on the clean map under them (its mean, average and, for a yield, total)
+    pick = chosen_attr(map_key or f"clean_{key_of(C['shp'])}", X["cdf"])
+    if pick and pick != (X["col"] if X["A3"] else X["ycol"]):
+        cards += attr_cards(X["cdf"], pick, base=X.get("raw"), base_word=f"vs step {s}", suffix=", cleaned",
+                            help_word="the kept readings")
+        card_row(cards, key="res_cards")
+        return
     if X["A3"]:
         col, unit = X["col"], X["unit"]
         cards.append({"label": f"Mean {col}, cleaned", "value": f"{X['cl_m']:,.2f} {unit}".strip(),
@@ -6494,6 +6736,10 @@ def result_strip(tag: str, C: dict):
             cards.append({"label": f"Average {col}, cleaned (SMS)", "value": f"{X['cl_a']:,.2f} {unit}".strip(),
                           "delta": vs(X["cl_a"], X["raw_a"], unit),
                           "help": "As the SMS summary: the area-weighted average, the total divided by the area."})
+        if is_yield_attr(X["cdf"], col):
+            cards += [c for c in attr_cards(X["cdf"], col, base=X.get("raw"), base_word=f"vs step {s}",
+                                            suffix=", cleaned", help_word="the kept readings")
+                      if c["label"].startswith("Total")]
         cards.append({"label": "Passes of " + str(R.get("main")), "value": f"{R.get('passes', 1)}",
                       "help": "The 3-sigma passes of the main attribute (another while its SD falls by more than "
                               "25 %)."})
@@ -6512,6 +6758,12 @@ def result_strip(tag: str, C: dict):
                               "area)." + (f" The cleaning record gives {float(FM['average_area_weighted']):,.2f} bu/ac."
                                           if FM.get("average_area_weighted") is not None and FM.get("column") == ycol
                                           else "")})
+    if X["cl_t"] is not None:
+        cards.append({"label": total_label(X["cdf"], ycol) + ", cleaned", "value": f"{X['cl_t']:,.1f} bu",
+                      "delta": vs(X["cl_t"], X["raw_t"], "bu"),
+                      "help": f"The total of {ycol} over the kept readings: sum of (yield x distance x width), the "
+                              "average x the area (as the SMS Summary's total), against the import the cleaning "
+                              f"started from (step {s})."})
     if X["adjusted"] or X["harm_on"]:
         fcol = X["fcol"]
         cards.append({"label": f"Final yield ({fcol})", "value": f"{X['fin_m']:,.2f} bu/ac",
@@ -7733,11 +7985,16 @@ def readings_help(V: dict, n: int) -> str:
     return h + " The rest is under Import details."
 
 
-def data_strip(V: dict, key: str, compare: dict | None = None) -> dict:
+def data_strip(V: dict, key: str, compare: dict | None = None, map_key: str | None = None) -> dict:
     """The strip of cards of a view (step 1: every card; step 2, compare = step 1's view: readings, area, mean and
-    average, each with its difference to step 1). Returns view_numbers(V)."""
+    average, each with its difference to step 1; the total bushels of a harvest). map_key: the explorer of the map
+    under the strip; with another attribute chosen there, the mean, average (and total, for a yield) of that
+    attribute instead of the yield's. Returns view_numbers(V)."""
     N = view_numbers(V)
     df, det, OPX = N["df"], N["det"], N["op"]
+    pick = chosen_attr(map_key, df)
+    if pick and pick == (det.get("yield") if V.get("yield", True) else (OPX["rates"][0] if OPX["rates"] else None)):
+        pick = None                                      # the default attribute: the cards below
     IM = _import_record_view(V)
     harvest = bool(V.get("yield", True))
     card_sum = bool((V.get("report") or {}).get("sms_summary"))
@@ -7759,6 +8016,10 @@ def data_strip(V: dict, key: str, compare: dict | None = None) -> dict:
                                                                                          "ac"),
                   "delta_description": "vs step 1", "help": "The strips the readings swept (distance x width), "
                                                             "added up."} if N["area"] > 0 else None]
+        if pick:
+            cards = [c for c in cards if c] + attr_cards(df, pick, base=C["df"], base_word="vs step 1")
+            card_row(cards, key)
+            return N
         if N["mean"] is not None:
             cards.append({"label": "Mean dry yield", "value": f"{N['mean']:,.2f} bu/ac",
                           "delta": d(N["mean"], C["mean"], ".2f", "bu/ac"), "delta_description": "vs step 1",
@@ -7767,6 +8028,13 @@ def data_strip(V: dict, key: str, compare: dict | None = None) -> dict:
             cards.append({"label": avg_label, "value": f"{N['avg']:,.2f} bu/ac",
                           "delta": d(N["avg"], C["avg"], ".2f", "bu/ac"), "delta_description": "vs step 1",
                           "help": avg_help})
+        if harvest and det.get("yield"):
+            t, t1 = total_bu_of(df, det["yield"]), total_bu_of(C["df"], (C["det"] or {}).get("yield"))
+            if t is not None:
+                cards.append({"label": total_label(df, det["yield"]), "value": f"{t:,.1f} bu",
+                              "delta": d(t, t1, ".1f", "bu"), "delta_description": "vs step 1",
+                              "help": f"The total of {det['yield']}: sum of (yield x distance x width) over the "
+                                      "readings (the average x the area)."})
         card_row(cards, key)
         return N
     op_lab = a3.OPERATION_LABEL.get(V.get("op") or "harvest", "Point data")
@@ -7779,12 +8047,19 @@ def data_strip(V: dict, key: str, compare: dict | None = None) -> dict:
                       "help": "The strips the readings swept (distance x width), added up."
                               + (f" Every decoded reading, before the import as SMS: {float(V['area_ac']):,.2f} ac."
                                  if V.get("area_ac") and abs(float(V["area_ac"]) - N["area"]) > 0.005 else "")})
-    if harvest:
+    if pick:
+        cards += attr_cards(df, pick)
+    elif harvest:
         if N["mean"] is not None:
             cards.append({"label": "Mean dry yield", "value": f"{N['mean']:,.2f} bu/ac",
                           "help": "The plain mean of the readings (as SMS Edit Legend)."})
         if N["avg"] is not None:
             cards.append({"label": avg_label, "value": f"{N['avg']:,.2f} bu/ac", "help": avg_help})
+        t = total_bu_of(df, det.get("yield"))
+        if t is not None:
+            cards.append({"label": total_label(df, det["yield"]), "value": f"{t:,.1f} bu",
+                          "help": f"The total of {det['yield']}: sum of (yield x distance x width) over the readings "
+                                  "(the average x the area)."})
     elif OPX["rates"]:
         r0 = OPX["rates"][0]
         rv = pd.to_numeric(df[r0], errors="coerce")
@@ -8398,13 +8673,16 @@ def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
         return pending
     # ---- the changed data: four cards against step 1 and its map, on step 1's colour scale
     V2 = active_view(D)
-    N2 = data_strip(V2, "strip_2", compare=V1)
+    slot2 = st.container()                   # the strip, drawn once it is known whether the map under it is open
+    N2 = view_numbers(V2)
     RS_a, RS_1 = IM.get("resolved") or {}, ((V1.get("sms_import") or {}).get("resolved") or {})
     if (V2.get("report") or {}).get("sms_summary") and any(
             not _same_value(RS_a.get(k), RS_1.get(k)) for k in ("test_weight_lb_bu", "dry_moisture_pct",
                                                                  "expand_dry_moisture")):
         sms_summary_line(V2.get("report"), D.get("sms_import"))
     if not N2["located"]:
+        with slot2:
+            data_strip(V2, "strip_2", compare=V1)
         st.warning("Your settings leave no reading with a position: change them and Apply again, or switch back to "
                    "SMS's default.", icon=":material/warning:")
         return pending
@@ -8414,6 +8692,8 @@ def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
             explorer(D["shp"], key=f"imp_{key_of(D['shp'])}", default=ss.get(f"attr_raw_{key_of(V1['shp'])}"),
                      scale_of=V1["shp"], outline=outline, height=440, extras=False,
                      data=f"{kind_word(import_kind(tag, D))} (step 2)")
+    with slot2:                                 # the boxes follow the attribute of the map while it is drawn
+        data_strip(V2, "strip_2", compare=V1, map_key=f"imp_{key_of(D['shp'])}" if mb2.open else None)
     import_details_box(V2)
     explorer_extras(D["shp"])
     return pending
@@ -8928,7 +9208,8 @@ with st.container(border=True, key="oced_step_1"):
     IM1 = V1.get("sms_import") or {}
     if IM1 and V1.get("yield", True) and unknown_point_product(IM1):
         st.warning(UNKNOWN_POINT_PRODUCT, icon=":material/warning:")
-    N1 = data_strip(V1, "strip_1")
+    slot1 = st.container()                   # the strip, drawn once it is known whether the map under it is open
+    N1 = view_numbers(V1)
     if IM1.get("crops_note"):
         st.warning(IM1["crops_note"][0].upper() + IM1["crops_note"][1:] + ".", icon=":material/warning:")
     sms_summary_line(V1.get("report"), V1.get("sms_import"))
@@ -8949,6 +9230,8 @@ with st.container(border=True, key="oced_step_1"):
                 explorer(V1["shp"], key=f"raw_{key_of(V1['shp'])}", default=dflt_attr,
                          outline=B_["outline"] if B_ else None, height=520, extras=False,
                          data=f"{kind_word(kind1)} (step 1)")
+    with slot1:                                 # the boxes follow the attribute of the map while it is drawn
+        data_strip(V1, "strip_1", map_key=(f"raw_{key_of(V1['shp'])}" if N1["located"] and mb1.open else None))
     # the details, one compact line each: the header width as logged, the import record, the decoder's report, the
     # attributes, the first records, the extracted points
     if V1.get("yield", True):
@@ -9397,6 +9680,9 @@ with st.container(border=True, key="oced_step_3"):
     todo = [ss.active] if one else (list(DS) if many else [])
     if not todo and ss.pop("reprocess", None) == ss.active:          # the replay's marks, or 'Remove all edits'
         todo = [ss.active]
+    before = ss.pop("edits_before", None)                            # the edits file before the replay's marks
+    if before and before.get("tag") not in todo:
+        before = None
     # every file's SMS default brought up to date first, as step 1 does for the file on screen (a raw file of an
     # earlier version decoded again from its raw data, a default whose file changed made again; the same rules set a
     # cleaning aside), so that no file is cleaned on an older import and that cleaning then set aside
@@ -9405,7 +9691,7 @@ with st.container(border=True, key="oced_step_3"):
         if default_needs_build(t):
             with st.spinner(f"Preparing SMS's default import of {t} ..."):
                 pre_notes[t] = ensure_default(t)
-    done = []
+    done, failed, locked = [], {}, {}
     for t in todo:
         with st.status(f"SMS 3-sigma on {t}" + (" with the edits by hand" if edits_of(t) else "") + " ...",
                        expanded=True) as status:
@@ -9427,19 +9713,54 @@ with st.container(border=True, key="oced_step_3"):
                 status.update(label=lab_, state="complete", expanded=False)
                 done.append({"label": lab_, "log": lines_[-400:]})
             except FileInUse as e:                                   # a file to close, or another tab: one line
-                status.update(label=f"{t}: not cleaned", state="error")
+                status.update(label=f"{t}: not cleaned", state="error", expanded=True)
                 st.error(str(e), icon=":material/lock:")
+                locked[t] = str(e)
             except ValueError as e:                                  # a plain reason (settings, a field too large)
-                status.update(label=f"{t}: not cleaned", state="error")
+                status.update(label=f"{t}: not cleaned", state="error", expanded=True)
+                failed[t] = str(e)
                 if raised_by_oced(e):
                     st.error(f"{t}: {e}", icon=":material/error:")
                 else:                                                # numpy / pandas ...: a defect, with its trace
                     st.exception(e)
             except Exception as e:                                   # shown, never swallowed
-                status.update(label=f"{t}: the cleaning failed", state="error")
+                status.update(label=f"{t}: the cleaning failed", state="error", expanded=True)
                 st.exception(e)
+                failed[t] = f"{type(e).__name__}: {e}"
     if todo and any(t in ss.cleaned for t in todo):
         save_current(quiet=True)
+    for t in todo:
+        if t not in failed and t not in locked:      # cleaned
+            continue
+        if before and before["tag"] == t:
+            ss.pop("edits_msg", None)                # nothing was cleaned with the marks: no 'Edits by hand' success
+            if files_stamp(before["files"]) == before["stamp"]:
+                # the files of the cleaning shown did not change: the edits file as it was before the marks, so the
+                # two agree again and the next cleaning is not stopped by the same marks; the page again, so the
+                # edits box above says what is there now and the player is loaded again
+                restore_edits(t, before["bytes"])
+                was = ("none: the automatic cleaning" if before["bytes"] is None
+                       else "the edits of the cleaning shown")
+                if t in locked:
+                    ss["edits_back"] = (f"{t}: the marks of the replay were not applied, since nothing could be "
+                                        f"cleaned: {locked[t].rstrip('. ')}. The edits by hand are as they were before "
+                                        f"them ({was}); mark the readings again once the file is closed.")
+                else:
+                    ka, mk = before.get("kept_after"), before.get("min_kept")
+                    low = isinstance(ka, int) and isinstance(mk, int) and ka < mk
+                    ss["edits_back"] = (f"{t}: the cleaning with the marks of the replay stopped: "
+                                        f"{failed[t].rstrip('. ')}."
+                                        + (f" The marks left about {ka:,} reading(s) kept and a clean file needs at "
+                                           f"least {mk:,}." if low and "needs at least" not in failed[t] else "")
+                                        + f" The marks were not kept: the edits by hand are back as they were before "
+                                          f"them ({was}), and the cleaning shown did not change.")
+                st.rerun()
+            st.warning(f"{t}: the cleaning with the marks of the replay stopped after it had written files, so the "
+                       "edits by hand of the marks are kept: clean the file again, or 'Remove all edits' (above) for "
+                       "the automatic cleaning.", icon=":material/warning:")
+        elif t in failed and edits_of(t) and not edits_of(t).get("error"):
+            st.info(f"{t} has edits by hand: if they are why the cleaning stopped, 'Remove all edits' (above) gives "
+                    "the automatic cleaning.", icon=":material/edit:")
     if todo and len(done) == len(todo):
         # every file cleaned: the page again, its settings folded into one line, the status of each file under Clean
         ss["clean_status"] = done
@@ -9449,6 +9770,8 @@ with st.container(border=True, key="oced_step_3"):
             st.text("\n".join(s_["log"]) or " ")
     if ss.get("edits_msg"):
         st.success(ss.pop("edits_msg"), icon=":material/edit:")
+    if ss.get("edits_back"):                         # the replay's marks stopped the cleaning (restore_edits)
+        st.warning(ss.pop("edits_back"), icon=":material/undo:")
     if seam_box is not None:
         with seam_box:
             seams_panel(ss.cleaned.get(ss.active))
@@ -9484,9 +9807,16 @@ with st.container(border=True, key="oced_step_3"):
                  data="clean (step 3)")
         if edits_line(R):
             st.caption(f"The clean map includes the edits by hand ({me.title_label(R).lower()}).")
+        if not A3:                                       # the small area cut after the cleaning
+            small_area_box(C)
         if not A3:                                       # the harvest replay of the cleaning (replay_view.py)
             def _on_edits(K, _t=ss.active):
-                """The player's marks as reading keys: the edits file written, the file cleaned again."""
+                """The player's marks as reading keys: the edits file written, the file cleaned again (the edits file
+                as it was is kept: a cleaning that stops with the new marks puts it back)."""
+                C_ = ss.cleaned.get(_t) or {}
+                shown = [C_.get("flagged_shp"), C_.get("shp")]
+                ss["edits_before"] = {"tag": _t, "bytes": edits_bytes(_t), "kept_after": K.get("kept_after"),
+                                      "min_kept": K.get("min_kept"), "files": shown, "stamp": files_stamp(shown)}
                 W_ = apply_marks(_t, K)
                 ref = W_["refused"]
                 ss["edits_msg"] = (("Edits by hand: " + f"{W_['n_remove']:,} removed and {W_['n_keep']:,} kept by hand"

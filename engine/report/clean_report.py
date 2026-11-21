@@ -1764,6 +1764,9 @@ def make_report(result: dict, path: str) -> str:
         num += 1
     if R.get("manual_edits"):                   # readings removed or kept by hand (engine/clean/manual_edits.py)
         num = yield_clean.manual_mod.report_section(story, R, num)
+    if R.get("small_area"):                     # the small area cut after the cleaning (engine/clean/small_area.py)
+        from engine.clean import small_area as _sa
+        num = _sa.report_section(story, R, num)
 
     # ---- settings and columns (filter parameters and column mapping side by side, general settings below)
     S = R.get("settings")

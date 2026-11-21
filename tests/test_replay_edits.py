@@ -329,3 +329,208 @@ def test_app_marks_of_an_older_version_of_the_cleaning_apply_nothing(tmp_path, m
     _open(at, keys)
     assert any("another version of this cleaning" in e.value for e in at.error)
     assert not os.path.exists(os.path.join(at.session_state["workdir"], "edits"))
+
+
+# ------------------------------------------------------------------------------------------------ marks that stop it
+def _version(at):
+    """The version the two-way player was mounted with (its html's hash and the tries of the marks)."""
+    for e in at.get("bidi_component"):
+        if "oced_replay_player" in str(getattr(e.proto, "component_name", "")):
+            return json.loads(e.proto.json)["v"]
+    return None
+
+
+def test_the_marks_say_how_many_readings_they_leave(auto):
+    """edit_keys counts the readings the marks leave kept (before the limits move) and gives the minimum of a clean
+    file; the payload gives the player the same minimum and the kept readings it does not hold; the player's page has
+    the count and the warning below the minimum."""
+    P, F = auto["P"], auto["F"]
+    E = P["edit"]
+    assert E["min_kept"] == yc.MIN_KEPT == 30 and E["kept_outside"] == 0
+    kept = F["Keep"].astype(int) == 1
+    allk = _where(P, F, lambda r: r["Rem_By"] == "", 10 ** 6)
+    assert len(allk) == int(kept.sum())
+    K = rp.edit_keys(P, {"token": E["token"], "remove": allk[1:], "keep": []}, auto["flagged"])
+    rows_rm = F["key"].isin(K["remove"])
+    assert K["min_kept"] == 30 and K["kept_after"] == int((kept & ~rows_rm).sum())
+    if F["key"].is_unique:
+        assert K["kept_after"] == 1
+    kp = _where(P, F, lambda r: r["Rem_By"][:2] in ("S3", "S4", "S5"), 3)
+    K2 = rp.edit_keys(P, {"token": E["token"], "remove": allk[:5], "keep": kp}, auto["flagged"])
+    rows_rm2, rows_kp2 = F["key"].isin(K2["remove"]), F["key"].isin(K2["keep"])
+    assert K2["kept_after"] == int(((kept & ~rows_rm2) | rows_kp2).sum())
+    h = rp.replay_html(P)
+    assert "function keptAfter()" in h and 'id="e-low"' in h and '"min_kept":30' in h.replace(" ", "")
+
+
+def test_app_marks_that_stop_the_cleaning_leave_the_edits_as_they_were(tmp_path, monkeypatch):
+    """Marks that leave fewer readings than a clean file needs: the cleaning stops, the edits file is put back as it
+    was before them (none at first; then 5 removed by hand, byte for byte), the files of the cleaning shown do not
+    change, the page says why (and shows no 'Edits by hand: ...' success), and the player is loaded again (its version
+    moves although the flagged file is the same), so it does not stay on 'Reprocessing in the app ...'."""
+    import replay_view
+    two = make_two_at_once(str(tmp_path / "data"), n_pass=6)
+    at = _app(tmp_path / "ws", monkeypatch)
+    at.text_input(key="path_in").input(two["shp"])
+    at.button(key="open_btn").click().run()
+    at.button(key="clean_one").click().run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    tag, wd = at.session_state["active"], at.session_state["workdir"]
+    ep = os.path.join(wd, "edits", tag, f"{tag}_manual_edits.json")
+    keys = [k for k in at.session_state.filtered_state if str(k).startswith("replay_box_")]
+    ckey = next(k for k in keys if k.startswith("replay_box_clean_"))[len("replay_box_"):]
+
+    def state():
+        C = at.session_state["cleaned"][tag]
+        fl = C["flagged_shp"]
+        P = rp.replay_payload(fl, kind="clean", record=C["R"], edit=True, max_bytes=rp.EDIT_MAX_BYTES)
+        F = pyogrio.read_dataframe(fl, read_geometry=False)
+        F["Rem_By"] = F["Rem_By"].fillna("").astype(str)
+        md5 = {p: _md5(p) for p in sorted(glob.glob(os.path.splitext(fl)[0] + ".*"))
+               + sorted(glob.glob(os.path.splitext(C["shp"])[0] + ".*")) if p.endswith((".shp", ".dbf", ".shx"))}
+        return C, P, F, md5
+
+    def send(P, remove, keep=()):
+        at.session_state[replay_view.marks_key(ckey)] = {"token": P["edit"]["token"], "remove": list(remove),
+                                                         "keep": list(keep), "changed": len(remove) + len(keep)}
+        _open(at, keys)
+
+    # 1. no edits yet: every kept reading but one removed
+    _open(at, keys)
+    v0 = _version(at)
+    C0, P0, F0, md5_0 = state()
+    kept0 = _where(P0, F0, lambda r: r["Rem_By"] == "", 10 ** 6)
+    assert len(kept0) > 60
+    send(P0, kept0[1:])
+    assert not at.exception, at.exception
+    assert not os.path.exists(ep)                                          # put back: no edits file, as before
+    W = [w.value for w in at.warning if "the cleaning with the marks of the replay stopped" in w.value]
+    assert len(W) == 1 and "needs at least 30" in W[0] and "none: the automatic cleaning" in W[0], W
+    assert "leave at least 30 readings kept" in W[0] and "check that filter's thresholds" not in W[0], W
+    assert not any(s.value.startswith("Edits by hand:") for s in at.success)
+    assert "edits_remove" not in [b.key for b in at.button]                 # no edits box: nothing in place
+    assert at.session_state["cleaned"][tag]["flagged_shp"] == C0["flagged_shp"]
+    assert {p: _md5(p) for p in md5_0} == md5_0                             # the cleaning shown did not change
+    _open(at, keys)
+    v1 = _version(at)
+    assert v1 and v0 and v1 != v0 and v1.split(":")[0] == v0.split(":")[0]  # same files, the player loaded again
+    # 2. five readings removed by hand (a cleaning made with them), then marks that leave too few
+    send(P0, kept0[:5])
+    assert not at.exception and os.path.exists(ep)
+    before = open(ep, "rb").read()
+    assert len(me.read_edits(ep)["remove"]) == 5
+    _open(at, keys)
+    C1, P1, F1, md5_1 = state()
+    assert C1["R"]["manual_edits"]["remove"]["readings_applied"] == 5
+    base = _where(P1, F1, lambda r: r["Rem_By"] == "SM", 10 ** 6)          # the marks the player starts with
+    kept1 = _where(P1, F1, lambda r: r["Rem_By"] == "", 10 ** 6)
+    assert len(base) == 5
+    send(P1, base + kept1[1:])
+    assert not at.exception, at.exception
+    assert open(ep, "rb").read() == before                                 # the 5 edits, byte for byte
+    W = [w.value for w in at.warning if "the cleaning with the marks of the replay stopped" in w.value]
+    assert len(W) == 1 and "the edits of the cleaning shown" in W[0], W
+    assert any(str(i.value).startswith("Edits by hand for this file: 5 reading(s) removed") for i in at.info)
+    assert {p: _md5(p) for p in md5_1} == md5_1
+    # 3. the next cleaning is not stopped by the marks: it gives the cleaning with the 5 edits again
+    at.button(key="clean_one").click().run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    assert at.session_state["cleaned"][tag]["R"]["manual_edits"]["remove"]["readings_applied"] == 5
+    assert {p: _md5(p) for p in md5_1} == md5_1
+
+
+def _start(tmp_path, monkeypatch):
+    two = make_two_at_once(str(tmp_path / "data"), n_pass=6)
+    at = _app(tmp_path / "ws", monkeypatch)
+    at.text_input(key="path_in").input(two["shp"])
+    at.button(key="open_btn").click().run()
+    at.button(key="clean_one").click().run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+    tag, wd = at.session_state["active"], at.session_state["workdir"]
+    keys = [k for k in at.session_state.filtered_state if str(k).startswith("replay_box_")]
+    ckey = next(k for k in keys if k.startswith("replay_box_clean_"))[len("replay_box_"):]
+    _open(at, keys)
+    C = at.session_state["cleaned"][tag]
+    P = rp.replay_payload(C["flagged_shp"], kind="clean", record=C["R"], edit=True, max_bytes=rp.EDIT_MAX_BYTES)
+    F = pyogrio.read_dataframe(C["flagged_shp"], read_geometry=False)
+    F["Rem_By"] = F["Rem_By"].fillna("").astype(str)
+    return {"at": at, "tag": tag, "keys": keys, "ckey": ckey, "C": C, "P": P, "F": F,
+            "ep": os.path.join(wd, "edits", tag, f"{tag}_manual_edits.json")}
+
+
+def _send_marks(S, remove):
+    import replay_view
+    S["at"].session_state[replay_view.marks_key(S["ckey"])] = {"token": S["P"]["edit"]["token"],
+                                                               "remove": list(remove), "keep": [],
+                                                               "changed": len(remove)}
+    _open(S["at"], S["keys"])
+
+
+def test_app_marks_sent_while_a_file_is_open_elsewhere_apply_nothing(tmp_path, monkeypatch):
+    """A clean file held open by another program: nothing is cleaned, so the marks are not applied either (no
+    'Edits by hand' success, no edits file left behind); after the file is closed the file cleans as before."""
+    S = _start(tmp_path, monkeypatch)
+    at = S["at"]
+    kept = _where(S["P"], S["F"], lambda r: r["Rem_By"] == "", 10 ** 6)
+    fh = open(S["C"]["shp"], "rb")                     # Windows refuses the check's rename while it is open
+    try:
+        _send_marks(S, kept[1:])
+    finally:
+        fh.close()
+    assert not at.exception, at.exception
+    W = [w.value for w in at.warning if "were not applied, since nothing could be cleaned" in w.value]
+    assert len(W) == 1 and "mark the readings again once the file is closed" in W[0], [w.value for w in at.warning]
+    assert not any(s.value.startswith("Edits by hand:") for s in at.success)
+    assert not os.path.exists(S["ep"])
+    at.button(key="clean_one").click().run()
+    assert not at.exception and not at.error, [e.value for e in at.error]
+
+
+def test_app_a_cleaning_that_fails_after_writing_its_files_keeps_the_marks(tmp_path, monkeypatch):
+    """A failure after the engine wrote the files (an OSError while handing them out): the files shown hold the marks'
+    cleaning, so the edits file of the marks is kept (they agree) and the page says to clean again."""
+    from engine import run as er
+    S = _start(tmp_path, monkeypatch)
+    at = S["at"]
+    real = er.clean
+
+    def boom(*a, **k):
+        real(*a, **k)
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(er, "clean", boom)
+    import replay_view
+    at.session_state[replay_view.marks_key(S["ckey"])] = {"token": S["P"]["edit"]["token"], "keep": [], "changed": 5,
+                                                          "remove": _where(S["P"], S["F"],
+                                                                           lambda r: r["Rem_By"] == "", 5)}
+    for k in S["keys"]:
+        at.session_state[k] = True
+    at.run()
+    monkeypatch.setattr(er, "clean", real)
+    # the app shows an unexpected error with its trace (st.exception), by design: only that one
+    assert [e.value for e in at.exception] and all("No space left on device" in e.value for e in at.exception)
+    assert any("stopped after it had written files" in w.value for w in at.warning), [w.value for w in at.warning]
+    assert not any(s.value.startswith("Edits by hand:") for s in at.success)
+    assert len(me.read_edits(S["ep"])["remove"]) == 5
+    G = pyogrio.read_dataframe(S["C"]["flagged_shp"], read_geometry=False)
+    assert int((G["Man_Edit"] == "R").sum()) == 5
+
+
+def test_app_a_refusal_that_is_not_the_marks_is_said_as_it_is(tmp_path, monkeypatch):
+    """A refusal before any file is written that has nothing to do with the marks: the edits file goes back as it was
+    (the cleaning shown did not change), and the message gives the engine's reason without blaming the marks."""
+    from engine import run as er
+    S = _start(tmp_path, monkeypatch)
+    at = S["at"]
+    md5 = {p: _md5(p) for p in sorted(glob.glob(os.path.splitext(S["C"]["flagged_shp"])[0] + ".*"))
+           if p.endswith((".shp", ".dbf", ".shx"))}
+
+    def refuse(*a, **k):
+        raise ValueError("synthetic: a setting the engine refuses")
+    real = er.clean
+    monkeypatch.setattr(er, "clean", refuse)
+    _send_marks(S, _where(S["P"], S["F"], lambda r: r["Rem_By"] == "", 5))
+    monkeypatch.setattr(er, "clean", real)
+    assert not at.exception, at.exception
+    W = [w.value for w in at.warning if "the cleaning with the marks of the replay stopped" in w.value]
+    assert len(W) == 1 and "synthetic: a setting the engine refuses" in W[0] and "needs at least" not in W[0], W
+    assert not os.path.exists(S["ep"]) and {p: _md5(p) for p in md5} == md5

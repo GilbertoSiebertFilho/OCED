@@ -278,6 +278,8 @@ canvas.zchart { width: 100%; height: 92px; display: block; margin: 2px 0 6px; }
 .sym { display: inline-flex; vertical-align: -2px; margin-right: 4px; }
 .ehelp { font-size: 11.5px; color: var(--muted); line-height: 1.38; margin: 0 2px 8px; }
 .erow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.ewarn { font-size: 11.5px; line-height: 1.38; margin: 6px 2px 6px; padding: 6px 8px; border-radius: 8px;
+  background: #FFF4E5; color: #8A4B00; border: 1px solid #F5C27A; }
 .erow .btn, .rp-boxmenu .btn { height: 32px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
 .erow .btn svg { width: 15px; height: 15px; }
 .btn.on { background: #EAF6FD; border-color: var(--blue); }
@@ -2181,6 +2183,25 @@ function reprocess() {
   try { window.parent.postMessage(m, "*"); } catch (e) { E.sent = false; toast("The marks could not be sent to the app"); }
   buildEditPanel();
 }
+const SHARED = (ED && ED.shared) || [];  // readings that share a key with other records: the engine edits them together
+const GRP = new Map();
+SHARED.forEach((g, gi) => g.m.forEach(([num, i]) => GRP.set(num * 1e7 + i, gi)));
+function keptAfter() {                 // the readings kept with these marks, before the 3-sigma limits move (an estimate)
+  let n = (ED && ED.kept_outside) || 0;
+  const gv = SHARED.map(() => 0);        // a key marked remove on any of its readings: all out; else keep: all in
+  if (SHARED.length) MK.forEach((v, k) => { const gi = GRP.get(k); if (gi !== undefined && gv[gi] !== 1) gv[gi] = v; });
+  SHARED.forEach((g, gi) => { n += gv[gi] === 1 ? 0 : (gv[gi] === 2 ? g.hn : g.hk); });
+  for (const c of C) for (let i = 0; i < c.n; i++) {
+    const k = keyOf(c, i), gi = SHARED.length ? GRP.get(k) : undefined;
+    const v = gi !== undefined ? gv[gi] : (MK.get(k) || 0);
+    if (v === 1) continue;
+    if (v === 2) { n++; continue; }
+    const st = c.e ? (c.e[i] & 3) : 0;
+    if (st === 1 || st === 2) { if (!autoOf(c, i)) n++; continue; }   // an edit of this cleaning cleared: its automatic fate
+    if (!(c.f[i] & 2)) n++;
+  }
+  return n;
+}
 function countsBy() {
   const by = {}; C.forEach((c) => { by[c.num] = [0, 0]; });
   MK.forEach((v, k) => { const num = Math.floor(k / 1e7); if (by[num]) by[num][v - 1]++; });
@@ -2192,14 +2213,16 @@ function buildEditPanel() {
   const by = countsBy(); let tr = 0, tk = 0;
   const rows = C.map((c) => { tr += by[c.num][0]; tk += by[c.num][1];
     return `<tr><td><span class="num" style="background:${c.color}">${c.num}</span> ${esc(c.name)}</td><td>${fmt(by[c.num][0], 0)}</td><td>${fmt(by[c.num][1], 0)}</td></tr>`; }).join("");
-  const ch = changed();
+  const ch = changed(), mk = (ED && ED.min_kept) || 0, ka = mk ? keptAfter() : null;
+  const low = !!(mk && ch && ka < mk);
   el.innerHTML = `<div class="ph"><span>Edit points</span><button class="linkbtn" id="e-x" title="Leave Edit points">Done</button></div>
     <div class="ehelp">Click a <b>kept</b> reading to remove it, a reading the <b>moisture, speed or yield</b> filter removed to keep it; click a mark to clear it. <b>Shift + drag</b> (or Box) marks many. The import range, the clip and the swath step cannot be changed by hand.</div>
     <div class="erow"><button class="btn${E.box ? " on" : ""}" id="e-box" title="Draw a box (a touch screen: the next drag)" aria-pressed="${E.box}">${I.box} Box</button>
       <button class="btn" id="e-undo" title="Undo (Ctrl+Z)"${HIST.length ? "" : " disabled"}>${I.undo} Undo</button>
       <button class="btn" id="e-clear" title="Clear every mark (the next reprocess then gives the automatic cleaning)"${MK.size ? "" : " disabled"}>Clear marks</button></div>
     <button class="btn primary" id="e-go"${(ch && !E.sent) ? "" : " disabled"}>${E.sent ? "Reprocessing in the app ..." : "Reprocess with these edits"}</button>
-    <div class="small" style="margin-bottom:6px">${ch ? `${fmt(ch, 0)} mark(s) differ from this cleaning.` : (MK.size ? "These marks are the edits of this cleaning." : "No mark yet.")}</div>
+    <div class="small" style="margin-bottom:6px">${ch ? `${fmt(ch, 0)} mark(s) differ from this cleaning.` : (MK.size ? "These marks are the edits of this cleaning." : "No mark yet.")}${ch && ka !== null && !low ? ` About ${fmt(ka, 0)} reading(s) stay kept.` : ""}</div>
+    ${low ? `<div class="ewarn" id="e-low">These marks leave about ${fmt(ka, 0)} reading(s) kept, and a clean file needs at least ${fmt(mk, 0)}: the cleaning will most likely stop and keep the edits it has now. Clear some marks, or reprocess to try (the limits are computed again with the edits, so a few readings can come back or go).</div>` : ""}
     <table class="etab"><thead><tr><th>Combine</th><th><span class="sym">${SYM.rm}</span>Remove</th><th><span class="sym">${SYM.kp}</span>Keep</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><td>All</td><td>${fmt(tr, 0)}</td><td>${fmt(tk, 0)}</td></tr></tfoot></table>
     ${MAN && MAN.summary ? `<div class="small" style="margin-top:6px">This cleaning: ${esc(manLine())}</div>` : ""}`;

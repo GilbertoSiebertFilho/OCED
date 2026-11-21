@@ -170,7 +170,7 @@ def test_own_settings_leave_step_1_as_it_was(field, tmp_path, monkeypatch):
     r2 = _last_metric(at, "Readings")
     assert r2.proto.delta_description == "vs step 1" and r2.value == f"{D['n']:,}" and D["n"] < int(n1.replace(",", ""))
     assert {m.label for m in at.metric if m.proto.delta_description == "vs step 1"} == {
-        "Readings", "Area harvested", "Mean dry yield", "Average dry yield (SMS)"}
+        "Readings", "Area harvested", "Mean dry yield", "Average dry yield (SMS)", "Total dry bu"}   # 0.3.6: the total
     assert any(b.startswith("Your settings") and "Max. yield volume" in b for b in _badge_lines(at))
     assert by_key(at.button_group, "attr_imp_") is not None and by_key(at.button_group, "attr_raw_") is not None
     assert next(e for e in at.expander if e.label == "Edit the settings").proto.expanded is False
@@ -638,7 +638,7 @@ def test_step_3_names_the_import_it_starts_from_and_the_dialog_keeps_the_switch_
     T = next(d.value for d in at.dataframe if "mean after" in d.value.columns)
     assert T["step"].iloc[0] == "your settings (step 2)"
     n2 = len(_vs(at, 1))
-    assert n2 == 4
+    assert n2 == 5                                       # 0.3.6: the total in bushels too
     switch(at).set_value(True).run()
     assert not at.exception, at.exception
     assert by_key(at.button, "fi_backgo_") is not None and switch(at).value is False and len(_vs(at, 1)) == n2
@@ -2467,3 +2467,31 @@ def test_long_values_wrap_instead_of_being_cut(field, tmp_path, monkeypatch):
     stats = next(d for d in at.dataframe if "statistic" in d.value.columns)
     cfg = json.loads(stats.proto.columns)
     assert cfg["statistic"]["width"] + cfg["value"]["width"] <= 310
+
+
+def test_step_2_boxes_follow_the_attribute_of_its_map(field, tmp_path, monkeypatch):
+    """0.3.6: with own import settings, step 2's boxes follow the attribute chosen on step 2's map (moisture: its mean
+    and area-weighted average in %, no total) and come back to the yield and the total; step 1's boxes stay on yield."""
+    import numpy as np
+    at = _app(tmp_path / "ws", monkeypatch)
+    _open(at, field["shp"])
+    _apply_import(at, max=150.0)
+    D = _D(at)
+    k2 = next(k for k in at.session_state.filtered_state if str(k).startswith("attr_imp_"))
+    at.session_state[k2] = "Moisture__"
+    at.run()
+    assert not at.exception, at.exception
+    df = pyogrio.read_dataframe(D["shp"], read_geometry=False)
+    v = df["Moisture__"].astype(float).to_numpy()
+    a = (df["Distance_f"].astype(float) * df["Swth_Wdth_"].astype(float)).to_numpy() / 43560.0
+    ok = np.isfinite(v) & np.isfinite(a) & (a > 0)
+    mm, ma = float(np.nanmean(v)), float((v[ok] * a[ok]).sum() / a[ok].sum())
+    assert [m.value for m in at.metric if m.label == "Mean moisture"] == [f"{mm:,.2f} %"]
+    assert [m.value for m in at.metric if m.label == "Average moisture, area-weighted"] == [f"{ma:,.2f} %"]
+    assert [m.label for m in at.metric].count("Total dry bu") == 1              # step 1's only
+    assert [m.label for m in at.metric].count("Mean dry yield") == 1
+    at.session_state[k2] = "Yld_Vol_Dr"
+    at.run()
+    assert not at.exception, at.exception
+    assert [m.label for m in at.metric].count("Total dry bu") == 2
+    assert not [m for m in at.metric if m.label == "Mean moisture"]

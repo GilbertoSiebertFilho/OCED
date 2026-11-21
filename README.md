@@ -5,9 +5,26 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.5** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.6** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.6:* a small area cut after the cleaning, the total in bushels, and boxes that follow the attribute
+on the map. Step 3 has *Small area (cut after the cleaning)* under the clean map (command line: `--small-area FILE
+[--edge-rule clip|full|point]`; engine/clean/small_area.py): a polygon file (zip / shp / geojson / gpkg / kml / kmz,
+one or several polygons, each named by its name column or numbered) and an edge rule, *footprint clipped by the
+polygon's line (area-weighted)* (default: every reading whose strip, its width x its distance ending at the logged
+point, overlaps the polygon counts with the area of the overlap only), *whole footprint inside (as SMS's query)*, or
+*the reading's point inside*. A kept reading is placed where the clean file has it (Optimize Swath Widths moves a
+strip it narrows to the middle of what it kept); the figures without the cleaning use the readings as logged. The 3-sigma
+limits stay those of the whole field: per polygon, the readings the cleaning kept (the clean file's yield and area)
+give the readings, acres, total dry bu, area-weighted dry yield, plain mean, min, max, SD and moisture, beside the
+same figures without the cleaning and the readings of the polygon each step removed; a table, a CSV, a point
+shapefile of the kept readings that count, a line in the cleaning record and a section in the report. The clean,
+flagged and DIFM files are not changed. (The field of interest of step 1 still cuts before the cleaning.) The boxes
+above the maps of steps 1, 2 and 3 now show the total dry bushels (yield x area of the readings shown), and when
+another attribute is chosen on the map (moisture, speed ...) they show that attribute's mean and area-weighted
+average with its unit (the total only for a yield).
 
 *Changes in 0.3.5:* read tasks of more than one crop as one crop. When the tasks or logs chosen for a field and season
 were logged with more than one crop label (a calibration load logged under another crop, a short log labelled with

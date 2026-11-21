@@ -145,11 +145,24 @@ def _sent_marks(res, key: str):
     return v if v else held
 
 
+def tries_key(key: str) -> str:
+    """Session state: how many times the player of key sent its marks. It is part of the player's version, so the
+    frame is loaded again after every reprocess, also one that stopped and left the same files (the player would
+    otherwise stay on 'Reprocessing in the app ...')."""
+    return f"replay_tries_{key}"
+
+
+def msg_key(key: str) -> str:
+    """Session state: why the last marks of the player of key were not applied, shown above the replay in the next
+    run (the run that refused them is cut short to load the player again)."""
+    return f"replay_marks_msg_{key}"
+
+
 def mount_two_way(html: str, key: str):
     """The player in the two-way component; returns the marks it sent in this run (or None)."""
     import hashlib as _h
-    res = _player()(key=f"replay_cc_{key}", data={"html": html, "h": HEIGHT, "v": _h.sha1(html.encode()).hexdigest()},
-                    on_marks_change=lambda: None)
+    v = _h.sha1(html.encode()).hexdigest() + f":{int(st.session_state.get(tries_key(key)) or 0)}"
+    res = _player()(key=f"replay_cc_{key}", data={"html": html, "h": HEIGHT, "v": v}, on_marks_change=lambda: None)
     return _sent_marks(res, key)
 
 
@@ -394,6 +407,9 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
     its marks (it writes the edits file and cleans again)."""
     if not path or not os.path.exists(path):
         return
+    refused = st.session_state.pop(msg_key(key), None)
+    if refused:                                          # outside the folded section: seen even when it is closed
+        st.error(refused, icon=":material/error:")
     box = st.expander(label, expanded=False, key=f"replay_box_{key}", icon=":material/play_circle:",
                       on_change="rerun")
     with box:
@@ -445,10 +461,14 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
         if edit:
             sent = mount_two_way(html_of(*args, True, zone, rec, edit, True), key)
             if sent:
+                # every reprocess loads the player again (its version counts the tries): after a cleaning that stopped
+                # the files are the same, and the frame would keep showing 'Reprocessing in the app ...'
+                st.session_state[tries_key(key)] = int(st.session_state.get(tries_key(key)) or 0) + 1
                 try:
                     K = rp.edit_keys(P, sent, path)
                 except ValueError as e:
-                    st.error(f"The marks were not applied: {e}", icon=":material/error:")
+                    st.session_state[msg_key(key)] = f"The marks were not applied: {e}"
+                    st.rerun()
                 else:
                     on_edits(K)
         else:

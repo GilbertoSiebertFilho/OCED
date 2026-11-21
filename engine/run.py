@@ -92,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.5"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.3.6"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -817,6 +817,38 @@ def clean(shp: str, out_dir: str, settings: dict | None = None, log=print, sourc
     for a in R["advice"]:
         log("CHECK: " + a)
     return R
+
+
+def small_area_after_clean(R: dict, polygons_path: str, rule: str = "clip", log=print) -> dict:
+    """The small area cut AFTER the whole-field cleaning (engine/clean/small_area.py), the same on the command line
+    (--small-area / --edge-rule) and in the app: reads the cleaning's flagged file, writes <tag>_small_area.csv and
+    <tag>_small_area.zip next to it, adds R['small_area'] (also to the cleaning JSON on disk) and makes the report
+    again with its section. The clean, flagged and DIFM files are not touched. Returns the record."""
+    from engine.clean import small_area
+    F = R.get("files") or {}
+    fz = F.get("flagged_zip")
+    if not fz or not os.path.exists(fz):
+        raise ValueError("small area: the cleaning has no flagged file to read")
+    out = F.get("dir") or os.path.dirname(fz)
+    tag = os.path.basename(fz)[:-len("_flagged.zip")] if fz.endswith("_flagged.zip") else         os.path.splitext(os.path.basename(fz))[0]
+    rec = small_area.run(fz, polygons_path, out, tag, rule, log=log)
+    R["small_area"] = rec
+    F["small_area_csv"], F["small_area_zip"] = rec["files"]["csv"], rec["files"]["zip"]
+    js = F.get("json")
+    if js and os.path.exists(js):
+        with open(js, encoding="utf-8") as f:
+            D = json.load(f)
+        D["small_area"] = rec
+        D.setdefault("files", {}).update(small_area_csv=F["small_area_csv"], small_area_zip=F["small_area_zip"])
+        with open(js, "w", encoding="utf-8") as f:
+            json.dump(D, f, indent=1, default=yield_clean._json_default)
+    if F.get("report_pdf"):
+        try:
+            from engine.report.clean_report import make_report
+            make_report(R, F["report_pdf"])
+        except Exception as e:                       # the figures stay in the JSON and the CSV
+            log(f"WARNING: the report could not be made again with the small area: {type(e).__name__}: {e}")
+    return rec
 
 
 def advice(R: dict) -> list[str]:
@@ -1881,6 +1913,13 @@ def main(argv=None) -> int:
                     help="a planter / sprayer point file: the columns filtered with 3-sigma, in order "
                          "(engine/clean/applied3s.py; default: the applied rate found and the speed)")
     ap.add_argument("--copy-folders", action="store_true", help="copy input folders into the work folder")
+    ap.add_argument("--small-area", default=None, metavar="FILE",
+                    help="small area cut AFTER the whole-field cleaning: a polygon file (zip / shp / geojson / gpkg / "
+                         "kml / kmz; one or several polygons, named by their name column or numbered); the kept "
+                         "readings counted per polygon go to <tag>_small_area.csv / .zip (engine/clean/small_area.py)")
+    ap.add_argument("--edge-rule", choices=["clip", "full", "point"], default="clip",
+                    help="small area: clip = the footprint clipped by the polygon's line (area-weighted; default), "
+                         "full = the whole footprint inside (as SMS's query), point = the reading's point inside")
     a = ap.parse_args(argv)
     try:
         return _cli(a)
@@ -1908,6 +1947,9 @@ def _count(n) -> str:
 
 
 def _cli(a) -> int:
+    if a.small_area:                            # a bad polygon file stops before the decode
+        from engine.clean import small_area as _sa
+        _sa.read_polygons(a.small_area)
     if a.manual_edits:                          # a bad edits file (a key in both lists ...) stops before the decode
         yield_clean.manual_mod.read_edits(a.manual_edits)
     work = os.path.abspath(a.out)
@@ -2146,6 +2188,8 @@ def _cli(a) -> int:
     _print("\nCleaning:")
     R = clean(shp, out, settings, log=lambda m: _print("  " + m), source=dec["source"] if dec else None,
               inputs_left_out=list(cand.get("inputs_left_out") or []) + aoi_left_out)
+    if a.small_area:
+        small_area_after_clean(R, os.path.abspath(a.small_area), a.edge_rule, log=lambda m: _print("  " + m))
     _print("")
     _print(pd.DataFrame(R["cascade"])[["filter", "on", "removed", "remaining"]].to_string(index=False))
     f8 = R["f8"]
@@ -2233,6 +2277,11 @@ def _cli(a) -> int:
                   f" + {bm:g} m")
                + f", {_count(A.get('n_outside_buffer'))} set aside before the cleaning, "
                f"{_count(A.get('n_output_outside_aoi'))} kept points outside the field left out of the clean file")
+    if R.get("small_area"):
+        from engine.clean import small_area as _sa
+        _print(f"  small area       {_sa.summary_text(R['small_area'])}")
+        _print(f"  small area files {R['small_area']['files']['csv']}"
+               + (f", {R['small_area']['files']['zip']}" if R['small_area']['files'].get('zip') else ""))
     _print(f"  warnings         {len(R['warnings'])}" + (" (see the report)" if R["warnings"] else ""))
     for x in R["advice"]:
         _print(f"  check            {x}")

@@ -733,7 +733,16 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
             P["auto_codes"] = auto_codes
             P["manual"] = manual_part(record, man[ok], (rauto if rauto is not None else remby)[ok], remby[ok])
         if edit:
-            P["edit"] = edit_part(path, thin, n_used, n_file, g)
+            # the fate each reading gets when the marks do not name it: an edit of this cleaning that the marks do not
+            # hold any more goes back to the automatic cleaning (Rem_Auto), any other reading keeps its fate (as
+            # edit_keys counts kept_after)
+            fate = keep == 1
+            if man is not None:
+                fate = np.where(np.isin(man.astype(str), ["R", "K"]), (rauto == "") if rauto is not None else fate, fate)
+            shared, in_group = _shared_groups(g, out_c, fate) if thin == 1 else ([], np.zeros(n_file, bool))
+            P["edit"] = edit_part(path, thin, n_used, n_file, g, kept_outside=int((fate & ~ok & ~in_group).sum()))
+            if shared:
+                P["edit"]["shared"] = shared
     if zm is not None:
         P["zones"] = zone_part(zm, zinfo, {k: (np.concatenate(v) if v else np.zeros(0)) for k, v in zst.items()},
                                [C["name"] for C in out_c], P["center"], kind)
@@ -794,9 +803,37 @@ def _file_token(path: str, n_file: int) -> str:
     return h.hexdigest()
 
 
-def edit_part(path: str, thin: int, n_used: int, n_file: int, g) -> dict:
+def _shared_groups(g, out_c: list, fate) -> tuple:
+    """The readings of the player that share a reading key with another record of the file (manual_edits.flagged_keys:
+    the engine removes or keeps every record of a key together): [{m: [[combine num, index], ...], hn: records of the
+    key not in the player, hk: those of them kept when the marks do not name the key}], and the file rows they cover
+    (left out of kept_outside: the player counts them per group). [] when every key is the file's only record."""
+    from engine.clean import manual_edits as me
+    F = pd.DataFrame(g.drop(columns="geometry")) if "geometry" in g else g
+    keys = pd.Series([str(k) for k in me.flagged_keys(F)[0]], index=range(len(F)))
+    in_group = np.zeros(len(F), bool)
+    dup = keys.duplicated(keep=False)
+    if not dup.any():
+        return [], in_group
+    pos = {int(r): [C["num"], i] for C in out_c for i, r in enumerate(C.get("rows") or [])}
+    out = []
+    for _, rows_k in keys[dup].groupby(keys[dup]).groups.items():
+        rows_k = [int(r) for r in rows_k]
+        mem = [pos[r] for r in rows_k if r in pos]
+        if not mem:                                      # no record of the key in the player: kept_outside counts them
+            continue
+        hid = [r for r in rows_k if r not in pos]
+        in_group[rows_k] = True
+        out.append({"m": mem, "hn": len(hid), "hk": int(sum(bool(fate[r]) for r in hid))})
+    return out, in_group
+
+
+def edit_part(path: str, thin: int, n_used: int, n_file: int, g, kept_outside: int = 0) -> dict:
     """P['edit'] of the app's replay of a cleaning: ok when every reading is in the player (not thinned); why: the
-    reason when not; token: of the flagged file (the marks sent back must name it)."""
+    reason when not; token: of the flagged file (the marks sent back must name it); min_kept: the fewest kept readings
+    a clean file can have (yield_clean.MIN_KEPT: fewer and the cleaning stops); kept_outside: the kept readings of the
+    file that are not in the player (no position or time) with the fate the marks give them, which the player adds
+    to its count of what the marks leave (replay_payload also adds 'shared': the readings that share a key)."""
     fields = set(g.columns)
     if not {"Keep", "Rem_By"} <= fields:
         ok, why = False, "this file is not the flagged file of a cleaning (no Keep / Rem_By)"
@@ -806,6 +843,7 @@ def edit_part(path: str, thin: int, n_used: int, n_file: int, g) -> dict:
     else:
         ok, why = True, ""
     out = {"ok": ok, "why": why, "token": _file_token(path, n_file), "n": int(n_used),
+           "min_kept": int(yield_clean.MIN_KEPT), "kept_outside": int(kept_outside),
            "rule": "remove: a kept reading; keep: a reading the moisture, speed or yield filter removed; the import "
                    "range (S0), the clip (S1) and the swath step (S2) cannot be undone by hand"}
     if n_used < n_file:
@@ -818,8 +856,12 @@ def edit_keys(P: dict, marks: dict, flagged) -> dict:
     """The player's marks -> the engine's reading keys. marks: {token, remove: [[combine num, index], ...], keep:
     [...]} (index: the reading's place in its combine, in the payload's order); P: the payload they were made on
     (built with edit=True: its combines carry rows); flagged: the flagged file (path or DataFrame) of that payload.
-    Returns {remove, keep (sorted keys), refused [{num, i, mark, reason}], n_remove, n_keep, key_info}. Raises
-    ValueError when the marks are not of this payload (token) or the payload cannot be edited."""
+    Returns {remove, keep (sorted keys), refused [{num, i, mark, reason}], n_remove, n_keep, kept_after, min_kept,
+    key_info}: kept_after = the readings of the file kept with these marks before the limits move (a reading removed
+    by hand: out; kept by hand: in; an edit of the cleaning shown that the marks no longer hold: its automatic fate,
+    Rem_Auto; any other: its fate now), an estimate only, since the 3-sigma limits are computed again with the edits
+    (readings come back or go); the cleaning itself stops below min_kept (yield_clean.MIN_KEPT). Raises ValueError
+    when the marks are not of this payload (token) or the payload cannot be edited."""
     from engine.clean import manual_edits as me
     E = P.get("edit") or {}
     if not E.get("ok"):
@@ -861,8 +903,18 @@ def edit_keys(P: dict, marks: dict, flagged) -> dict:
     both = out["remove"] & out["keep"]
     if both:
         raise ValueError(f"{len(both)} reading(s) were marked both remove and keep: nothing applied")
+    # what the marks leave, before the limits move: the rows of the keys (a key can stand for several rows)
+    keys_s = [str(k) for k in keys]
+    is_rm = np.fromiter((k in out["remove"] for k in keys_s), bool, len(keys_s))
+    is_kp = np.fromiter((k in out["keep"] for k in keys_s), bool, len(keys_s))
+    kept_now = ((pd.to_numeric(F["Keep"], errors="coerce").fillna(1).to_numpy(int) == 1) if "Keep" in F
+                else np.ones(len(F), bool))
+    auto_kept = (_text(F["Rem_Auto"]) == "") if "Rem_Auto" in F else kept_now
+    dropped_edit = np.isin(man.astype(str), ["R", "K"]) & ~is_rm & ~is_kp
+    kept_after = int((is_kp | (~is_rm & np.where(dropped_edit, auto_kept, kept_now))).sum())
     return {"remove": sorted(out["remove"]), "keep": sorted(out["keep"]), "refused": out["refused"],
-            "n_remove": len(out["remove"]), "n_keep": len(out["keep"]), "key_info": info}
+            "n_remove": len(out["remove"]), "n_keep": len(out["keep"]), "kept_after": kept_after,
+            "min_kept": int(yield_clean.MIN_KEPT), "key_info": info}
 
 
 def zone_part(zm, info: dict, arr: dict, names: list, center, kind: str) -> dict:
