@@ -174,14 +174,19 @@ def test_app_small_area_kept_measured_again_after_edits_saved_and_removed(clean,
     S1 = C1["R"]["small_area"]
     assert C1["at"] != C0["at"] or C1["R"].get("manual_edits")
     assert S1["auto"] and S1["measured_after"] == C1["at"] and S1["rule"] == "clip"
-    assert S1["before"]["polygons"] == [{"name": p["name"], "kept": p["kept"]} for p in sep0["polygons"]]
+    # 0.3.8: the figures before the edits keep grain / ground's too (the figure the small area leads with, and the
+    # status of its readings: kept by the cleaning, removed by hand)
+    G_ = ("readings", "grain_bu", "ground_ac", "dry_yield_bu_ac", "kept", "removed_by_hand")
+    assert S1["before"]["polygons"] == [{"name": p["name"], "kept": p["kept"],
+                                         "ground": {f: p["ground"][f] for f in G_}} for p in sep0["polygons"]]
     sep1 = sa.run(C1["flagged_zip"], kept_copy, str(tmp_path / "sep1"), "x", "clip", log=lambda m: None)
     assert sep1["polygons"] == S1["polygons"]
     assert S1["polygons"][0]["kept"]["readings"] < S0["polygons"][0]["kept"]["readings"]
     tabs = [d.value for d in at.dataframe if "bu/ac before" in d.value.columns]
     assert tabs and list(tabs[0]["polygon"]) == ["P1", "P2"]
-    assert tabs[0]["readings after"].iloc[0] == S1["polygons"][0]["kept"]["readings"]
-    assert tabs[0]["readings before"].iloc[0] == S0["polygons"][0]["kept"]["readings"]
+    assert tabs[0]["readings after"].iloc[0] == S1["polygons"][0]["ground"]["readings"]
+    assert tabs[0]["readings before"].iloc[0] == S0["polygons"][0]["ground"]["readings"]
+    assert tabs[0]["cleaned map average bu/ac after"].iloc[0] == S1["polygons"][0]["kept"]["dry_yield_bu_ac"]
     # saved with the work, and there again when it is opened
     at.button(key="work_save").click()
     _run(at)

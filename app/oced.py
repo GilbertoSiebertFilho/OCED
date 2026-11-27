@@ -807,7 +807,9 @@ def outline_layer(outline):
                      get_width=1, width_min_pixels=2, width_max_pixels=4, pickable=False)
 
 
-def deck(layers, lon, lat, height, tooltip=None, width=900, max_zoom: float = 17):
+def deck(layers, lon, lat, height, tooltip=None, width=900, max_zoom: float = 17, on_select=None, key=None):
+    """The map of the layers, fitted to the positions given. on_select (a callback) with key: a click on an object
+    selects it (one at a time; every layer needs an id) and the callback reads st.session_state[key].selection."""
     lon, lat = np.asarray(lon, float), np.asarray(lat, float)
     ok = np.isfinite(lon) & np.isfinite(lat)
     if not ok.any():                                 # nothing with a position: no map (never a crash)
@@ -821,8 +823,10 @@ def deck(layers, lon, lat, height, tooltip=None, width=900, max_zoom: float = 17
     z_h = np.log2(0.9 * height * 360.0 * coslat / (512.0 * max(la1 - la0, 1e-6)))
     view = pdk.ViewState(latitude=(la0 + la1) / 2, longitude=(lo0 + lo1) / 2,
                          zoom=float(np.clip(min(z_w, z_h), 9, max_zoom)))
-    st.pydeck_chart(_CompactDeck(layers=layers, initial_view_state=view, map_style=SATELLITE_STYLE_URL,
-                                 tooltip=tooltip), height=height)
+    chart = _CompactDeck(layers=layers, initial_view_state=view, map_style=SATELLITE_STYLE_URL, tooltip=tooltip)
+    if on_select is not None:
+        return st.pydeck_chart(chart, height=height, on_select=on_select, selection_mode="single-object", key=key)
+    st.pydeck_chart(chart, height=height)
 
 
 def legend(kind, cmap, lo, hi, unit, t0=None, cats=None, counts=None, note: str = ""):
@@ -969,7 +973,7 @@ def _more_pick(key: str):
 
 def explorer(shp: str, key: str, height: int = 520, default: str | None = None, outline=None, extras: bool = True,
              scale_of: str | None = None, base_for: dict | None = None, labels: dict | None = None,
-             col_help: dict | None = None, data: str | None = None):
+             col_help: dict | None = None, data: str | None = None, col_from: dict | None = None):
     """The map of a point file coloured by the attribute chosen on the pills (six of them, the others under 'More',
     the way the readings are drawn at the right), with its legend under it and its statistics and histogram beside
     it. outline: the field boundary (rings of [lon, lat]) drawn over the strips; extras False: no attribute table and
@@ -979,7 +983,8 @@ def explorer(shp: str, key: str, height: int = 520, default: str | None = None, 
     the base column (the column "change vs the clean map"); labels: {column: pill label} (a corrected yield is
     'Final yield (Yld_Level)'); col_help: {column: the "?" of the side heading while it is shown}; data: which data
     the map shows, after the column in the side heading ('SMS default (step 1)', 'your settings (step 2)', 'clean
-    (step 3)')."""
+    (step 3)'); col_from: {column: what its values are computed from} (yield_sources), said after the column's name
+    in the side heading."""
     if not shp or not os.path.exists(shp):
         st.error("The file is no longer on disk.", icon=":material/error:")
         return
@@ -1080,6 +1085,7 @@ def explorer(shp: str, key: str, height: int = 520, default: str | None = None, 
            + (" Values beyond the scale are counted in the end bars of the histogram." if kind == "num" else ""))
     with c_side:
         st.markdown(f"**{label}**" + (f" · {unit}" if unit else "") + f"  \n`{col}`"
+                    + (f" {html.escape((col_from or {})[col])}" if (col_from or {}).get(col) else "")
                     + (f" · {html.escape(data)}" if data else ""),
                     help=(col_help[col] + (" Values beyond the scale are counted in the end bars of the histogram."
                                            if kind == "num" else "")) if col_help.get(col) else how)
@@ -3582,6 +3588,68 @@ def yields_converted(IM: dict | None) -> bool:
     if isinstance(a, dict):
         return bool(a.get("weight_and_moisture"))
     return bool(RS.get("test_weight_lb_bu")) and RS.get("dry_moisture_pct") is not None
+
+
+OPS_SECTIONS_NOTICE = ("This is an Operations Center export. Operations Center has already reprocessed these data "
+                       "(grain moved between seconds at the starts and ends of passes, the wet mass raised on the "
+                       "first record after a section switches on), so this raw map will not equal SMS's read of the "
+                       "raw monitor files. For a raw map equal to SMS, upload the raw .jdl / GreenStar files of the "
+                       "display.")
+
+
+def is_sections_file(path) -> bool:
+    """True for the per-second file OCED collapsed from an Operations Center section-element export
+    (engine.run.use_candidate: .../sections/<stem>_per_second.shp; engine/formats/ops_sections.py)."""
+    if not path:
+        return False
+    p = os.path.normpath(str(path))
+    stem = os.path.splitext(os.path.basename(p))[0]
+    return os.path.basename(os.path.dirname(p)).lower() == "sections" and stem.endswith("_per_second")
+
+
+def from_section_export(D: dict | None) -> bool:
+    """The file D of the work was read from an Operations Center section-element export (collapsed to one reading per
+    combine and second): its import basis, its import record or its own file is the collapsed per-second file."""
+    D = D if isinstance(D, dict) else {}
+    if D.get("kind") != "export":
+        return False
+    DF = default_of(D)
+    DF = DF if isinstance(DF, dict) else {}
+    paths = [(import_basis(D) or {}).get("all_readings"), (D.get("sms_import") or {}).get("all_readings"),
+             (DF.get("sms_import") or {}).get("all_readings"), D.get("shp")]
+    return any(is_sections_file(x) for x in paths if x)
+
+
+def yield_sources(V: dict, columns) -> dict:
+    """{column: what its values are computed from} for the yield columns of a point export that its import computed
+    again from the wet mass (sms_import.apply: weight to volume and dry moisture), so that a column with a vendor's
+    name is not read as the vendor's value (an Operations Center VRYIELDVOL is then WetMass / lb/bu, dried). {} for
+    any other file (a raw decode, an import that kept the file's own yields). Display only."""
+    IM = V.get("sms_import") if isinstance(V, dict) else None
+    if not isinstance(IM, dict) or IM.get("family") != "point" or not yields_converted(IM):
+        return {}
+    cols = [c for c in columns if c not in ("lon", "lat", "geometry")]
+    Y = si.yield_columns(cols)
+    RS = IM.get("resolved") or {}
+    tw, dm = RS.get("test_weight_lb_bu"), RS.get("dry_moisture_pct")
+    if not tw or dm in (None, si.AUTO):
+        return {}
+    det = yc.detect_columns(cols)
+    dried = bool(det.get("moisture")) or bool((IM.get("applied") or {}).get("manual_moisture"))
+    dry_how = (f"dried to {float(dm):.2f} %" + (" (symmetric)" if RS.get("expand_dry_moisture") else "")
+               if dried else "the file's own dry / wet ratio")
+    wet = Y.get("wet_mass")
+    wet_txt = wet or (f"{Y['wet_vol']} x {float(tw):.2f} lb/bu" if Y.get("wet_vol") else None)
+    if not wet_txt:
+        return {}
+    out = {}
+    if Y.get("dry_vol"):
+        out[Y["dry_vol"]] = f"computed from {wet_txt} / {float(tw):.2f} lb/bu, {dry_how}"
+    if Y.get("wet_vol") and wet:
+        out[Y["wet_vol"]] = f"computed from {wet} / {float(tw):.2f} lb/bu"
+    if Y.get("dry_mass"):
+        out[Y["dry_mass"]] = f"computed from {wet_txt}, {dry_how}"
+    return out
 
 
 def older_decode_text(V: dict, RS: dict) -> str:
@@ -7381,15 +7449,18 @@ def keep_small_area_file(tag: str):
 def small_area_extra(tag: str, res: dict, C_prev: dict | None) -> dict:
     """What the record of a small area measured again after a cleaning adds (engine.run.small_area_after_clean's
     extra): measured_after (the time of the cleaning), the edits' hash of this cleaning, and before: the figures of the
-    cleaning shown until now (its time, its edits' hash, per polygon the kept figures), when it was measured with the
-    same polygon file and rule."""
+    cleaning shown until now (its time, its edits' hash, per polygon the kept figures and grain / ground's), when it was
+    measured with the same polygon file and rule."""
     A = (ss.get("small_area") or {}).get(tag) or {}
     prev = ((C_prev or {}).get("R") or {}).get("small_area") if C_prev else None
     before = None
     if prev and prev.get("file") == os.path.basename(str(A.get("path"))) and prev.get("rule") == A.get("rule"):
         before = {"at": (C_prev or {}).get("at"),
                   "edits": ((C_prev.get("R") or {}).get("manual_edits") or {}).get("sha256"),
-                  "polygons": [{"name": p["name"], "kept": dict(p["kept"])} for p in prev.get("polygons") or []]}
+                  "polygons": [{"name": p["name"], "kept": dict(p["kept"]),
+                                **({"ground": {f: p["ground"].get(f) for f in SA_BEFORE_FIGS}}
+                                   if p.get("ground") else {})}
+                               for p in prev.get("polygons") or []]}
     return {"measured_after": res.get("at"), "auto": True, "before": before,
             "edits": ((res.get("R") or {}).get("manual_edits") or {}).get("sha256")}
 
@@ -7436,11 +7507,13 @@ def small_area_map_data(flagged_zip: str, mt: float, poly: str, poly_mt: float, 
     """The map of a small area (small_area.detail_of: the per-reading rows of measure(), within SA_MAP_MARGIN_M of the
     polygons), as pydeck data in WGS 84: strips (every reading drawn: the whole strip, faint; a reading the cleaning
     removed in orange), parts (the part counted, coloured by the yield used), the polygon lines and their sums, and
-    each reading's hover text (small_area.reading_text). At most SA_MAP_MAX readings (the counted ones first)."""
+    each reading's short hover (small_area.ground_hover_text, 'tip') and the index 'c' of its card in cards (the whole
+    calculation, small_area.ground_text, that a click shows under the map; the polygon lines' cards after the
+    readings'). At most SA_MAP_MAX readings (the counted ones first)."""
     import geopandas as gpd
     import matplotlib
     # 0.3.7: the strips as grain / ground counts them (every reading as logged, clipped by the line), whatever the
-    # figure chosen; each hover says the grain, the clipped area, the part of the ground, SMS's query and the
+    # figure chosen; each card says the grain, the clipped area, the part of the ground, SMS's query and the
     # cleaned map average of the reading
     M = sarea.detail_of(flagged_zip, poly, rule, margin_m=SA_MAP_MARGIN_M, method=method, decoded=decoded,
                         interior_m=interior)
@@ -7458,15 +7531,22 @@ def small_area_map_data(flagged_zip: str, mt: float, poly: str, poly_mt: float, 
     yv = np.asarray([v for v in yv if np.isfinite(v)], float)
     lo, hi = (float(np.nanpercentile(yv, 2)), float(np.nanpercentile(yv, 98))) if len(yv) else (0.0, 1.0)
     cm = matplotlib.colormaps["RdYlGn"]
-    fps, parts, meta = [], [], []
+    fps, parts, meta, cards = [], [], [], []
     for c, k, j in rows:
         name = M["polygons"][k]["name"]
         D = M["ground_rows"][name]
         fps.append(D["fp"][j])
         parts.append(D["part"][j])
-        tip = "\n".join(sarea.ground_text(D, j, name, M["cleaned_rows"].get(name)))   # plain text: the lines
+        # 0.3.8: the hover is short (it fits beside the cursor); the whole calculation is the card under the map
+        # that a click on the reading shows (cards[i], i in the drawn data as 'c')
+        # raw text: the chart escapes every value it puts into the html tooltip itself (a polygon's name or a
+        # reading's Rem_By may hold '<' or '&'; escaping here too would show '&lt;'); the line breaks stay
+        # (white-space: pre-line)
+        tip = "\n".join(sarea.ground_hover_text(D, j, name))
+        full = sarea.ground_text(D, j, name, M["cleaned_rows"].get(name))
+        cards.append({"title": full[0], "lines": full[1:]})
         why = {"hand": "hand", "removed": "removed", "left_out": "left_out"}.get(str(D["status"][j]), "")
-        meta.append((why, float(D["yield"][j]), tip, bool(D["touch"][j])))
+        meta.append((why, float(D["yield"][j]), tip, bool(D["touch"][j]), len(cards) - 1))
     G1 = gpd.GeoSeries(fps, crs=M["crs"]).to_crs(4326) if fps else []
     keep_parts = [q for q in parts if q is not None]
     G2 = iter(gpd.GeoSeries(keep_parts, crs=M["crs"]).to_crs(4326)) if keep_parts else iter([])
@@ -7479,37 +7559,115 @@ def small_area_map_data(flagged_zip: str, mt: float, poly: str, poly_mt: float, 
         return out
 
     strips, counted, pts = [], [], []
-    for g, q, (why, y, tip, cnt) in zip(G1, parts, meta):
+    for g, q, (why, y, tip, cnt, ci) in zip(G1, parts, meta):
         for r in rings(g):
             pts += r                                     # the view fits the strips drawn, not only the polygons
-            strips.append({"polygon": r, "tip": tip, "fill": SA_FILL.get(why, SA_FILL[""]),
+            strips.append({"polygon": r, "tip": tip, "c": ci, "fill": SA_FILL.get(why, SA_FILL[""]),
                            "line": SA_LINE.get(why, SA_LINE[""])})
         if q is not None:
             gq = next(G2)
             t = 0.5 if not np.isfinite(y) else min(1.0, max(0.0, (y - lo) / (hi - lo if hi > lo else 1.0)))
             col = [int(255 * v) for v in cm(t)[:3]] + [230]
             for r in rings(gq):
-                counted.append({"polygon": r, "tip": tip, "fill": col})
+                counted.append({"polygon": r, "tip": tip, "c": ci, "fill": col})
     PG = gpd.GeoSeries(M["geoms"], crs=M["crs"]).to_crs(4326)
     lines = []
     for p, g in zip(M["polygons"], PG):
-        tip = sarea.ground_sum_text(p) + "\n" + sarea.polygon_sum_text(p).replace(p["name"] + ":", "cleaned map:", 1)
+        tip = sarea.ground_sum_hover(p)
+        cards.append({"title": f"Polygon {p['name']}",
+                      "lines": [sarea.ground_sum_text(p),
+                                sarea.polygon_sum_text(p).replace(p["name"] + ":", "cleaned map average:", 1)]})
         for r in rings(g):
-            lines.append({"path": r, "tip": tip})
+            lines.append({"path": r, "tip": tip, "c": len(cards) - 1})
             pts += r
     n_hand = sum(1 for m in meta if m[0] == "hand")
     n_auto = sum(1 for m in meta if m[0] == "removed")
     n_left = sum(1 for m in meta if m[0] == "left_out")
-    return {"strips": strips, "parts": counted, "lines": lines, "n_drawn": len(rows), "n_all": n_all,
+    return {"strips": strips, "parts": counted, "lines": lines, "cards": cards, "n_drawn": len(rows), "n_all": n_all,
             "n_hand": n_hand, "n_auto": n_auto, "n_left": n_left,
             "lon": [a for a, b in pts], "lat": [b for a, b in pts], "lo": lo, "hi": hi,
             "sums": [sarea.polygon_sum_text(p) for p in M["polygons"]], "rule_text": M["rule_text"]}
 
 
+SA_LAYERS = ("sa-parts", "sa-strips", "sa-lines")  # the small area map's layer ids (a click: the first one picked)
+SA_TIP_CLASS = "oced-sa-tip"
+# the small area's hover kept inside the map: deck.gl puts its tooltip at the cursor (top left corner there) and never
+# turns it, so near the map's right or bottom edge a tooltip runs out of the map and is cut. This observer moves the
+# small area's tooltip (marked by SA_TIP_CLASS) to the left of / above the cursor when it would run out, with the CSS
+# 'translate' property (deck.gl writes 'transform' at every move; 'translate' adds to it and is left alone).
+SA_TIP_FIT_JS = """<script>
+(function () {
+  if (window.__ocedSaTipFit) return;
+  window.__ocedSaTipFit = true;
+  var G = 14;
+  function fit(el) {
+    if (!el.querySelector('.%s')) { if (el.style.translate) el.style.translate = ''; return; }
+    var m = /translate\\((-?[\\d.]+)px,\\s*(-?[\\d.]+)px\\)/.exec(el.style.transform || '');
+    var box = el.parentElement;
+    if (!m || !box || el.style.display === 'none') return;
+    var x = +m[1], y = +m[2], W = box.clientWidth, H = box.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
+    var dx = (x + G + w > W) ? -(w + G) : G, dy = (y + G + h > H) ? -(h + G) : G;
+    if (x + dx < 0) dx = -x;
+    if (y + dy < 0) dy = -y;
+    var v = dx + 'px ' + dy + 'px';
+    if (el.style.translate !== v) el.style.translate = v;
+  }
+  new MutationObserver(function (ms) {
+    for (var i = 0; i < ms.length; i++) {
+      var t = ms[i].target;
+      if (t && t.classList && t.classList.contains('deck-tooltip')) fit(t);
+    }
+  }).observe(document.body, {attributes: true, attributeFilter: ['style'], subtree: true});
+})();
+</script>""" % SA_TIP_CLASS
+
+
+def _sa_pick(k: str, sig: str):
+    """The small area map's click (on_select): the card of the reading or polygon line picked (its index in the map
+    data's cards, 'c'), kept in sa_pick_<k> with the map it belongs to; a click on nothing clears it."""
+    ev = ss.get(f"sa_map_{k}") or {}
+    sel = (ev.get("selection") if hasattr(ev, "get") else None) or {}
+    objs = sel.get("objects") or {}
+    pick = None
+    for lid in SA_LAYERS:
+        for o in objs.get(lid) or []:
+            if isinstance(o, dict) and o.get("c") is not None:
+                pick = int(o["c"])
+                break
+        if pick is not None:
+            break
+    ss[f"sa_pick_{k}"] = {"sig": sig, "c": pick} if pick is not None else None
+
+
+def _md_text(s) -> str:
+    """Plain text for st.markdown: the characters markdown (and its LaTeX) would read as markup escaped."""
+    out = str(s)
+    for ch in "\\`*_{}[]<>#|$~":
+        out = out.replace(ch, "\\" + ch)
+    return out
+
+
+def small_area_card(MD: dict, k: str, sig: str):
+    """Under the small area's map: the whole card of the reading (or polygon line) clicked, everything the hover
+    showed before 0.3.8 (small_area.ground_text: what the cleaning or the import did with it, its yield and strip,
+    the clip by the line, the grain counted, its part of the ground, SMS's query, the cleaned map average; on a
+    polygon's line grain / ground's sum and the cleaned map average's)."""
+    P = ss.get(f"sa_pick_{k}") or {}
+    c = P.get("c") if P.get("sig") == sig else None
+    cards = MD.get("cards") or []
+    if c is None or not 0 <= int(c) < len(cards):
+        return
+    card = cards[int(c)]
+    with st.container(border=True, key=f"sa_card_{k}"):
+        st.markdown(f"**{_md_text(card['title'])}**")
+        st.markdown("\n".join(f"- {_md_text(x)}" for x in card["lines"]))
+
+
 def small_area_map(C: dict, SA: dict, path: str, tag: str | None = None):
     """Under the small-area table: every reading near the polygons as its strip (faint; a reading the cleaning
     removed in orange), the part counted strong (coloured by the yield used), the polygon lines (yellow); the mouse on
-    a reading (a tap on a phone) shows what the tool did with it and the calculation, on a polygon line its sum."""
+    a reading (a tap on a phone) shows a short hover (what happened to it, the share inside, the yield used, the bu),
+    a click the whole calculation in a card under the map; on a polygon line its sums."""
     if pdk is None:
         return
     fz = (C["R"].get("files") or {}).get("flagged_zip")
@@ -7517,25 +7675,33 @@ def small_area_map(C: dict, SA: dict, path: str, tag: str | None = None):
         return
     try:
         dec = import_readings_of(tag) if tag else None
-        MD = small_area_map_data(fz, mtime(fz), path, mtime(path), SA.get("rule") or sarea.DEFAULT_RULE,
-                                 sarea.method_key(SA.get("method") or sarea.DEFAULT_METHOD), dec,
-                                 float(SA.get("interior_m") or 0.0))
+        args = (fz, mtime(fz), path, mtime(path), SA.get("rule") or sarea.DEFAULT_RULE,
+                sarea.method_key(SA.get("method") or sarea.DEFAULT_METHOD), dec, float(SA.get("interior_m") or 0.0))
+        MD = small_area_map_data(*args)
     except Exception as e:                               # noqa: BLE001 - the table stands without the map
         st.caption(f"The map of the small area cannot be drawn: {type(e).__name__}: {e}")
         return
     if not MD["lon"]:
         return
-    lay = [pdk.Layer("PolygonLayer", data=MD["strips"], get_polygon="polygon", get_fill_color="fill",
-                     get_line_color="line", line_width_min_pixels=1, stroked=True, filled=True, pickable=True,
-                     auto_highlight=True),
-           pdk.Layer("PolygonLayer", data=MD["parts"], get_polygon="polygon", get_fill_color="fill",
+    k = key_of(C["shp"])
+    sig = hashlib.md5(repr(args).encode("utf-8")).hexdigest()[:12]
+    ss[f"sa_sig_{k}"] = sig                              # the map shown: a pick of another map is not shown
+    lay = [pdk.Layer("PolygonLayer", id="sa-strips", data=MD["strips"], get_polygon="polygon",
+                     get_fill_color="fill", get_line_color="line", line_width_min_pixels=1, stroked=True, filled=True,
+                     pickable=True, auto_highlight=True),
+           pdk.Layer("PolygonLayer", id="sa-parts", data=MD["parts"], get_polygon="polygon", get_fill_color="fill",
                      get_line_color=[20, 24, 31, 200], line_width_min_pixels=1, stroked=True, filled=True,
                      pickable=True, auto_highlight=True),
-           pdk.Layer("PathLayer", data=MD["lines"], get_path="path", get_color=[255, 214, 0], get_width=1,
-                     width_min_pixels=3, width_max_pixels=5, pickable=True)]
+           pdk.Layer("PathLayer", id="sa-lines", data=MD["lines"], get_path="path", get_color=[255, 214, 0],
+                     get_width=1, width_min_pixels=3, width_max_pixels=5, pickable=True)]
+    st.html(SA_TIP_FIT_JS, unsafe_allow_javascript=True)
     deck(lay, MD["lon"], MD["lat"], 460, max_zoom=20,
-         tooltip={"text": "{tip}", "style": {"backgroundColor": "#0B1F44", "color": "#FFFFFF", "fontSize": "12px",
-                                             "maxWidth": "380px", "whiteSpace": "pre-line"}})
+         tooltip={"html": f'<div class="{SA_TIP_CLASS}">{{tip}}</div>',
+                  "style": {"backgroundColor": "#0B1F44", "color": "#FFFFFF", "fontSize": "12px",
+                            "maxWidth": "260px", "whiteSpace": "pre-line", "padding": "6px 8px",
+                            "borderRadius": "4px", "lineHeight": "1.35"}},
+         on_select=functools.partial(_sa_pick, k, sig), key=f"sa_map_{k}")
+    small_area_card(MD, k, sig)
     st.caption(small_area_map_caption(MD, legacy=not SA.get("method")))
 
 
@@ -7553,11 +7719,54 @@ def small_area_map_caption(MD: dict, legacy: bool = False) -> str:
                else "")
             + (f", a reading the import left out (from the decoded file) in blue ({MD['n_left']:,} here)"
                if MD.get("n_left") else "")
-            + f", the polygons in yellow. {how} Point at a reading (tap on a "
-              "phone) for the grain counted, its clipped area, its part of the ground and what SMS's query and "
-              "the cleaned map average did with it; at a polygon's line for its sums."
+            + f", the polygons in yellow. {how} Point at a reading for what happened to it, the share of its "
+              "strip inside, the yield used and its bushels; click it (tap on a phone) for the whole calculation "
+              "under the map: the grain counted, its clipped area, its part of the ground and what SMS's query and "
+              "the cleaned map average did with it. Point at or click a polygon's line for its sums."
             + (f" Shown: {MD['n_drawn']:,} of the {MD['n_all']:,} readings near the polygons (the counted ones "
                "first)." if MD["n_drawn"] < MD["n_all"] else ""))
+
+
+# grain / ground kept for 'before': its figures and the status of its readings (kept by the cleaning, removed by hand),
+# the part of it the edits by hand change
+SA_BEFORE_FIGS = ("readings", "grain_bu", "ground_ac", "dry_yield_bu_ac", "kept", "removed_by_hand")
+
+
+def before_after_rows(SA: dict, BF: dict) -> tuple:
+    """The rows of 'Before and after the edits by hand': (rows, {column: number format}, grain / ground or not).
+    0.3.8: a small area measured with a method (0.3.7 on) and a 'before' that has grain / ground's figures shows
+    grain / ground (the figure the small area leads with: readings, grain bu, ground ac, bu/ac; and the status of its
+    readings, kept by the cleaning and removed by hand, which the edits change) with the cleaned map average's bu/ac
+    beside it, labelled; else (a small area of 0.3.6, or a 'before' saved without them) the cleaned
+    map average, as before."""
+    ground = bool(SA.get("method")) and all(p.get("ground") for p in BF.get("polygons") or [])
+    prev = {p["name"]: p for p in BF.get("polygons") or []}
+    rows = []
+    for p_ in SA["polygons"]:
+        b = prev.get(p_["name"]) or {}
+        bk, ak = b.get("kept") or {}, p_["kept"]
+        if ground:
+            bg, ag = b.get("ground") or {}, p_.get("ground") or {}
+            rows.append({"polygon": str(p_["name"]),
+                         "readings before": bg.get("readings"), "readings after": ag.get("readings"),
+                         "ground ac before": bg.get("ground_ac"), "ground ac after": ag.get("ground_ac"),
+                         "grain bu before": bg.get("grain_bu"), "grain bu after": ag.get("grain_bu"),
+                         "bu/ac before": bg.get("dry_yield_bu_ac"), "bu/ac after": ag.get("dry_yield_bu_ac"),
+                         "kept before": bg.get("kept"), "kept after": ag.get("kept"),
+                         "removed by hand before": bg.get("removed_by_hand"),
+                         "removed by hand after": ag.get("removed_by_hand"),
+                         "cleaned map average bu/ac before": bk.get("dry_yield_bu_ac"),
+                         "cleaned map average bu/ac after": ak.get("dry_yield_bu_ac")})
+        else:
+            rows.append({"polygon": str(p_["name"]),
+                         "readings before": bk.get("readings"), "readings after": ak.get("readings"),
+                         "ac before": bk.get("area_ac"), "ac after": ak.get("area_ac"),
+                         "bu before": bk.get("total_dry_bu"), "bu after": ak.get("total_dry_bu"),
+                         "bu/ac before": bk.get("dry_yield_bu_ac"), "bu/ac after": ak.get("dry_yield_bu_ac")})
+    counts = {"polygon", "readings before", "readings after", "kept before", "kept after", "removed by hand before",
+              "removed by hand after"}
+    num = {c: ("%.3f" if (" ac " in f" {c} ") else "%.2f") for c in (rows[0] if rows else {}) if c not in counts}
+    return rows, num, ground
 
 
 def small_area_figures(SA: dict, k: str):
@@ -7768,24 +7977,20 @@ def small_area_box(C: dict, tag: str | None = None):
                    "of the field, no cleaning.")
         BF = SA.get("before") or {}
         if BF.get("polygons") and BF.get("edits") != SA.get("edits"):
-            prev = {p["name"]: p["kept"] for p in BF["polygons"]}
-            rows_b = []
-            for p_ in SA["polygons"]:
-                b, a = prev.get(p_["name"]) or {}, p_["kept"]
-                rows_b.append({"polygon": str(p_["name"]),
-                               "readings before": b.get("readings"), "readings after": a.get("readings"),
-                               "ac before": b.get("area_ac"), "ac after": a.get("area_ac"),
-                               "bu before": b.get("total_dry_bu"), "bu after": a.get("total_dry_bu"),
-                               "bu/ac before": b.get("dry_yield_bu_ac"), "bu/ac after": a.get("dry_yield_bu_ac")})
-            st.markdown("**Before and after the edits by hand**",
+            rows_b, num_b, ground_b = before_after_rows(SA, BF)
+            st.markdown("**Before and after the edits by hand**" + (" · grain / ground" if ground_b else
+                                                                    " · cleaned map average"),
                         help="The same polygons and rule on the cleaning shown before the reprocess with the edits "
                              f"(of {BF.get('at') or '-'}) and on this one: the effect of the marks on each plot. The "
                              "edits stay whole-field edits (one edits file, step SM, the field's limits).")
             st.dataframe(pd.DataFrame(rows_b), hide_index=True, key=f"sa_before_{k}",
-                         column_config={c: st.column_config.NumberColumn(format="%.3f" if c.startswith("ac") else
-                                                                         "%.2f")
-                                        for c in ("ac before", "ac after", "bu before", "bu after", "bu/ac before",
-                                                  "bu/ac after")})
+                         column_config={c: st.column_config.NumberColumn(format=f) for c, f in num_b.items()})
+            if ground_b:
+                st.caption("Grain / ground, the figure of the table that leads: it counts every reading inside as "
+                           "logged, whatever the cleaning or the edits did with it, so the edits by hand change the "
+                           "status of its readings (kept: by the cleaning; removed by hand: by Edit points), not its "
+                           "grain or its ground. The cleaned map average beside it (the readings the cleaning kept, "
+                           "under the edge rule) is where the edits take readings out or put them back.")
         for line in [sarea.polygon_sum_text(p_) for p_ in SA["polygons"]]:
             st.caption("Cleaned map average · " + line)
         path_ = (A or {}).get("path")
@@ -9219,8 +9424,11 @@ def data_strip(V: dict, key: str, compare: dict | None = None, map_key: str | No
             if t is not None:
                 cards.append({"label": total_label(df, det["yield"]), "value": f"{t:,.1f} bu",
                               "delta": d(t, t1, ".1f", "bu"), "delta_description": "vs step 1",
-                              "help": f"The total of {det['yield']}: sum of (yield x distance x width) over the "
-                                      "readings (the average x the area)."})
+                              "help": f"The total of {det['yield']}"
+                                      + (f" ({yield_sources(V, df.columns)[det['yield']]})"
+                                         if det["yield"] in yield_sources(V, df.columns) else "")
+                                      + ": sum of (yield x distance x width) over the readings (the average x the "
+                                        "area)."})
         card_row(cards, key)
         return N
     op_lab = a3.OPERATION_LABEL.get(V.get("op") or "harvest", "Point data")
@@ -9244,8 +9452,10 @@ def data_strip(V: dict, key: str, compare: dict | None = None, map_key: str | No
         t = total_bu_of(df, det.get("yield"))
         if t is not None:
             cards.append({"label": total_label(df, det["yield"]), "value": f"{t:,.1f} bu",
-                          "help": f"The total of {det['yield']}: sum of (yield x distance x width) over the readings "
-                                  "(the average x the area)."})
+                          "help": f"The total of {det['yield']}"
+                                  + (f" ({yield_sources(V, df.columns)[det['yield']]})"
+                                     if det["yield"] in yield_sources(V, df.columns) else "")
+                                  + ": sum of (yield x distance x width) over the readings (the average x the area)."})
     elif OPX["rates"]:
         r0 = OPX["rates"][0]
         rv = pd.to_numeric(df[r0], errors="coerce")
@@ -9878,7 +10088,7 @@ def import_panel(tag: str, D: dict, V1: dict, outline=None) -> bool:
         if mb2.open:
             explorer(D["shp"], key=f"imp_{key_of(D['shp'])}", default=ss.get(f"attr_raw_{key_of(V1['shp'])}"),
                      scale_of=V1["shp"], outline=outline, height=440, extras=False,
-                     data=f"{kind_word(import_kind(tag, D))} (step 2)")
+                     data=f"{kind_word(import_kind(tag, D))} (step 2)", col_from=yield_sources(V2, N2["df"].columns))
     with slot2:                                 # the boxes follow the attribute of the map while it is drawn
         data_strip(V2, "strip_2", compare=V1, map_key=f"imp_{key_of(D['shp'])}" if mb2.open else None)
     import_details_box(V2)
@@ -10402,6 +10612,8 @@ with st.container(border=True, key="oced_step_1"):
     IM1 = V1.get("sms_import") or {}
     if IM1 and V1.get("yield", True) and unknown_point_product(IM1):
         st.warning(UNKNOWN_POINT_PRODUCT, icon=":material/warning:")
+    if V1.get("yield", True) and from_section_export(D):
+        st.info(OPS_SECTIONS_NOTICE, icon=":material/info:")
     slot1 = st.container()                   # the strip, drawn once it is known whether the map under it is open
     N1 = view_numbers(V1)
     if IM1.get("crops_note"):
@@ -10423,7 +10635,7 @@ with st.container(border=True, key="oced_step_1"):
             if mb1.open:
                 explorer(V1["shp"], key=f"raw_{key_of(V1['shp'])}", default=dflt_attr,
                          outline=B_["outline"] if B_ else None, height=520, extras=False,
-                         data=f"{kind_word(kind1)} (step 1)")
+                         data=f"{kind_word(kind1)} (step 1)", col_from=yield_sources(V1, N1["df"].columns))
     with slot1:                                 # the boxes follow the attribute of the map while it is drawn
         data_strip(V1, "strip_1", map_key=(f"raw_{key_of(V1['shp'])}" if N1["located"] and mb1.open else None))
     # the details, one compact line each: the header width as logged, the import record, the decoder's report, the
@@ -11124,8 +11336,14 @@ with st.container(border=True, key="oced_step_3"):
                 st.rerun()
             A_ = (ss.get("small_area") or {}).get(ss.active)
             fz_ = (R.get("files") or {}).get("flagged_zip")
-            sa_arg = ((fz_, A_["path"], mtime(A_["path"]), A_.get("rule") or sarea.DEFAULT_RULE)
-                      if (A_ and R.get("small_area") and fz_ and os.path.exists(fz_)
+            # 0.3.8: the replay's polygons and shares as the table that leads (grain / ground, with the work's
+            # decoded file and the interior cut); a small area of 0.3.6 (no method): its cleaned map average
+            SR_ = R.get("small_area") or {}
+            sa_arg = ((fz_, A_["path"], mtime(A_["path"]), A_.get("rule") or sarea.DEFAULT_RULE,
+                       sarea.method_key(SR_["method"]) if SR_.get("method") else None,
+                       import_readings_of(ss.active) if SR_.get("method") else None,
+                       float(SR_.get("interior_m") or 0.0))
+                      if (A_ and SR_ and fz_ and os.path.exists(fz_)
                           and os.path.exists(str(A_.get("path")))) else None)
             replay_view.section(C.get("flagged_shp"), f"clean_{key_of(C['shp'])}", kind="clean",
                                 outline=C["boundary"]["outline"] if C.get("boundary") else None,

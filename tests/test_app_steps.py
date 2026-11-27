@@ -2336,7 +2336,9 @@ def test_steps_1_and_2_when_nothing_is_left_and_values_typed_through_none(field,
     _open(at, field["shp"])
 
     def heads():
-        return [m.value.split("`Yld_Vol_Dr`")[1] for m in at.markdown if "`Yld_Vol_Dr`" in m.value]
+        # the heading may carry the yield's source after the column name ("computed from ..."): keep the step part
+        return [" · " + m.value.split("`Yld_Vol_Dr`")[1].split(" · ", 1)[1] for m in at.markdown
+                if "`Yld_Vol_Dr`" in m.value]
     assert heads() == [" · SMS default (step 1)"], heads()
     _set_import(at, min=7.0, max=150.0, sd=2.0)
     by_key(at.button_group, "fi_how_").set_value("none").run()

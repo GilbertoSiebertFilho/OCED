@@ -5,9 +5,23 @@ Advanced does, shows the map of every attribute, cleans the data with the 3-sigm
 data (a shapefile, or the clean harvest in the monitor's own raw format) and the reports. It is a Streamlit app that
 runs on the user's own computer (Windows); the files never leave it.
 
-**Version 0.3.7** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
+**Version 0.3.8** (shown in the app's title bar and sidebar). It reads Case IH / New Holland cards, John Deere
 GreenStar 3 cards and Gen4 logs, ISOXML harvest task data and point exports; besides the clean shapefile it writes
 the shapefile for DIFM (with the choice of the yield it carries) and the clean harvest in the monitor's own format.
+
+*Changes in 0.3.8:* a John Deere Gen4 .jdl log is read as SMS reads it. Each flow and moisture sample goes to
+the nearest position sample (several samples give their plain mean, zeros included) and the section states are
+read halfway between position samples. The raw map then equals SMS's raw map reading for reading (the yields up to
+the 4th decimal: SMS counts per US survey acre, OCED per international acre). Every .jdl cleaning changes a
+little; every other format gives the same files, byte for byte. Step 1 tells when a file is an Ops Center
+export by section (those cannot equal SMS's read of the .jdl: upload the raw .jdl), and the map's heading says
+where a recomputed yield comes from (for example, computed from WetMass).
+The small area (step 3): the hover of its map is short (what happened to the reading, the share of its strip
+inside, the yield used, the bushels) and stays inside the map; a click (a tap) on a reading or a polygon's line shows
+the whole calculation in a card under the map. The harvest replay's small area (each reading's share, the polygon's
+figure) and the table *Before and after the edits by hand* show grain / ground, the figures of the table that leads,
+with the cleaned map average beside them, labelled; that table also counts, before and after, the readings the
+cleaning kept and those removed by hand. The cleaning files do not change.
 
 *Changes in 0.3.7:* the field files at the start, openers that stand out, Play the harvest and Edit points after
 the raw data, the small area read reading by reading and kept with the file, and the small area's yield as grain /

@@ -276,7 +276,15 @@ def test_app_small_area_of_036_kept_drawn_copied_and_measured_again(field, tmp_p
     assert S1["before"]["polygons"][0]["kept"] == S0["polygons"][0]["kept"]
     # the map: the 6 removed by hand in purple, their hover says so; the caption counts them
     dj = _deck_json(at2)
-    assert "Removed by hand (Edit points): its yield is not used" in dj and "171,71,188" in dj.replace(" ", "")
+    assert "Removed by hand (Edit points)" in dj and "171,71,188" in dj.replace(" ", "")
+    # 0.3.8: the hover is short; a click on the reading shows the whole of it under the map
+    ks = next(k for k in at2.session_state.filtered_state if str(k).startswith("sa_sig_"))[len("sa_sig_"):]
+    spec = next(json.loads(e.proto.json) for e in at2.get("deck_gl_json_chart") if '"sa-strips"' in e.proto.json)
+    hand = next(s_ for L_ in spec["layers"] if L_.get("id") == "sa-strips" for s_ in L_["data"]
+                if s_["tip"].startswith("Removed by hand (Edit points)"))
+    at2.session_state[f"sa_pick_{ks}"] = {"sig": at2.session_state[f"sa_sig_{ks}"], "c": hand["c"]}
+    _run(at2)
+    assert any("Removed by hand (Edit points): its yield is not used" in m.value for m in at2.markdown)
     assert any("removed by hand (Edit points) in purple (6 here)" in c.value for c in at2.caption)
     tab = next(d.value for d in at2.dataframe if "removed (by step)" in d.value.columns)
     assert "by hand 6" in " ".join(str(v) for v in tab["removed (by step)"])

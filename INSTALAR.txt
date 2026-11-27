@@ -1,7 +1,7 @@
 OCED - Olds College Extract Data - instalação num computador novo
 ================================================================
 
-Versão 0.3.7 (a versão aparece na barra de título e no painel lateral do app).
+Versão 0.3.8 (a versão aparece na barra de título e no painel lateral do app).
 
 O OCED abre os arquivos que vêm das máquinas (colheitadeiras, plantadeiras e pulverizadores: cartões e logs brutos,
 dados ISOXML e exportações de pontos), importa-os como o Ag Leader SMS, mostra o mapa de cada atributo, limpa os
@@ -66,6 +66,22 @@ Onde ficam os resultados
    feche a janela preta do app e abra-o de novo com dois cliques em run_oced.bat, ou de um Prompt de Comando novo
    (o setx não muda o Prompt de Comando em que foi digitado). Os trabalhos salvos e o cn1_card_names.json (os nomes
    de cartão Case IH já dados) ficam na pasta antiga: para mantê-los, mova-os para a pasta nova com o app fechado.
+
+Novidades da 0.3.8
+   - Logs .jdl da John Deere (Gen4): lidos como o SMS lê. Cada amostra de fluxo e de umidade vai para a amostra de
+     posição mais próxima (várias amostras dão a média simples, zeros incluídos) e o estado das seções é lido no
+     meio entre duas amostras de posição. O mapa bruto fica igual ao do SMS leitura por leitura (a produtividade até
+     a 4a casa: o SMS conta por acre americano, o OCED por acre internacional). Toda limpeza de .jdl muda um pouco;
+     os outros formatos dão os mesmos arquivos, byte a byte.
+   - Passo 1: avisa quando o arquivo é uma exportação do Ops Center por seção (ela não pode ficar igual ao SMS
+     lendo o .jdl: use o .jdl bruto), e o título do mapa diz de onde vem a produtividade recalculada (por exemplo,
+     computed from WetMass).
+   - Área pequena (passo 3): o texto ao passar o mouse no mapa ficou curto (o que aconteceu com a leitura, a parte
+     da faixa dentro, a produtividade usada, os bushels) e não é mais cortado na borda do mapa; um clique (toque)
+     numa leitura ou na linha de um polígono mostra o cálculo inteiro num quadro abaixo do mapa. A área pequena no
+     replay da colheita e a tabela Before and after the edits by hand mostram grain / ground, os mesmos números da
+     tabela principal, com a média do mapa limpo ao lado, identificada; essa tabela também conta, antes e depois,
+     as leituras mantidas pela limpeza e as removidas à mão. Os arquivos da limpeza não mudam.
 
 Novidades da 0.3.7
    - Passo 1, "Field files" (sempre visível, opcional): um boundary e um mapa de zonas para todos os arquivos do

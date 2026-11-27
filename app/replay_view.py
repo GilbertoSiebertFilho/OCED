@@ -89,13 +89,22 @@ def payload_of(path: str, stamp: float, kind: str, outline, steps, makes, hints,
     path, its fingerprint, class column) or None; record: (the cleaning record's path, its stamp) for the limits of
     the card and the edits by hand; edit: the replay of a cleaning that can be edited (every reading up to
     EDIT_MAX_BYTES, the file rows of each combine kept for edit_keys; they never reach the page). edits: the edits
-    file of the imported readings (step 2; {} none yet); small_area: (flagged zip, polygon file, its fingerprint, rule)
-    of the cleaning shown, whose polygons and shares the replay draws."""
+    file of the imported readings (step 2; {} none yet); small_area: (flagged zip, polygon file, its fingerprint, rule
+    [, method, decoded file, interior m]) of the cleaning shown, whose polygons and shares the replay draws. With a
+    method (0.3.8: the small area's record has one) they are grain / ground's, the figures of the table that leads
+    (measure_all with the same decoded file and interior cut); without (a small area of 0.3.6), the cleaned map
+    average's."""
     SA = None
     if small_area and kind == "clean":
         try:
             from engine.clean import small_area as sarea
-            M = sarea.detail_of(small_area[0], small_area[1], small_area[3], margin_m=0.0)
+            meth = small_area[4] if len(small_area) > 4 else None
+            if meth:
+                M = sarea.detail_of(small_area[0], small_area[1], small_area[3], margin_m=0.0, method=meth,
+                                    decoded=small_area[5] if len(small_area) > 5 else None,
+                                    interior_m=float(small_area[6]) if len(small_area) > 6 else 0.0)
+            else:
+                M = sarea.detail_of(small_area[0], small_area[1], small_area[3], margin_m=0.0)
             SA = sarea.replay_part(M, M["n"])
         except Exception:                                # noqa: BLE001 - the replay plays without the small area
             SA = None
@@ -535,7 +544,7 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
     its marks (it writes the edits file and cleans again). edits (the imported readings, step 2): the file's edits
     file ({} none yet) with on_edits: Edit points removes or puts back readings, nothing is cleaned. field_zone: the
     work's zone map (step 1), on_field_column: a new class column for it. small_area: (flagged zip, polygon file,
-    fingerprint, rule) of the cleaning shown."""
+    fingerprint, rule[, method, decoded file, interior m]) of the cleaning shown (payload_of)."""
     if not path or not os.path.exists(path):
         return
     refused = st.session_state.pop(msg_key(key), None)

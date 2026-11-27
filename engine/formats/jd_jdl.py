@@ -33,9 +33,11 @@ every log file on its own and makes its points of the 5 Hz header samples (type 
 whose intervals add up to no more than 0.9 s are one point, at the position of its last sample. Per point: Duration =
 the time since the point before; distance = the receiver's own distance per fix, which the GNSS records (type 1)
 log beside the position, added up over the point's fixes - the fixes of a gap in the header record (a stop) too
-(_sms_logged; logs without that stream: the antenna's 5 Hz steps); width = the sections on 0.1 s after the last
-sample; flow and moisture = the distance-weighted mean of the channel over the point's samples, a sample with the
-header not working counting as 0; wet mass = flow x Duration; speed = the receiver's own logged ground speed: each
+(_sms_logged; logs without that stream: the antenna's 5 Hz steps); width = the sections on at the middle to the
+next header sample (0.1 s after the file's last sample); flow and moisture = the distance-weighted mean over the
+point's samples of the channel as each header sample reads it (every channel sample to the header sample nearest in
+time, the plain mean of those it gets, else the last one before: _held_nearest), a sample with the header not working
+counting as 0; wet mass = flow x Duration; speed = the receiver's own logged ground speed: each
 fix's speed goes to the header sample nearest in time, a sample reads the plain mean of what it gets and a point the
 mean of its samples weighted by their logged distance, so across a stop the first half of the fixes reads in the
 point before it (logs without these streams: the antenna distance over the GNSS time). Every point with a width is
@@ -132,7 +134,8 @@ LAYOUT_TOL = 0.02                    # a section layout whose width differs from
 OUTLIER_KM = 50.0                    # fixes farther than this from the machine's median position are garbage (lat 0 / lon 0)
 POINTS = ("sms", "ops_center")       # how the logs become readings: SMS's points (default) or the Ops Center's
 SMS_WINDOW_S = 0.9                   # SMS: the intervals of the samples of one point add up to this at most
-SMS_SNAP_MS = 100                    # SMS: a sample or a section change up to this long after an epoch belongs to it
+SMS_SNAP_MS = 100                    # SMS: a sample (width, yields, speed) or, at a file's last header sample, a
+                                     # section change up to this long after an epoch belongs to it
 SMS_CARRY_S = 1.0                    # SMS: what the first sample of a file (or its carry) lasts
 SMS_LONE_M = 1.0                     # SMS: the distance of a file's only sample (3.2808 ft in its export)
 DDI_FLOW, DDI_MOIST, DDI_YWET, DDI_YDRY, DDI_SPEED, DDI_WIDTH, DDI_TW, DDI_STDM = 510, 6, 39, 43, 560, 12001, 8, 75
@@ -1217,6 +1220,56 @@ def _held(fd: FileData, key, t):
     return _step_at(ts, vs, np.asarray(t, np.int64) + SMS_SNAP_MS) if len(ts) else np.full(len(t), np.nan)
 
 
+def _sms_bounds(t):
+    """The upper time bound of every header sample t[j] (sorted, ms) for what SMS gives the NEAREST header sample: the
+    middle of t[j] and t[j+1] (integer ms, a time exactly halfway goes to the earlier sample), t[-1] itself for the
+    file's last header sample (nothing later belongs to it). Header sample j takes the times in
+    (bound[j-1], bound[j]]."""
+    t = np.asarray(t, np.int64)
+    return np.r_[t[:-1] + np.diff(t) // 2, t[-1:]]
+
+
+def _sms_state_times(t):
+    """When SMS reads the section work states of the header samples t (sorted, ms): at the middle to the next header
+    sample (_sms_bounds: a change exactly halfway counts for the earlier sample), SMS_SNAP_MS after the file's last
+    header sample."""
+    t = np.asarray(t, np.int64)
+    return np.r_[_sms_bounds(t)[:-1], t[-1:] + SMS_SNAP_MS]
+
+
+def _held_nearest(fd: FileData, key, t):
+    """The mass flow (DDI 510) and the moisture (DDI 6) at the header samples t as SMS reads them: every sample of the
+    channel goes to the header sample NEAREST in time (_sms_bounds: halfway -> the earlier one; a sample later than
+    the file's last header sample to none). A header sample that receives samples reads their plain mean (a 0 logged
+    during a stop counts); one that receives none holds the last sample given to an earlier header sample, else the
+    value the file carries in; NaN when the file has neither samples nor a carry."""
+    t = np.asarray(t, np.int64)
+    n = len(t)
+    ts, vs = fd.samples.get(key, (np.zeros(0, np.int64), np.zeros(0)))
+    ts, vs = np.asarray(ts, np.int64), np.asarray(vs, float)
+    carry = fd.carry.get(key, np.nan)
+    if n == 0:
+        return np.zeros(0)
+    if not len(ts) and key not in fd.carry:
+        return np.full(n, np.nan)
+    o = np.argsort(ts, kind="stable")
+    ts, vs = ts[o], vs[o]
+    k = np.searchsorted(_sms_bounds(t), ts, side="left")   # the header sample of every channel sample
+    ok = k < n
+    k, vs = k[ok], vs[ok]
+    s = np.bincount(k, weights=vs, minlength=n)
+    c = np.bincount(k, minlength=n)
+    got = c > 0
+    last_v = np.full(n, np.nan)                            # the last sample (in time) each header sample receives
+    if len(k):
+        j = np.flatnonzero(got)
+        last_v[j] = vs[np.searchsorted(k, j, side="right") - 1]
+    prev = pd.Series(last_v).ffill().shift(1).to_numpy(float)   # ... and the last one before header sample j
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = np.where(got, s / np.maximum(c, 1), prev)
+    return np.where(np.isnan(out), carry, out)
+
+
 def _sms_logged(gn: pd.DataFrame, t, last):
     """What the receiver logged (type-1 records, _gnss_logged), as SMS adds it up -> (distance m per header sample,
     speed km/h per point; NaN where a point gets no fix), or None when the file's GNSS records do not log it.
@@ -1279,11 +1332,13 @@ def _sms_file_points(fd: FileData, lat0, lon0):
                     own, on the ellipsoid (0 for a sample without a fix of its own; the carry of the GNSS record
                     gives the first fix its step); a file of one sample and no carry: SMS_LONE_M. A point adds its
                     samples up
-        width       the sections on SMS_SNAP_MS after the last sample (the logged width DDI 12001 without section
-                    states); Y offset = the middle of those sections from the reference above
-        flow,       the mean over the point's samples, weighted by their distance, of the channel held as _held
-        moisture    does; a sample with the header not working (no section on) counts as 0, so a point that starts
-                    or ends a pass reads low, as in SMS
+        width       the sections on at the middle between the last sample and the next header sample (a change
+                    exactly halfway counts for the earlier sample; SMS_SNAP_MS after the file's last header sample);
+                    the logged width DDI 12001 without section states (_held); Y offset = the middle of those
+                    sections from the reference above
+        flow,       the mean over the point's samples, weighted by their distance, of the channel as _held_nearest
+        moisture    reads it (each channel sample to the nearest header sample); a sample with the header not
+                    working (no section on) counts as 0, so a point that starts or ends a pass reads low, as in SMS
         elevation   the antenna altitude at the last sample
         speed       the receiver's logged speed: each fix to the header sample nearest in time, plain mean per sample,
                     the samples weighted by their logged distance (_sms_logged); without those streams in the log:
@@ -1333,12 +1388,13 @@ def _sms_file_points(fd: FileData, lat0, lon0):
     centre = np.zeros(n)
     n_on = np.zeros(n, int)
     on = np.zeros((n, len(secs) if secs is not None else 0), bool)
+    t_states = _sms_state_times(t)
     if secs is not None and len(secs) and fd.cws:
         for col, (cid, ix) in enumerate(zip(secs.grp.values, secs.cws_idx.values)):
             if cid in fd.cws and ix < fd.cws[cid][1].shape[1]:
                 o = np.argsort(fd.cws[cid][0], kind="stable")
                 ct, cs = fd.cws[cid][0][o], fd.cws[cid][1][o]
-                i = np.searchsorted(ct, t + SMS_SNAP_MS, side="right") - 1
+                i = np.searchsorted(ct, t_states, side="right") - 1
                 ok = i >= 0
                 on[ok, col] = cs[i[ok], ix] == 1
         w = secs.width_m.values
@@ -1351,9 +1407,9 @@ def _sms_file_points(fd: FileData, lat0, lon0):
         n_on = (width > 0).astype(int)
     working = width > 0
     # ---- the channels, per sample, then per point
-    flow = np.where(working, np.nan_to_num(_held(fd, (DDI_FLOW, "mg1sec-1"), t)), 0.0)
+    flow = np.where(working, np.nan_to_num(_held_nearest(fd, (DDI_FLOW, "mg1sec-1"), t)), 0.0)
     has_moist = (DDI_MOIST, "ppm") in fd.samples or (DDI_MOIST, "ppm") in fd.carry
-    moist = np.where(working, np.nan_to_num(_held(fd, (DDI_MOIST, "ppm"), t)), 0.0) / 1e4
+    moist = np.where(working, np.nan_to_num(_held_nearest(fd, (DDI_MOIST, "ppm"), t)), 0.0) / 1e4
     y39 = _held(fd, (DDI_YWET, "bu1ac-1"), t)
     v560 = _held(fd, (DDI_SPEED, "km1hr-1"), t)
 

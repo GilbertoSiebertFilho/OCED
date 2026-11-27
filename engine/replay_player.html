@@ -2356,7 +2356,11 @@ function cardHtml(c, i) {
   if (HAS_Z && c.zb) { const z = zoneOf(c.zb[i] >> 1); rows.push(`<div class="cr"><span>Zone</span><span>${zSwatch(z)} ${esc(z.label)}${c.zb[i] & 1 ? " (on a border)" : ""}</span></div>`); }
   if (SA && c.sp && c.sp[i] > 0) {
     const pg = SA.polygons[c.sp[i] - 1], sh = c.ss ? c.ss[i] / 10 : null;
-    if (pg) rows.push(`<div class="cr"><span>Small area</span><span><b>${esc(pg.name)}</b>${sh !== null ? ` · ${fmt(sh, 1)} % of its strip counted` : ""}</span></div>`);
+    // grain / ground (the small area's figure since 0.3.7): the share of the strip as logged inside the line and the
+    // polygon's grain / ground; a small area of 0.3.6: the share the cleaned map average counted
+    if (pg) rows.push(SA.method === "ground"
+      ? `<div class="cr"><span>Small area</span><span><b>${esc(pg.name)}</b>${sh !== null ? ` · ${fmt(sh, 1)} % of its strip inside` : ""} · grain / ground <b>${fmt(pg.dry_yield_bu_ac, 2)}</b> bu/ac</span></div>`
+      : `<div class="cr"><span>Small area</span><span><b>${esc(pg.name)}</b>${sh !== null ? ` · ${fmt(sh, 1)} % of its strip counted` : ""}</span></div>`);
   }
   if (KIND === "clean" || IMP_ED) {
     rows.push(`<div class="cr"><span>State</span><span>${stateText(c, i)}</span></div>`);

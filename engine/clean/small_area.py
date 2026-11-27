@@ -429,19 +429,34 @@ def polygon_sum_text(p: dict) -> str:
 def replay_part(M: dict, n_rows: int) -> dict:
     """The small area on the replay of the cleaning (engine/replay.py replay_payload(small_area=...)): the polygons
     (rings and a label point in WGS 84, the table's figures), the box to zoom to, and by_row: per row of the flagged
-    file the polygon (1-based; 0 none) and the share of its strip counted (0.1 %), of the polygon where it counts most."""
+    file the polygon (1-based; 0 none) and the share of its strip counted (0.1 %), of the polygon where it counts most.
+    From measure_all (0.3.8: M has ground_rows) the figures and shares are grain / ground's, the figure the small area
+    leads with: every reading of the flagged file whose strip as logged has a part inside (kept, removed by the
+    cleaning or by hand) with its share inside, and per polygon readings, grain_bu, ground_ac, ground_pct and
+    dry_yield_bu_ac (grain / ground), the cleaned map average beside it as cleaned_bu_ac. From measure() (a small area
+    of 0.3.6) the cleaned map average's counted readings and figures, as before."""
     from shapely.ops import polylabel
     crs = M["crs"]
     names = [p["name"] for p in M["polygons"]]
     poly_of = np.zeros(int(n_rows), np.int64)
     share_of = np.zeros(int(n_rows), np.int64)
     best = np.zeros(int(n_rows), float)
+    ground = M.get("ground_rows") is not None
     for k, name in enumerate(names, start=1):
-        D = (M.get("readings") or {}).get(name)
-        if not D:
-            continue
-        c = np.asarray(D["counted"], bool)
-        ii, sh = np.asarray(D["idx"])[c], np.asarray(D["share"], float)[c]
+        if ground:
+            D = M["ground_rows"].get(name)
+            if not D:
+                continue
+            sh_all = np.asarray(D["share"], float)
+            c = (np.asarray(D["touch"], bool) & (sh_all > 0)
+                 & np.array([str(s_) == "flagged" for s_ in D["src"]], bool))
+            ii, sh = np.asarray(D["row"], np.int64)[c], sh_all[c]
+        else:
+            D = (M.get("readings") or {}).get(name)
+            if not D:
+                continue
+            c = np.asarray(D["counted"], bool)
+            ii, sh = np.asarray(D["idx"])[c], np.asarray(D["share"], float)[c]
         better = sh > best[ii]
         poly_of[ii[better]], share_of[ii[better]] = k, np.round(1000 * sh[better]).astype(np.int64)
         best[ii[better]] = sh[better]
@@ -464,11 +479,16 @@ def replay_part(M: dict, n_rows: int) -> dict:
             lab = [round(float(pt.x), 7), round(float(pt.y), 7)]
             b = g.bounds
             x0.append(b[0]), y0.append(b[1]), x1.append(b[2]), y1.append(b[3])
-        out_p.append({"name": str(p["name"]), "rings": rings, "label": lab,
-                      **{f: p["kept"].get(f) for f in ("readings", "area_ac", "total_dry_bu", "dry_yield_bu_ac")}})
+        if ground:
+            Gp = p.get("ground") or {}
+            figs = {f: Gp.get(f) for f in ("readings", "grain_bu", "ground_ac", "ground_pct", "dry_yield_bu_ac")}
+            figs["cleaned_bu_ac"] = p["kept"].get("dry_yield_bu_ac")
+        else:
+            figs = {f: p["kept"].get(f) for f in ("readings", "area_ac", "total_dry_bu", "dry_yield_bu_ac")}
+        out_p.append({"name": str(p["name"]), "rings": rings, "label": lab, **figs})
     bbox = [min(x0), min(y0), max(x1), max(y1)] if x0 else None
     return {"polygons": out_p, "bbox": bbox, "rule": M["rule"], "rule_text": M["rule_text"],
-            "by_row": {"poly": poly_of, "share": share_of}}
+            "method": "ground" if ground else None, "by_row": {"poly": poly_of, "share": share_of}}
 
 
 def table(M: dict) -> pd.DataFrame:
@@ -1238,6 +1258,39 @@ def ground_sum_text(p: dict) -> str:
     G = p.get("ground") or {}
     return (f"{p['name']}: grain {_f(G.get('grain_bu'), 3)} bu / ground {_f(G.get('ground_ac'), 4)} ac = "
             f"{_f(G.get('dry_yield_bu_ac'))} bu/ac ({G.get('readings', 0):,} readings)")
+
+
+HOVER_STATUS = {"kept": "Kept by the cleaning", "removed": "Removed by the cleaning ({by})",
+                "hand": "Removed by hand (Edit points)", "left_out": "Left out by the import"}
+HOVER_CLICK = "Click (tap) for the calculation"
+
+
+def ground_hover_text(D: dict, j: int, polygon: str) -> list:
+    """The SHORT hover of one reading of the grain / ground rows (measure_ground's rows, row j), a few lines that fit
+    beside the cursor: what happened to the reading, the share of its strip inside the polygon, the yield used and the
+    grain it adds (bu). The whole calculation (ground_text) is the card a click on the reading shows."""
+    stt = str(D["status"][j])
+    out = [HOVER_STATUS[stt].format(by=str(D["removed_by"][j] or "?"))]
+    y, full, sh = float(D["yield"][j]), float(D["full_ac"][j]), float(D["share"][j])
+    if not D["touch"][j]:
+        out.append(f"Outside {polygon}: not counted")
+    elif full <= 0:
+        out.append(f"In {polygon}, no width or no distance: no area")
+    else:
+        out.append(f"{100 * sh:.0f} % of its strip inside {polygon}")
+    if D["touch"][j]:
+        out.append(f"Yield used {_n(y, 2)} bu/ac · {float(D['grain'][j]):.4f} bu")
+    else:
+        out.append(f"Yield {_n(y, 2)} bu/ac")
+    out.append(HOVER_CLICK)
+    return out
+
+
+def ground_sum_hover(p: dict) -> str:
+    """The SHORT hover of a polygon's line: its name and grain / ground (the figure the small area leads with)."""
+    G = p.get("ground") or {}
+    return (f"{p['name']}: grain / ground {_f(G.get('dry_yield_bu_ac'))} bu/ac\n"
+            f"{G.get('readings', 0):,} readings\n{HOVER_CLICK.replace('calculation', 'sums')}")
 
 
 def figure_of(p: dict, method: str):

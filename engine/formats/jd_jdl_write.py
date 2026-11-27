@@ -17,9 +17,10 @@ flow (DDI 510, 1 Hz), moisture (DDI 6), the logged working width (DDI 12001), th
 one record per group of 16 sections), the two header end points (type 2, 5 Hz) and the GNSS antenna (type 1, 5 Hz).
 jd_jdl makes readings of them in one of two ways, and the writer marks the ones the decode it is given used:
   points="sms" (jd_jdl's default): every log file on its own; a point is a group of 5 Hz header samples; its width is
-      the sections on SMS_SNAP_MS after its LAST sample (the logged width DDI 12001 in a file without section
-      states); its flow and moisture the distance-weighted mean over its samples, a sample with no section on
-      counting as 0. Look-ups: every header sample at t + SMS_SNAP_MS.
+      the sections on at the middle between its LAST sample and the next header sample (SMS_SNAP_MS after the
+      file's last sample; the logged width DDI 12001 at t + SMS_SNAP_MS in a file without section states); its flow
+      and moisture the distance-weighted mean over its samples, a sample with no section on counting as 0.
+      Look-ups: every header sample at jd_jdl._sms_state_times (section states), at t + SMS_SNAP_MS (DDI 12001).
   points="ops_center": one reading per DDI 510 sample; sections at t + 0.8 s (the merged files of one section
       layout), width DDI 12001 at t + 1.6 s (or the sections on when that channel reads wider than the header).
 
@@ -30,7 +31,8 @@ the way the monitor itself marks grain that is not harvested: the header is up f
   sections   every section off (record type 4) at the look-ups of the removed reading's own samples: in "sms" mode
              every header sample of the point (so the point has no width and no grain), in "ops_center" mode the
              reading's look-up; the original states again before the next kept look-up. Change times: in "sms" mode
-             SMS_EDGE_MS before the header sample (inside the SMS_SNAP_MS window of that sample and of no other), in
+             SMS_SNAP_MS + SMS_EDGE_MS before the look-up of the header sample (SMS_EDGE_MS before the sample itself
+             at 5 Hz), always after the look-up of the sample before it, in
              "ops_center" mode at an SMS point boundary near the flow time where one lies in the interval.
   width      DDI 12001 = 0 at the same look-ups ("sms": every file, which is the width in the files without section
              states; "ops_center": the readings whose width jd_jdl takes from that channel).
@@ -1054,7 +1056,7 @@ def _sms_samples(fd, lat0, lon0):
             if cid in fd.cws and ix < fd.cws[cid][1].shape[1]:
                 o = np.argsort(fd.cws[cid][0], kind="stable")
                 ct, cs = fd.cws[cid][0][o], fd.cws[cid][1][o]
-                i = np.searchsorted(ct, t + SMS_SNAP_MS, side="right") - 1
+                i = np.searchsorted(ct, J._sms_state_times(t), side="right") - 1
                 ok = i >= 0
                 on[ok, col] = cs[i[ok], ix] == 1
     return {"t": t, "first": first, "last": last, "secs": secs, "has_states": has, "on": on}
@@ -1154,7 +1156,8 @@ def _plan_sms(u: _Unit, df0, rows_u, kept_rows, narrow, widths, notes, warnings,
                         u.expect.setdefault(int(t[last[p]]), {})["ref_move_m"] = c1 - c0
                     c_fin = c1
         # ---- section work states, group by group (the decoder's groups of this file)
-        q = t + SMS_SNAP_MS
+        q = t + SMS_SNAP_MS                         # the look-ups of DDI 12001 (jd_jdl._held)
+        q4 = J._sms_state_times(t)                  # the look-ups of the section states (jd_jdl._sms_state_times)
         edge = _sms_edge(lg.end_ms)
         if S["has_states"]:
             cid_of_grp = {int(g): int(c) for c, g in zip(lg.meta.sections.cws_id.values, lg.meta.sections.grp.values)}
@@ -1170,13 +1173,13 @@ def _plan_sms(u: _Unit, df0, rows_u, kept_rows, narrow, widths, notes, warnings,
                     st, sv, _, _ = _slots(ev, "last")
                     for p, sel in sel_of.items():
                         k = int(last[p])
-                        o = _evaluate(st, sv, [q[k]])[0]
+                        o = _evaluate(st, sv, [q4[k]])[0]
                         s2 = _pattern_states({g: o}, secs, sel)[g]
                         if not _same4(s2, o):
                             kd[k] = T_SET
                             val[k] = s2
                 width = max((len(e[1]) for e in ev if e[1] is not None), default=0)
-                _edit(u, f"{os.path.basename(lg.meta.path)} group {g}", ev, "last", q, kd, val, edge, _same4,
+                _edit(u, f"{os.path.basename(lg.meta.path)} group {g}", ev, "last", q4, kd, val, edge, _same4,
                       lambda o, wd=width: _off4(o, wd), lambda tt, li=li, cid=cid: _home4(u, [li], {li: cid}, tt),
                       _raw4, notes)
                 _derive_t4(recs, u)
@@ -1237,14 +1240,16 @@ def _centre(on, w, y):
 def _sms_cuts(lg: _Log, fd) -> tuple[np.ndarray, np.ndarray]:
     """Where a section change cuts no SMS point of this log: intervals (lo, hi] of change times (SMS makes its points
     of the 5 Hz header samples of every log on its own, SMS_WINDOW_S of sample intervals per point, and looks every
-    sample's sections up SMS_SNAP_MS after it). Returns (lo, hi) arrays with the open ends."""
+    sample's sections up at the middle to the next sample, jd_jdl._sms_state_times). Returns (lo, hi) arrays with the
+    open ends."""
     en = fd.ends
     if en is None or not len(en):
         return np.array([-np.inf]), np.array([np.inf])
     t = np.unique(en.t_ms.values.astype(np.int64))
     first, last, _ = J._sms_groups(t, fd.t0_ms if fd.t0_ms is not None else t[0], fd.ends_carry is not None)
-    lo = np.r_[-np.inf, t[np.array(last)] + SMS_SNAP_MS]
-    hi = np.r_[t[np.array(first)] + SMS_SNAP_MS, np.inf]
+    look = J._sms_state_times(t)
+    lo = np.r_[-np.inf, look[np.array(last)]]
+    hi = np.r_[look[np.array(first)], np.inf]
     return lo.astype(float), hi.astype(float)
 
 
