@@ -24,7 +24,8 @@ sys.path.insert(0, ROOT)
 
 from engine import sms_import as si  # noqa: E402
 from tests.app_steps import (_apply_import, _apply_to_all, _back_to_default, _badge_lines, _extract_again,  # noqa: E402
-                             _first_metric, _last_metric, _set_import, _starts_from, _switch_off, by_key, switch)
+                             _first_metric, _last_metric, _set_import, _starts_from, _switch_off, by_key, step_order,
+                             switch)
 from tests.synthetic import make_applied, make_field  # noqa: E402
 
 APP = os.path.join(ROOT, "app", "oced.py")
@@ -138,7 +139,7 @@ def test_an_untouched_flow_gives_the_numbers_of_before(kind, tmp_path, monkeypat
         at.toggle(key=k).set_value(False).run()
     D = _D(at)
     assert D["import_mode"] == "default" and D["shp"] == D["import_default"]["shp"] and switch(at).value
-    assert "step 1" in _starts_from(at).value
+    assert "step 2" in _starts_from(at).value              # 0.4.0: the raw map (step 2) shows it
     C = _clean(at)
     R = C["R"]
     y = pyogrio.read_dataframe(C["shp"], read_geometry=False)["Yld_Vol_Dr"].astype(float)
@@ -160,16 +161,16 @@ def test_own_settings_leave_step_1_as_it_was(field, tmp_path, monkeypatch):
     t = at.session_state["active"]
     DF = dict(_D(at)["import_default"])
     shp1, mt1, n1 = DF["shp"], os.path.getmtime(DF["shp"]), _first_metric(at, "Readings").value
-    assert not [m for m in at.metric if m.proto.delta_description == "vs step 1"]   # nothing applied: one strip
-    assert [c.value for c in at.caption if c.value == "The data is as in step 1."]
+    assert not [m for m in at.metric if m.proto.delta_description == "vs SMS default"]   # nothing applied: one strip
+    assert [c.value for c in at.caption if c.value == "The data is SMS's default import (the map of step 2)."]
     _apply_import(at, max=150.0)
     D = _D(at)
     assert D["import_mode"] == "custom" and D["shp"].endswith("_imported_custom.shp")
     assert D["import_default"]["shp"] == shp1 and os.path.getmtime(shp1) == mt1
     assert _first_metric(at, "Readings").value == n1
     r2 = _last_metric(at, "Readings")
-    assert r2.proto.delta_description == "vs step 1" and r2.value == f"{D['n']:,}" and D["n"] < int(n1.replace(",", ""))
-    assert {m.label for m in at.metric if m.proto.delta_description == "vs step 1"} == {
+    assert r2.proto.delta_description == "vs SMS default" and r2.value == f"{D['n']:,}" and D["n"] < int(n1.replace(",", ""))
+    assert {m.label for m in at.metric if m.proto.delta_description == "vs SMS default"} == {
         "Readings", "Area harvested", "Mean dry yield", "Average dry yield (SMS)", "Total dry bu"}   # 0.3.6: the total
     assert any(b.startswith("Your settings") and "Max. yield volume" in b for b in _badge_lines(at))
     assert by_key(at.button_group, "attr_imp_") is not None and by_key(at.button_group, "attr_raw_") is not None
@@ -186,7 +187,7 @@ def test_own_settings_leave_step_1_as_it_was(field, tmp_path, monkeypatch):
     # the report's import line names it
     import pymupdf
     text = " ".join(pg.get_text() for pg in pymupdf.open(C["report_pdf"])).replace("\n", " ")
-    assert "Your settings (step 2):" in text
+    assert "Your settings (step 1, Import settings):" in text
 
 
 def test_back_to_the_default(field, tmp_path, monkeypatch):
@@ -202,7 +203,7 @@ def test_back_to_the_default(field, tmp_path, monkeypatch):
     D = _D(at)
     assert D["import_mode"] == "default" and D["shp"] == D["import_default"]["shp"] and switch(at).value
     assert not _files(wd, f"{t}_imported_custom.*")
-    assert not [m for m in at.metric if m.proto.delta_description == "vs step 1"]
+    assert not [m for m in at.metric if m.proto.delta_description == "vs SMS default"]
     # with a cleaning: the dialog
     _apply_import(at, max=150.0)
     _clean(at)
@@ -522,7 +523,7 @@ def test_a_card_crop_without_a_weight(tmp_path, monkeypatch):
     # the decoder's note names the product chosen; the record's totals are on that product, as 0.3.0's decode with
     # the product gave them
     note = " ".join(D["source"]["warnings"])
-    assert "choose the product in step 2" not in note and "product wheat chosen in step 2 (60 lb/bu, 13.5 %)" in note
+    assert "choose the product in step 1" not in note and "product wheat chosen in step 1 (60 lb/bu, 13.5 %)" in note
     import dataclasses
     from engine import run as er
     from engine.formats import detect
@@ -536,7 +537,7 @@ def test_a_card_crop_without_a_weight(tmp_path, monkeypatch):
     if d["source"].get("sms_summary"):
         assert D["source"]["sms_summary"]["dry_bu"] == pytest.approx(d["source"]["sms_summary"]["dry_bu"], rel=1e-9)
     C = _clean(at)
-    assert not any("choose the product in step 2" in w for w in C["R"].get("warnings") or [])
+    assert not any("choose the product in step 1" in w for w in C["R"].get("warnings") or [])
     # the card names no crop OCED knows: its Product stays, the Crop column says the product chosen (as 0.3.0)
     g0 = pyogrio.read_dataframe(D["import_default"]["shp"], read_geometry=False)
     g1 = pyogrio.read_dataframe(D["shp"], read_geometry=False)
@@ -599,7 +600,8 @@ def _fields(at):
 
 
 def _vs(at, step):
-    return [m for m in at.metric if m.proto.delta_description == f"vs step {step}"]
+    # 0.4.0: the strip of the import in use is compared with SMS's default (0.3.x: 'vs step 1'), both in step 2
+    return [m for m in at.metric if m.proto.delta_description == ("vs SMS default" if step == 1 else f"vs step {step}")]
 
 
 def test_an_emptied_field_of_step_2_stays_empty(field, tmp_path, monkeypatch):
@@ -625,18 +627,20 @@ def test_an_emptied_field_of_step_2_stays_empty(field, tmp_path, monkeypatch):
 
 
 def test_step_3_names_the_import_it_starts_from_and_the_dialog_keeps_the_switch_off(field, tmp_path, monkeypatch):
-    """Step 3's yield path and Steps table name the import the cleaning started from by its step ('your settings
-    (step 2)', never 'raw data'), with no colour written in the page (the brand's classes, light and dark); the
-    switch turned on over a cleaned file stays off behind the dialog, step 2 still showing the file's own import."""
+    """Step 3's yield path and Steps table name the import the cleaning started from ('your settings', set in step 1
+    and drawn in step 2, so with no number; never 'raw data'), with no colour written in the page (the brand's
+    classes, light and dark); the switch turned on over a cleaned file stays off behind the dialog, step 2 still
+    showing the file's own import."""
     at = _app(tmp_path / "ws", monkeypatch)
     _open(at, field["shp"])
     _apply_import(at, min=60.0)
     _clean(at)
     box = [h.proto.body for h in at.get("html") if "oced-path" in h.proto.body]
-    assert box and "from your settings (step 2)" in box[0] and "raw data" not in box[0].lower()
+    assert box and "from your settings" in box[0] and "(step" not in box[0].split("from your settings")[1][:8]
+    assert "raw data" not in box[0].lower()
     assert "color:" not in box[0]
     T = next(d.value for d in at.dataframe if "mean after" in d.value.columns)
-    assert T["step"].iloc[0] == "your settings (step 2)"
+    assert T["step"].iloc[0] == "your settings"          # 0.4.0: set in step 1, drawn in step 2: no number
     n2 = len(_vs(at, 1))
     assert n2 == 5                                       # 0.3.6: the total in bushels too
     switch(at).set_value(True).run()
@@ -778,7 +782,7 @@ def test_apply_to_all_says_what_it_changes_and_what_failed(field, tmp_path, monk
     assert len(w) == 1 and w[0].count(b) == 1
     # its reason and the way to finish it: Apply to all no longer reaches it once the other file changed
     assert w[0].endswith("(OSError: No space left on device): the file and its import are unchanged; free disk "
-                         "space, then choose it in step 2 and Apply the same change on it"), w
+                         "space, then choose it in step 1 and Apply the same change on it"), w
     assert not any("could not be imported" in s.value for s in at.success)
     assert _D(at, b)["sms_import"]["resolved"]["min_yield"] == 10.0
     _apply_to_all(at, max=110.0)
@@ -830,7 +834,7 @@ def test_older_values_are_not_the_users_and_step_4_names_a_kept_cleanings_import
     assert list(T4["import"]) == ["your settings: max. yield volume 150.00"]
     box = [h.proto.body for h in at.get("html") if "oced-path" in h.proto.body]
     T = next(d.value for d in at.dataframe if "mean after" in d.value.columns)
-    assert "from your settings (step 2)" in box[0] and T["step"].iloc[0] == "your settings (step 2)"
+    assert "from your settings" in box[0] and T["step"].iloc[0] == "your settings"
     assert not any(" vs step" in str(m.delta) for m in at.metric if m.label.endswith(", cleaned"))
     assert not any(" vs step" in str(m.delta) for m in at.metric if m.label.endswith("cleaned (SMS)"))
 
@@ -946,7 +950,7 @@ def test_an_older_rule_import_stays_through_a_copy_and_step_2_says_what_apply_ch
     by_key(at.button, "fi_go_").click().run()
     assert not at.exception, at.exception
     msg = " ".join(s.value for s in at.success)
-    assert f"Steps 1 and 2 now show it; the older rule's import had {n_old:,} readings." in msg
+    assert f"Step 2 now shows it; the older rule's import had {n_old:,} readings." in msg
     assert _D(at)["n"] == field["n"] and not _D(at)["import_default"].get("older")
     assert _D(at)["shp"].endswith(f"{t}_imported_default.shp") and not glob.glob(os.path.splitext(shp)[0] + ".*")
 
@@ -1030,7 +1034,7 @@ def test_a_default_that_cannot_be_made_keeps_its_reason_without_a_path(field, tm
     assert ":\\" not in note[0] and ":/" not in note[0], note
     at.run()
     assert not any("could not be made" in c.value for c in at.caption)
-    helps = [m.help or "" for m in at.markdown if "oced-badge" in m.value]
+    helps = [m.help or "" for m in step_order(at) if "oced-badge" in m.value]
     assert "could not be made (RuntimeError: Failed to create file" in helps[0], helps
     assert "no longer on disk" not in helps[0] and ":\\" not in helps[0], helps
 
@@ -1092,7 +1096,7 @@ def test_none_as_logged_after_a_failed_import_is_named_as_logged(tmp_path, monke
             "import"])
     box = [h.proto.body for h in at.get("html") if "oced-path" in h.proto.body]
     T = next(d.value for d in at.dataframe if "mean after" in d.value.columns)
-    assert "from import failed (step 1)" in box[0] and T["step"].iloc[0] == "import failed (step 1)"
+    assert "from import failed (step 2)" in box[0] and T["step"].iloc[0] == "import failed (step 2)"
     assert step4() == ["import failed"]
     _apply_import(at, how="none")
     D = _D(at)
@@ -1590,12 +1594,12 @@ def test_apply_to_all_names_and_keeps_a_file_on_none(field, tmp_path, monkeypatc
     before = _state(at, b)
     _pick(at, a)
     _set_import(at, max=150.0)
-    assert f"Apply to all leaves {b} as it is: no import as SMS ('None' in step 2)." in _orange(at), _orange(at)
+    assert f"Apply to all leaves {b} as it is: no import as SMS ('None' in step 1)." in _orange(at), _orange(at)
     by_key(at.button, "fi_goall_").click().run()
     assert not at.exception, at.exception
     assert _state(at, b) == before and b in at.session_state["cleaned"]
     msg = " ".join(s.value for s in at.success)
-    assert f"Left as it is (no import as SMS, 'None' in step 2): {b}." in msg, msg
+    assert f"Left as it is (no import as SMS, 'None' in step 1): {b}." in msg, msg
 
 
 def _sig(shp):
@@ -2204,7 +2208,7 @@ def test_a_0_3_0_card_of_a_named_crop_decoded_with_another_product_names_the_yie
     assert (f"decoded by an older OCED with product barley, the yields converted with wheat ({tw:,.2f} lb/bu, "
             f"{dm:.2f} %)") in b1[0] and "48.00 lb/bu" not in b1[0], b1
     # SMS's conversion of those readings (the card's decoding options are SMS's): not called 'not SMS's default'
-    h1 = next(m.help for m in at.markdown if "oced-badge" in m.value)
+    h1 = next(m.help for m in step_order(at) if "oced-badge" in m.value)
     assert h1 == ("Decoded by an older OCED with product barley (its raw data is not at hand); the import converts its "
                   "yields with wheat as SMS's default does."), h1
     _back_to_default(at, confirm=True)                     # on the older version's readings
@@ -2329,8 +2333,10 @@ def test_steps_1_and_2_when_nothing_is_left_and_values_typed_through_none(field,
     g.to_file(v, engine="pyogrio")
     at = _app(tmp_path / "ws", monkeypatch)
     _open(at, v)
-    nxt = [h.proto.body for h in at.get("html") if "oced-next" in h.proto.body]
-    assert nxt and not any("#oced-step-3" in x for x in nxt) and any("#oced-step-2" in x for x in nxt), nxt
+    # 0.4.0: step 3 says in one line what is missing and which step gives it (no Clean)
+    assert any(i.value.startswith("Nothing to clean: the import in use leaves no reading with a position. Change the "
+                                  "import in step 1") for i in at.info), [i.value for i in at.info]
+    assert not [b for b in at.button if b.key == "clean_one"]
     assert any("switch this off to change the import" in c.value for c in at.caption)
     at = _app(tmp_path / "ws2", monkeypatch)
     _open(at, field["shp"])
@@ -2339,7 +2345,7 @@ def test_steps_1_and_2_when_nothing_is_left_and_values_typed_through_none(field,
         # the heading may carry the yield's source after the column name ("computed from ..."): keep the step part
         return [" · " + m.value.split("`Yld_Vol_Dr`")[1].split(" · ", 1)[1] for m in at.markdown
                 if "`Yld_Vol_Dr`" in m.value]
-    assert heads() == [" · SMS default (step 1)"], heads()
+    assert heads() == [" · SMS default (step 2)"], heads()
     _set_import(at, min=7.0, max=150.0, sd=2.0)
     by_key(at.button_group, "fi_how_").set_value("none").run()
     assert not at.exception, at.exception
@@ -2351,7 +2357,7 @@ def test_steps_1_and_2_when_nothing_is_left_and_values_typed_through_none(field,
     by_key(at.button, "fi_go_").click().run()
     assert not at.exception, at.exception
     assert _D(at)["sms_import"]["resolved"]["start_delay_s"] == 2.0
-    assert heads() == [" · SMS default (step 1)", " · your settings (step 2)"], heads()
+    assert heads() == [" · SMS default (step 2)", " · your settings"], heads()
     _clean(at)
     assert " · clean (step 3)" in heads(), heads()
 
@@ -2384,7 +2390,8 @@ def test_the_report_names_the_import_of_a_cleaning():
     version's decode."""
     from engine.report import clean_report as CR
     base = {"settings": "min. yield volume 5.000 bu/ac", "n_all": 10, "n_in": 9}
-    assert CR._import_text({**base, "mode": "custom"}).startswith("Your settings (step 2): min. yield volume")
+    assert CR._import_text({**base, "mode": "custom"}).startswith(
+        "Your settings (step 1, Import settings): min. yield volume")
     txt = CR._import_text({**base, "mode": "older", "older": ["Min. yield volume 5.000 → 0.000"]})
     assert txt.startswith("An older OCED rule, kept as saved (Min. yield volume 5.000 → 0.000): min. yield"), txt
     txt = CR._import_text({**base, "mode": "older", "older": ["its raw data is not at hand"],

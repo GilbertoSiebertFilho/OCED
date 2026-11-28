@@ -85,3 +85,23 @@ def test_the_css_has_a_rule_for_every_prefix():
     assert "st-key-gw_more_" in css and "border-left: 3px solid" in css       # the inner openers: a thinner edge
     assert "light-dark(" in css.split("openers of inputs")[1]                  # the dark-mode pairs
     assert css.count("<style>") == 1 and css.strip().endswith("</style>")
+
+
+def test_the_step_bar_is_one_row_at_every_width_and_follows_the_open_step():
+    """0.4.0: the step bar is one row that scrolls sideways at every width (with the sidebar open the main area is
+    too narrow for the six pills up to about 1,330 px of viewport, which a rule on the viewport's width missed: the
+    sixth pill went to a second row); up to 900 px its pills are smaller. Its script brings the open step's pill into
+    view by the bar's own scrollLeft only (the page never moves up or down)."""
+    css = brand._css()
+    bar = css.split('.st-key-step_tab > div > [role="tablist"] {', 1)[1].split("}", 1)[0]
+    assert "flex-wrap: nowrap" in bar and "overflow-x: auto" in bar and "@media" not in bar
+    small = css.split("@media (max-width: 900px)", 1)[1].split("\n}", 1)[0]
+    assert "flex-wrap" not in small and "font-size: 0.95rem" in small
+    assert "@media (max-width: 640px)" not in css
+    # the grower's weight box: no +/- buttons
+    assert '[class*="st-key-gw_w_"] [data-testid="stNumberInputStepUp"]' in css
+    js = brand.STEP_BAR_JS
+    assert js.startswith("<script>") and "scrollIntoView" not in js and "scrollTo({left: left" in js
+    assert '[role="tab"][aria-selected="true"]' in js and ".st-key-step_tab" in js
+    src = open(os.path.join(ROOT, "app", "brand.py"), encoding="utf-8").read()
+    assert "st.html(STEP_BAR_JS, unsafe_allow_javascript=True)" in src

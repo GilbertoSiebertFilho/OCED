@@ -36,9 +36,10 @@ Idle time: a gap of more than IDLE_GAP_S between two readings of a combine break
 works for more than IDLE_SKIP_S is skipped in playback when 'skip idle time' is on (the clock keeps the real time).
 
 Size: every column is quantised (positions 1e-7 deg, about 1 cm; direction 0.1 deg; width, offset and distance 1 cm;
-yield 0.1 bu/ac; moisture and speed 0.01), delta coded and written as zig-zag LEB128 varints in base64: about 12 bytes
-a reading, 130,000 readings in about 2 MB. Above max_bytes the readings are thinned (every k-th of each combine, the
-distance of the readings skipped added to the one kept), and the player says so.
+yield 0.01 bu/ac, Y_Q (0.1 before 0.4.0: the player reads P['y_q'], 0.1 when a file has none); moisture and speed
+0.01), delta coded and written as zig-zag LEB128 varints in base64: about 12 to 13 bytes a reading, 130,000 readings
+in about 2 MB. Above max_bytes the readings are thinned (every k-th of each combine, the distance of the readings
+skipped added to the one kept), and the player says so.
 
 The make of a combine (make_of): a John Deere display log (.jdl, a GreenStar 3 card) whose serial is a John Deere PIN
 (1H0...) is a John Deere; a Case IH / New Holland card tells the make in its combine folder (COMBINES/<id>/<id>.agp:
@@ -49,9 +50,10 @@ tells: the app's own colours (navy, light blue). The caller can set the make of 
 Edits by hand (a cleaning, engine/clean/manual_edits.py): the payload of a flagged file carries, for the card of a
 reading, the values the filters compared (yf: the dry yield x Swath_Scl of S5; sf: the speed after the swath step of
 S4; wl: the logged width when the strip is drawn with the narrowed one), the limits of each combine (P['limits'],
-from the cleaning record) and, after a cleaning with an edits file, each reading's mark (e: removed by hand, kept by
-hand, asked but not applied, its fate moved without a mark, and the step of the automatic cleaning) with the record's
-summary (P['manual']). With edit=True (the app) it also carries P['edit']: whether the readings can be marked here
+from the cleaning record; a negative 3-sigma dry-yield lower limit shown as the import minimum in force;
+P['limits_of'] 'all' when one group holds several combines) and, after a cleaning with an edits file, each reading's
+mark (e: removed by hand, kept by hand, asked but not applied, its fate moved without a mark, and the step of the
+automatic cleaning) with the record's summary (P['manual']). With edit=True (the app) it also carries P['edit']: whether the readings can be marked here
 (every reading of the file, not thinned) and a token of the flagged file; edit_keys() turns the player's marks
 (combine number, reading index) into the engine's reading keys (manual_edits.flagged_keys) and refuses a reading cut
 by the import range, the clip or the swath step. Nothing here writes an edits file or runs a cleaning.
@@ -62,7 +64,7 @@ the readings of E's remove list (keys of manual_edits.file_keys, the same as the
 stage 'import': a click removes any reading or puts back one removed by hand; nothing is kept by hand before a
 cleaning. edit_keys(..., stage="import") turns those marks into keys of the import file.
 
-A small area (engine/clean/small_area.py, step 3 of the app): small_area=X (small_area.replay_part) puts the polygons
+A small area (engine/clean/small_area.py, the plots of step 5 of the app): small_area=X (small_area.replay_part) puts the polygons
 on the replay of a cleaning (P['small_area']: rings, names, the box to zoom to) and each counted reading's polygon and
 share in the columns 'sp' / 'ss' (the card says them).
 """
@@ -88,6 +90,7 @@ from engine.clean import yield_clean
 FORMAT_VERSION = 1
 IDLE_GAP_S = 45.0          # a gap between two readings of one combine longer than this breaks its activity
 IDLE_SKIP_S = 90.0         # a time with no combine working longer than this is skipped in playback
+Y_Q = 0.01                 # the yield's quantum (bu/ac): the values shown are the real ones to two decimals
 MAX_BYTES = 5_500_000      # the encoded readings (base64) above this are thinned
 EDIT_MAX_BYTES = 16_000_000   # a cleaning replay the app can edit: every reading up to this, else no edit mode
 EDIT_STATES = {"R": 1, "K": 2, "N": 3}   # Man_Edit -> the mark of the payload (0: none)
@@ -540,7 +543,7 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
     card = {}                                   # a cleaning: the values its filters compared, where they differ
     if kind == "clean":
         if "Swath_Scl" in g and ycol == det.get("yield"):
-            card["yf"] = (yld * np.nan_to_num(_num(g, "Swath_Scl"), nan=1.0), 0.1)        # S5: Yld_Vol_Dr x scale
+            card["yf"] = (yld * np.nan_to_num(_num(g, "Swath_Scl"), nan=1.0), Y_Q)        # S5: Yld_Vol_Dr x scale
         if "Dist_Opt" in g and dcol:
             d_log, d_opt = _num(g, dcol), _num(g, "Dist_Opt")
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -647,7 +650,7 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
             "dir": _q(ang, 0.1, missing=0),
             "w": _q(w, 0.01, missing=0, lo=0), "d": _q(d, 0.01, missing=0, lo=0),
             "off": _q(oo, 0.01, missing=0),
-            "y": _q(yld[idx], 0.1, lo=0), "m": _q(moi[idx], 0.01, lo=0), "s": _q(spd[idx], 0.01, lo=0),
+            "y": _q(yld[idx], Y_Q, lo=0), "m": _q(moi[idx], 0.01, lo=0), "s": _q(spd[idx], 0.01, lo=0),
             "f": flags,
         }
         for k_, (v_, sc_) in card.items():
@@ -736,8 +739,8 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
     P = {
         "v": FORMAT_VERSION, "kind": kind, "title": title or os.path.splitext(os.path.basename(path))[0],
         "file": os.path.basename(path), "n_file": int(n_file), "n": int(n_used), "thin": int(thin),
-        "t0": float(t_lo), "t_end": round(t_hi - t_lo, 1), "basis": basis, "idle": [[round(a - t_lo, 1),
-                                                                                    round(b - t_lo, 1)] for a, b in gaps],
+        "t0": float(t_lo), "t_end": round(t_hi - t_lo, 1), "y_q": Y_Q,
+        "basis": basis, "idle": [[round(a - t_lo, 1), round(b - t_lo, 1)] for a, b in gaps],
         "idle_gap_s": IDLE_GAP_S, "idle_skip_s": IDLE_SKIP_S, "sms_rect": bool(sms_out),
         "src_fmt": src_fmt, "center": [lon0, lat0],
         "bbox": ([float(lon[ok].min()), float(lat[ok].min()), float(lon[ok].max()), float(lat[ok].max())]
@@ -778,6 +781,8 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
         lim = limits_of(record, [C["id"] for C in out_c])
         if lim:
             P["limits"] = lim
+            if limits_shared(record, [C["id"] for C in out_c]):
+                P["limits_of"] = "all"           # one group for several combines: the card says so
         if man is not None:
             P["auto_codes"] = auto_codes
             P["manual"] = manual_part(record, man[ok], (rauto if rauto is not None else remby)[ok], remby[ok])
@@ -803,14 +808,20 @@ def replay_payload(path: str, kind: str = "auto", outline=None, title: str | Non
 def limits_of(R: dict | None, combines: list) -> dict:
     """{combine id: {step code: [lo, hi, attribute, unit]}} from a cleaning record's sms3sigma steps: a combine's own
     group when the record has one by its name, else the single group of the cleaning (all combines as one group).
-    {} when the record cannot say (no record, other groups): the card then shows no limits."""
+    {} when the record cannot say (no record, other groups): the card then shows no limits. A dry-yield pass whose
+    mean - k SD was negative carries a 5th item {v, why}: the lower limit shown (the import minimum in force) and why
+    (engine/report/limits_shown.py; display only, lo stays the record's 0)."""
+    from engine.report import limits_shown as lshow
     steps = ((R or {}).get("sms3sigma") or {}).get("steps") or []
     by = {}
     for r in steps:
         if r.get("lo") is None and r.get("hi") is None:
             continue
-        by.setdefault(str(r.get("group")), {})[str(r.get("step"))] = [r.get("lo"), r.get("hi"), r.get("attribute"),
-                                                                      r.get("unit")]
+        row = [r.get("lo"), r.get("hi"), r.get("attribute"), r.get("unit")]
+        L = lshow.low_shown(r, R)
+        if L is not None:
+            row.append({"v": L["value"], "why": L["reason"]})
+        by.setdefault(str(r.get("group")), {})[str(r.get("step"))] = row
     out = {}
     for m in combines:
         if str(m) in by:
@@ -818,6 +829,14 @@ def limits_of(R: dict | None, combines: list) -> dict:
         elif len(by) == 1:
             out[str(m)] = next(iter(by.values()))
     return out
+
+
+def limits_shared(R: dict | None, combines: list) -> bool:
+    """True when the card's limits of several combines are those of one group of the cleaning (limits_of took the
+    single group for a combine without its own): they are not one combine's own."""
+    groups = {str(r.get("group")) for r in (((R or {}).get("sms3sigma") or {}).get("steps") or [])
+              if not (r.get("lo") is None and r.get("hi") is None)}
+    return len({str(m) for m in combines}) > 1 and any(str(m) not in groups for m in combines) and len(groups) == 1
 
 
 def manual_part(R: dict | None, man, rauto, remby) -> dict:
@@ -1100,7 +1119,7 @@ def payload_columns(P: dict, C: dict) -> dict:
     out = {"t": raw["t"] * 0.1, "lon": P["center"][0] + raw["lon"] * 1e-7, "lat": P["center"][1] + raw["lat"] * 1e-7,
            "dir": raw["dir"] * 0.1, "w": raw["w"] * 0.01, "d": raw["d"] * 0.01, "off": raw["off"] * 0.01,
            "f": raw["f"].astype(np.int64)}
-    for k, sc in (("y", 0.1), ("m", 0.01), ("s", 0.01)):
+    for k, sc in (("y", P.get("y_q", 0.1)), ("m", 0.01), ("s", 0.01)):
         out[k] = np.where(raw[k] < 0, np.nan, raw[k] * sc)
     return out
 

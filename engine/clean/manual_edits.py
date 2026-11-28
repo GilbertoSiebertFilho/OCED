@@ -776,17 +776,18 @@ def report_section(story, R, num) -> int:
         story.append(cr._table(rows, [1.6 * cr.inch, 1.1 * cr.inch, 1.1 * cr.inch, 1.4 * cr.inch]))
     rows = [["Group", "Step", "Attribute", "Limits automatic", "Limits edited", "Removed (auto -> edited)"]]
     GA, GE = X["automatic"]["groups"], X["edited"]["groups"]
+    from engine.report import limits_shown as lshow
+    # display only: a dry-yield lower limit whose mean - k SD was negative is shown as the import minimum in force
+    lim = (lambda t: lshow.range_text(t, R))
     for gname in GE:
         sa = {s["step"]: s for s in (GA.get(gname) or {}).get("steps", [])}
         for s in GE[gname]["steps"]:
             a = sa.get(s["step"]) or {}
-            lim = (lambda t: "-" if t.get("lo") is None else f"{t['lo']:.2f}-{t['hi']:.2f}")
-            rows.append([e_(gname), e_(s["step"]), e_(s["attribute"]), lim(a) if a else "(no pass)", lim(s),
+            rows.append([e_(gname), e_(s["step"]), e_(s["attribute"]), e_(lim(a)) if a else "(no pass)", e_(lim(s)),
                          f"{a.get('removed', '-') if a else '-'} -> {s.get('removed')}"])
         for s in (GA.get(gname) or {}).get("steps", []):
             if not any(t["step"] == s["step"] for t in GE[gname]["steps"]):
-                lim = "-" if s.get("lo") is None else f"{s['lo']:.2f}-{s['hi']:.2f}"
-                rows.append([e_(gname), e_(s["step"]), e_(s["attribute"]), lim, "(no pass)",
+                rows.append([e_(gname), e_(s["step"]), e_(s["attribute"]), e_(lim(s)), "(no pass)",
                              f"{s.get('removed')} -> -"])
     story.append(cr._table(rows, [1.5 * cr.inch, 0.5 * cr.inch, 0.8 * cr.inch, 1.3 * cr.inch, 1.3 * cr.inch,
                                   cr.TEXT_W - 5.4 * cr.inch], small=True))

@@ -182,6 +182,7 @@ def test_app_weight_in_lb_is_a_mass_comparison(field, tmp_path, monkeypatch):
     at = _app(tmp_path / "ws", monkeypatch)
     _open(at, field["shp"])
     _by_key(at.number_input, "gw_w_").set_value(100_000.0).run()
+    _by_key(at.button_group, "gw_b_").set_value("wet").run()                       # a mass as delivered
     lb = float(_clean(at)["R"]["level"]["export_total_lb"])
     shp = at.session_state["datasets"][at.session_state["active"]]["shp"]
     d = pyogrio.read_dataframe(shp, read_geometry=False)
@@ -244,6 +245,7 @@ def test_app_validate_only_confirms_no_factor_and_adjust_does(two, tmp_path, mon
     _open(at, two["shp"])
     _by_key(at.toggle, "cf_on_").set_value(True).run()
     _by_key(at.number_input, "gw_w_").set_value(float(two["truth"]["wet_lb"])).run()
+    _by_key(at.button_group, "gw_b_").set_value("wet").run()                       # the true weight as delivered
     assert any("Validate only: the grower's weight confirms no factor" in c.value for c in at.caption)
     C = _clean(at)
     M = C["R"]["machines"]

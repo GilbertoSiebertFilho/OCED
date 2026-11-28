@@ -2,6 +2,11 @@
 # The theme is the Olds College palette of assets/brand/BRAND.md (app/brand.py holds the same values for the page).
 # No external font: the system sans-serif, so the app works offline (the satellite image under the maps needs the
 # internet).
+[global]
+# 0.4.0: the steps are tabs and the values of a step not drawn are re-seated in the session every run (app/oced.py
+# keep_step_values); a widget given a default value then logs Streamlit's warning about a default value set twice.
+disableWidgetStateDuplicationWarning = true
+
 [server]
 port = 8502                   # OCED's port (another Streamlit app can use 8501 at the same time)
 maxUploadSize = 4096          # MB: zipped monitor cards can be large; a folder path in step 1 avoids the upload

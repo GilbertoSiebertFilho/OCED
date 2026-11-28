@@ -35,6 +35,11 @@ of its strip inside, the area counted, the yield used, the bushels (yield x area
 The app's map of the small area, its hover text (reading_text), the two shapefiles and the replay's small-area
 columns (replay_part) all read these rows, so the figures of the table are the sums of the rows shown, and a change of
 the estimator here changes all of them together.
+
+The names above are OCED's (raw monitor data, an SMS export, a KML export). The flagged file keeps the columns of the
+file that was cleaned under their own names, so (0.4.0) the small area reads the columns the cleaning read, from its
+record (columns_of): an Operations Center export's dry yield is its VRYIELDVOL (as the import wrote it), its distance
+DISTANCE, its width SWATHWIDTH, its heading Heading, its moisture Moisture; the texts name the columns read.
 """
 from __future__ import annotations
 
@@ -87,6 +92,7 @@ TRANSIENT_M = 10.0                        # the first / last 10 m of a pass (the
 TRANSIENT_WARN = 0.15                     # a warning when they are more than 15 % of the ground
 PASS_TURN_DEG = 60.0                      # a new pass: a heading change of more than 60 deg,
 PASS_STEP = (1.5, 0.3)                    # or a step longer than 1.5 x the distance + 0.3 m (the replay's rule)
+SAME_SPOT_DEG = 1e-7                      # one logged position: within 1e-7 deg (about 1 cm) in lon and in lat
 CV_HELP = ("The load-to-load coefficient of variation of this combine's calibration (monitor / scale), in %. Measure it "
            "on this combine: monitor against the scale, load by load. Empty or 0: no range.")
 SETS = {"kept": "after the cleaning (the readings it kept)", "raw": "without the cleaning (the readings as imported)"}
@@ -169,11 +175,125 @@ def _num(df, c, default=np.nan):
     return pd.to_numeric(df[c], errors="coerce").to_numpy(float)
 
 
-def prepare(flagged: gpd.GeoDataFrame) -> dict:
+# The columns of the flagged file the small area reads are the cleaning's own (0.4.0): the flagged file keeps the
+# columns of the file that was cleaned under their own names (an Operations Center export: VRYIELDVOL, DISTANCE,
+# SWATHWIDTH, Heading, Moisture ...; raw monitor data, an SMS export or a KML: OCED's / SMS's Yld_Vol_Dr, Distance_f,
+# Swth_Wdth_, Track_deg_, Moisture__), and the cleaning resolved which column holds what (its record's 'columns':
+# yield_clean.resolve_columns, detected or given in the settings' 'cols'). Units as the cleaning takes them: the dry
+# yield in bu/ac, distance and width in ft, heading in degrees, moisture in %, speed in mph, duration in s; no
+# distance column: speed x duration (as the cleaning); no width column: the settings' harvester width.
+SA_KEYS = ("yield", "distance_ft", "width_ft", "heading", "moisture", "speed_mph", "duration_s", "dataset", "order",
+           "time", "machine")
+OCED_COLUMNS = {"yield": "Yld_Vol_Dr", "distance_ft": "Distance_f", "width_ft": "Swth_Wdth_",
+                "heading": "Track_deg_", "moisture": "Moisture__"}
+COLUMN_WORDS = {"yield": "dry yield (bu/ac)", "distance_ft": "distance (ft)", "width_ft": "swath width (ft)",
+                "heading": "heading (deg)", "moisture": "moisture (%)"}
+
+
+def cleaning_record(flagged_path) -> dict | None:
+    """The cleaning record (<tag>_cleaning.json) next to a flagged file (<tag>_flagged.zip / .shp), or None."""
+    if not flagged_path:
+        return None
+    base = os.path.abspath(str(flagged_path))
+    for suf in ("_flagged.zip", "_flagged.shp"):
+        if base.endswith(suf):
+            js = base[:-len(suf)] + "_cleaning.json"
+            if os.path.exists(js):
+                try:
+                    import json
+                    with open(js, encoding="utf-8") as f:
+                        R = json.load(f)
+                    return R if isinstance(R, dict) else None
+                except (OSError, ValueError):
+                    return None
+            return None
+    return None
+
+
+def columns_of(flagged: gpd.GeoDataFrame, R: dict | None = None) -> dict:
+    """{key: column of the flagged file or None} for SA_KEYS, plus 'harvester_width_ft' (the settings' constant width
+    of a file without a width column, else None) and 'source': the columns the cleaning resolved (R['columns'], the
+    cleaning record) when R gives them, each one checked against the flagged file; else the cleaning's own detection
+    (yield_clean.detect_columns) over the flagged file's columns, which finds the same names (the columns the cleaning
+    adds to the flagged file are none of the names it looks for)."""
+    from engine.clean.yield_clean import detect_columns
+    names = [c for c in flagged.columns if c != "geometry"]
+    det = detect_columns(names)
+    rc = R.get("columns") if isinstance(R, dict) and isinstance(R.get("columns"), dict) else None
+    out = {}
+    for k in SA_KEYS:
+        if rc is not None and k in rc and (rc[k] is None or rc[k] in names):
+            out[k] = rc[k]
+        else:
+            out[k] = det.get(k)
+    hw = ((R.get("settings") or {}).get("harvester_width_ft") if isinstance(R, dict) else None)
+    try:
+        hw = float(hw) if hw is not None and float(hw) > 0 else None
+    except (TypeError, ValueError):
+        hw = None
+    out["harvester_width_ft"] = hw
+    out["source"] = "the cleaning record" if rc is not None else "found in the flagged file"
+    return out
+
+
+def legacy_columns(cols: dict | None) -> bool:
+    """True when the columns read are OCED's own names (raw monitor data, an SMS export, a KML): the small area's
+    record then stays as it was before 0.4.0 (no 'columns' key). The settings' harvester width counts only for a file
+    without a width column (the one it is used for): with Swth_Wdth_ there, the width read is that column."""
+    if not cols:
+        return True
+    return (all(cols.get(k) == v for k, v in OCED_COLUMNS.items() if k != "moisture")
+            and cols.get("moisture") in (None, "Moisture__", "Moisture")
+            and not (cols.get("harvester_width_ft") and not cols.get("width_ft")))
+
+
+def _dist_text(cols: dict) -> str:
+    if cols.get("distance_ft") or not (cols.get("speed_mph") and cols.get("duration_s")):
+        return cols.get("distance_ft") or OCED_COLUMNS["distance_ft"]
+    return f"({cols['speed_mph']} x {cols['duration_s']}, speed x duration)"
+
+
+def _width_text(cols: dict) -> str:
+    if cols.get("width_ft") or not cols.get("harvester_width_ft"):
+        return cols.get("width_ft") or OCED_COLUMNS["width_ft"]
+    return f"the harvester width {float(cols['harvester_width_ft']):g} ft"
+
+
+def kept_text(cols: dict | None) -> str:
+    """'Yld_Vol_Dr x Swath_Scl over Dist_Opt x Wdth_Opt': the yield and area of the kept readings, by the columns
+    read (cols: columns_of, or a small-area record's 'columns'; None: OCED's names)."""
+    y = (cols or {}).get("yield") or OCED_COLUMNS["yield"]
+    return f"{y} x Swath_Scl over Dist_Opt x Wdth_Opt"
+
+
+def raw_text(cols: dict | None) -> str:
+    """'Yld_Vol_Dr over Distance_f x Swth_Wdth_': the yield and area of a reading as imported, by the columns read."""
+    if not cols:
+        return f"{OCED_COLUMNS['yield']} over {OCED_COLUMNS['distance_ft']} x {OCED_COLUMNS['width_ft']}"
+    return f"{cols.get('yield') or OCED_COLUMNS['yield']} over {_dist_text(cols)} x {_width_text(cols)}"
+
+
+def _missing(key: str, cols: dict, flagged) -> str:
+    """The plain message of a column the small area needs and the flagged file does not have."""
+    from engine.clean.yield_clean import COLUMN_ALIASES
+    names = ", ".join(COLUMN_ALIASES.get(key, [])[:4])
+    rc = cols.get("source") == "the cleaning record"
+    return (f"small area: the cleaned file has no {COLUMN_WORDS[key]} column, so the plots cannot be measured "
+            + ("(the cleaning's record names none that is still in the flagged file)" if rc else
+               f"(none of {names} or the like is in the flagged file)")
+            + ". Clean this file again in step 3 and press Measure again; if the cleaning cannot find it either, the "
+              "file itself has no such column: export it again with its " + COLUMN_WORDS[key].split(" (")[0]
+            + " (columns in the flagged file: " + ", ".join(c for c in flagged.columns if c != "geometry")[:400]
+            + ")")
+
+
+def prepare(flagged: gpd.GeoDataFrame, cols: dict | None = None) -> dict:
     """The arrays of both sets from the flagged file: the position of each set with its CRS (kept: the file's point,
     which S2 moved to the middle of the strip it kept when it narrowed the reading; raw: the logged point X_log /
     Y_log, which OCED writes in WGS 84 whatever the file's CRS, taken in the file's CRS only when its values cannot
-    be longitudes / latitudes), heading, yield, length / width (ft), moisture, Keep, Rem_By."""
+    be longitudes / latitudes), heading, yield, length / width (ft), moisture, Keep, Rem_By. cols: the columns read
+    (columns_of; None: found in the flagged file as the cleaning finds them)."""
+    cols = cols if cols is not None else columns_of(flagged)
     fcrs = flagged.crs or "EPSG:4326"
     xk, yk = flagged.geometry.x.to_numpy(float), flagged.geometry.y.to_numpy(float)
     xl, yl = _col(flagged, "X_log"), _col(flagged, "Y_log")
@@ -191,23 +311,44 @@ def prepare(flagged: gpd.GeoDataFrame) -> dict:
         x, y, rcrs = xk.copy(), yk.copy(), fcrs
         pos = "the point geometry (no X_log / Y_log)"
     keep = _num(flagged, _col(flagged, "Keep"), 1.0)
-    ycol = _col(flagged, "Yld_Vol_Dr")
+    have = set(flagged.columns)
+    ycol = cols.get("yield") if cols.get("yield") in have else None
     if ycol is None:
-        raise ValueError("small area: the flagged file has no Yld_Vol_Dr (dry yield) column")
+        raise ValueError(_missing("yield", cols, flagged))
     yraw = _num(flagged, ycol)
     scl = _num(flagged, _col(flagged, "Swath_Scl"), 1.0)
     scl = np.where(np.isfinite(scl), scl, 1.0)
-    d_raw, w_raw = _num(flagged, _col(flagged, "Distance_f")), _num(flagged, _col(flagged, "Swth_Wdth_"))
+    dcol = cols.get("distance_ft") if cols.get("distance_ft") in have else None
+    if dcol:
+        d_raw = _num(flagged, dcol)
+    elif cols.get("speed_mph") in have and cols.get("duration_s") in have:
+        # as the cleaning: distance = speed x duration (mph -> m/s, then ft)
+        d_raw = _num(flagged, cols["speed_mph"]) * 0.44704 * _num(flagged, cols["duration_s"]) / FT_M
+    else:
+        raise ValueError(_missing("distance_ft", cols, flagged))
+    wcol = cols.get("width_ft") if cols.get("width_ft") in have else None
+    if wcol:
+        w_raw = _num(flagged, wcol)
+    elif cols.get("harvester_width_ft"):
+        w_raw = np.full(len(flagged), float(cols["harvester_width_ft"]))       # as the cleaning: the constant width
+    else:
+        raise ValueError(_missing("width_ft", cols, flagged))
     d_opt = _num(flagged, _col(flagged, "Dist_Opt")) if _col(flagged, "Dist_Opt") else d_raw.copy()
     w_opt = _num(flagged, _col(flagged, "Wdth_Opt")) if _col(flagged, "Wdth_Opt") else w_raw.copy()
     rem = (flagged["Rem_By"].astype(object).where(flagged["Rem_By"].notna(), "").astype(str).str.strip().to_numpy()
            if "Rem_By" in flagged.columns else np.full(len(flagged), "", object))
-    return {"x": x, "y": y, "heading": _num(flagged, _col(flagged, "Track_deg_"), 0.0),
+    hcol = cols.get("heading") if cols.get("heading") in have else None
+    mcol = cols.get("moisture") if cols.get("moisture") in have else None
+    used = {k: cols.get(k) for k in SA_KEYS}           # the columns read, as read (the texts and the record name them)
+    used.update({"yield": ycol, "distance_ft": dcol, "width_ft": wcol, "heading": hcol, "moisture": mcol,
+                 "harvester_width_ft": (None if wcol else cols.get("harvester_width_ft")),
+                 "source": cols.get("source")})
+    return {"x": x, "y": y, "heading": _num(flagged, hcol, 0.0),
             "keep": np.where(np.isfinite(keep), keep, 0) == 1, "rem": rem,
-            "moist": _num(flagged, _col(flagged, "Moisture__", "Moisture")),
+            "moist": _num(flagged, mcol),
             "kept": {"yield": yraw * scl, "len_ft": d_opt, "wid_ft": w_opt, "x": xk, "y": yk, "crs": fcrs},
             "raw": {"yield": yraw, "len_ft": d_raw, "wid_ft": w_raw, "x": x, "y": y, "crs": rcrs},
-            "position": pos, "yield_column": ycol}
+            "position": pos, "yield_column": ycol, "columns": used}
 
 
 def _figures(yv, area_ac, moist, rem, removed_mask) -> dict:
@@ -233,10 +374,10 @@ def _figures(yv, area_ac, moist, rem, removed_mask) -> dict:
     return out
 
 
-def _labels(flagged) -> dict:
-    """The combine, the time and the record id of every reading of the flagged file (text), for the hover text."""
-    from engine.clean.yield_clean import detect_columns
-    d = detect_columns([c for c in flagged.columns if c != "geometry"])
+def _labels(flagged, cols: dict | None = None) -> dict:
+    """The combine, the time and the record id of every reading of the flagged file (text), for the hover text; the
+    columns the cleaning used (cols: columns_of; None: found in the flagged file as the cleaning finds them)."""
+    d = cols if cols is not None else columns_of(flagged)
     out = {}
     for k in ("machine", "time", "order"):
         c = d.get(k)
@@ -262,7 +403,7 @@ WHY = {"clip": "footprint clipped by the line: the part inside counted",
 
 
 def measure(flagged: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, rule: str = DEFAULT_RULE,
-            detail_margin_m: float = 0.0) -> dict:
+            detail_margin_m: float = 0.0, cols: dict | None = None) -> dict:
     """{'rule', 'crs', 'polygons': [{name, area_ac, kept: figures, raw: figures}], 'rows': {name: (index of the
     kept readings that count, area counted ac, yield used)}, 'readings': {name: per-reading rows}}. The per-reading
     rows (every reading of the flagged file whose strip at the clean file's position touches the polygon grown by
@@ -270,11 +411,13 @@ def measure(flagged: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, rule: str = D
     polygon), full_ac (the strip's area, distance x width), area_ac (counted), yield (used, bu/ac), bu (yield x area
     counted; 0 not counted), removed_by (Rem_By of a reading the cleaning removed), machine, time, record, fp (the
     strip) and part (the part counted: the strip clipped to the polygon under 'clip', the whole strip otherwise; None
-    not counted), both shapely geometries in M['crs']. The counted rows are exactly those of the figures 'kept'."""
+    not counted), both shapely geometries in M['crs']. The counted rows are exactly those of the figures 'kept'.
+    cols: the columns the cleaning used (columns_of(flagged, R)); None: found in the flagged file as the cleaning
+    finds them. M['columns'] says which were read."""
     rule = rule_key(rule)
     if flagged.crs is None:
         flagged = flagged.set_crs(4326)
-    P = prepare(flagged)
+    P = prepare(flagged, cols)
     crs = flagged.crs if (flagged.crs is not None and not flagged.crs.is_geographic) else None
     XY = {}
     for s in ("kept", "raw"):
@@ -289,7 +432,7 @@ def measure(flagged: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, rule: str = D
     fps = {s: footprints(XY[s][0], XY[s][1], P["heading"], P[s]["len_ft"] * FT_M, P[s]["wid_ft"] * FT_M)
            for s in ("kept", "raw")}
     res, rows, detail = [], {}, {}
-    lab = _labels(flagged)
+    lab = _labels(flagged, P["columns"])
     for name, g in zip(polys["name"], polys.geometry):
         shapely.prepare(g)
         rec = {"name": name, "area_ac": float(g.area / M2_PER_AC)}
@@ -327,8 +470,8 @@ def measure(flagged: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, rule: str = D
                 detail[name] = _detail(g, fps["kept"], XY["kept"], hit, area, full_ac, P, rule, lab, detail_margin_m)
         res.append(rec)
     return {"rule": rule, "rule_text": EDGE_RULES[rule], "crs": crs.to_string(), "position": P["position"],
-            "yield_column": P["yield_column"], "polygons": res, "rows": rows, "readings": detail, "geoms": geoms,
-            "n": int(len(flagged))}
+            "yield_column": P["yield_column"], "columns": P["columns"], "polygons": res, "rows": rows,
+            "readings": detail, "geoms": geoms, "n": int(len(flagged))}
 
 
 def _detail(g, fps, xy, hit, area, full_ac, P, rule, lab, margin_m) -> dict:
@@ -368,7 +511,8 @@ def _detail(g, fps, xy, hit, area, full_ac, P, rule, lab, margin_m) -> dict:
         part[j] = inter_g[j] if rule == "clip" else fp[j]
     return {"idx": idx, "counted": counted, "why": why, "share": share, "full_ac": full_ac[idx], "area_ac": a_c,
             "yield": yv, "bu": bu, "removed_by": P["rem"][idx], "machine": lab["machine"][idx],
-            "time": lab["time"][idx], "record": lab["order"][idx], "fp": fp, "part": part}
+            "time": lab["time"][idx], "record": lab["order"][idx], "fp": fp, "part": part,
+            "yield_column": P["yield_column"]}
 
 
 def _n(v, d):
@@ -397,7 +541,8 @@ def reading_text(D: dict, j: int, polygon: str, rule: str) -> list:
         out.append("Removed by hand (Edit points): its yield is not used" if removed_by_hand(D, j) else
                    f"Removed by the cleaning ({D['removed_by'][j] or '?'}): its yield is not used")
     else:
-        out.append(f"Yield used {_n(y, 2)} bu/ac (the clean file's: Yld_Vol_Dr x Swath_Scl)")
+        out.append(f"Yield used {_n(y, 2)} bu/ac (the clean file's: {D.get('yield_column') or OCED_COLUMNS['yield']}"
+                   " x Swath_Scl)")
     out.append(f"Strip {full:.5f} ac (its distance x its width)")
     if w == "clip":
         out.append(f"Clip: {100 * sh:.0f} % inside: {a:.5f} of {full:.5f} ac counted"
@@ -570,7 +715,10 @@ def run(flagged_path: str, polygons_path: str, out_dir: str, tag: str, rule: str
     log(f"small area: {len(polys)} polygon(s) of {os.path.basename(polygons_path)}, figure {METHODS[method]}, edge "
         f"rule of the cleaned map average {EDGE_RULES[rule]}")
     D, dpath, IM, dnote = _decoded_for(flagged_path, decoded, import_rec, R)
-    M = measure_all(fl, polys, rule, method, decoded=D, cv_pct=cv_pct, interior_m=interior_m)
+    # the columns the cleaning read (its record: R, else the cleaning JSON next to the flagged file)
+    cols = columns_of(fl, R if isinstance(R, dict) else cleaning_record(flagged_path))
+    M = measure_all(fl, polys, rule, method, decoded=D, cv_pct=cv_pct, interior_m=interior_m, cols=cols)
+    CU = M["columns"]
     os.makedirs(out_dir, exist_ok=True)
     csv = os.path.join(out_dir, f"{tag}_small_area.csv")
     table(M).to_csv(csv, index=False, float_format="%.6f")
@@ -609,14 +757,14 @@ def run(flagged_path: str, polygons_path: str, out_dir: str, tag: str, rule: str
     used = D is not None
     rec = {"file": os.path.basename(polygons_path), "rule": rule, "rule_text": EDGE_RULES[rule],
            "position": M["position"], "crs": M["crs"], "notes": notes + M["ground_notes"],
-           "yield_rule": ("kept: Yld_Vol_Dr x Swath_Scl over Dist_Opt x Wdth_Opt (as the clean file); without the "
-                          "cleaning: Yld_Vol_Dr over Distance_f x Swth_Wdth_ of every reading of the flagged file"),
+           "yield_rule": (f"kept: {kept_text(CU)} (as the clean file); without the "
+                          f"cleaning: {raw_text(CU)} of every reading of the flagged file"),
            "method": method, "method_text": METHODS[method], "method_help": METHOD_HELP[method],
-           "ground_rule": ("grain = Yld_Vol_Dr (as imported) x Distance_f x Swth_Wdth_ x the share of the logged strip "
-                           "inside the line, over every reading touching the polygon (kept, removed by the cleaning "
-                           "or by hand" + (", left out by the import" if used else "") + "); ground = the area of "
-                           "the union of the clipped strips; the strips as logged (X_log / Y_log), their heading "
-                           "turned from true north to grid north"),
+           "ground_rule": (f"grain = {CU['yield']} (as imported) x {_dist_text(CU)} x {_width_text(CU)} x the share "
+                           "of the logged strip inside the line, over every reading touching the polygon (kept, "
+                           "removed by the cleaning or by hand" + (", left out by the import" if used else "")
+                           + "); ground = the area of the union of the clipped strips; the strips as logged "
+                           "(X_log / Y_log), their heading turned from true north to grid north"),
            "decoded": {"used": used, "file": (os.path.basename(dpath) if dpath else None),
                        "added": int(M["decoded_added"]) if used else 0,
                        "note": dnote or (None if used else "grain / ground from the flagged file only")},
@@ -624,6 +772,23 @@ def run(flagged_path: str, polygons_path: str, out_dir: str, tag: str, rule: str
            "duplicates": int(M["duplicates"]), "interior_m": float(M["interior_m"]), "cv_pct": M["cv_pct"],
            "pairs": M["pairs"], "polygons": _json_polys(M["polygons"]),
            "files": {"csv": csv, "zip": shp_zip, "parts_zip": parts_zip, "ground_zip": ground_zip}}
+    if not legacy_columns(CU):
+        # a file cleaned under its own column names (an Operations Center export ...): the columns read, said in the
+        # record (a file with OCED's names keeps the record of before, byte for byte)
+        rec["columns"] = {k: CU.get(k) for k in ("yield", "distance_ft", "width_ft", "heading", "moisture",
+                                                 "speed_mph", "duration_s", "harvester_width_ft")}
+    # 0.4.0: the report's figures of the plots (small_area_figures), drawn from M once everything above is written;
+    # a figure that cannot be drawn never stops the measure (the report then has the tables only)
+    from engine.clean import small_area_figures as saf
+    try:
+        figs, finfo = saf.write_figures(fl, M, out_dir, tag, cols)
+    except Exception as e:                           # noqa: BLE001 - the record stands without its figures
+        saf.remove_figures(out_dir, tag)
+        figs, finfo = {}, {}
+        log(f"  WARNING: the small area's figures could not be drawn: {type(e).__name__}: {e}")
+    if figs:                                         # flat keys: every value of rec['files'] stays a path
+        rec["files"].update({f"fig_{k}": v for k, v in figs.items()})
+        rec["figures"] = finfo
     if dnote:
         log("  " + dnote)
     for p in rec["polygons"]:
@@ -738,11 +903,13 @@ def detail_of(flagged_path: str, polygons_path: str, rule: str = DEFAULT_RULE, m
     measure_all, so the rows of grain / ground (ground_rows) are there too, the decoded file given or found."""
     fl = _read_flagged(flagged_path)
     polys, _ = read_polygons(polygons_path)
+    R = cleaning_record(flagged_path)               # the columns the cleaning read, from its record
+    cols = columns_of(fl, R)
     if method is None:
-        return measure(fl, polys, rule, detail_margin_m=margin_m)
-    D, _p, _im, _note = _decoded_for(flagged_path, decoded, None)
+        return measure(fl, polys, rule, detail_margin_m=margin_m, cols=cols)
+    D, _p, _im, _note = _decoded_for(flagged_path, decoded, None, R)
     return measure_all(fl, polys, rule, method, decoded=D, cv_pct=cv_pct, interior_m=interior_m,
-                       detail_margin_m=margin_m)
+                       detail_margin_m=margin_m, cols=cols)
 
 
 def _f(v, d=2):
@@ -773,6 +940,18 @@ def summary_text(rec: dict) -> str:
             f"{method_text(rec)}, rule {rec['rule_text']}: " + "; ".join(polygon_text(p) for p in rec["polygons"]))
 
 
+def plot_names_said(m, n) -> str:
+    """The sentence of a plots figure's caption on the plot names it writes: m of the n plots' names fit inside their
+    plot (None: not counted, as every name written)."""
+    if m is None or m >= n:
+        return "Each plot's name is written inside it."
+    if m <= 0:
+        return "No plot name fits its plot at this scale; the table and the bar chart name every plot."
+    return (f"The names of {m:,} of the {n:,} plots are written inside them; the others are left out where they "
+            "would overlap another name or not fit their plot at this scale (the table and the bar chart name "
+            "every plot).")
+
+
 def report_section(story, R, num) -> int:
     """The section 'Small area' of the cleaning report (engine/report/clean_report.make_report); returns num + 1."""
     from reportlab.platypus import Paragraph
@@ -796,15 +975,16 @@ def report_section(story, R, num) -> int:
             G, Q = p.get("ground") or {}, p.get("sms") or {}
             sp, ca = G.get("spread") or {}, p.get("calibration") or {}
             rows.append([e_(str(p["name"])), _f(G.get("dry_yield_bu_ac")), _f(G.get("grain_bu")),
-                         _f(G.get("ground_ac"), 3), _f(G.get("ground_pct"), 0), _f(p["kept"].get("dry_yield_bu_ac")),
+                         _f(G.get("ground_ac"), 3), _f(G.get("ground_pct")), _f(p["kept"].get("dry_yield_bu_ac")),
                          _f(Q.get("dry_yield_bu_ac")),
-                         (f"+- {sp['pct']:.1f} %" if sp.get("pct") is not None else "-"),
+                         (f"+- {sp['pct']:.2f} %" if sp.get("pct") is not None else "-"),
                          (f"+- {ca['half']:.2f}" if ca.get("half") is not None else "-")])
         w = cr.TEXT_W / 9.0
         story.append(cr._table(rows, [w] * 9, small=True))
         story.append(Paragraph(e_(
-            "bu/ac dry. Spread: how much the yield varies along the passes inside the polygon (moving-block bootstrap "
-            f"along each pass, blocks of {BLOCK_M:g} m, {N_BOOT:,} draws, fixed seed); not the accuracy of the number. "
+            "bu/ac dry. Spread: half the 95 % bootstrap range of the polygon's figure under the yield's variation "
+            f"along the passes, in % of the figure (moving-block bootstrap along each pass, blocks of {BLOCK_M:g} m, "
+            f"{N_BOOT:,} draws, fixed seed); it leaves out the monitor's calibration error. "
             + (f"Calibration (95 %): +- 1.96 x CV {X['cv_pct']:g} % x the figure; it covers comparisons between "
                "polygons of the same combine and day; the absolute level also needs a scale level (grower's weight)."
                if X.get("cv_pct") else "No calibration CV given: no calibration range.")), cr.BODY))
@@ -820,6 +1000,7 @@ def report_section(story, R, num) -> int:
                              "yes" if q["beyond"] else "no"])
             w5 = cr.TEXT_W / 5.0
             story.append(cr._table(prow, [w5] * 5, small=True))
+        report_figures(story, X)
         story.append(Paragraph(e_("The cleaned map average in detail (the readings the cleaning kept, and the "
                                   "readings as imported):"), cr.BODY))
     else:
@@ -838,6 +1019,56 @@ def report_section(story, R, num) -> int:
     w = cr.TEXT_W / 9.0
     story.append(cr._table(rows, [w] * 9, small=True))
     return num + 1
+
+
+def report_figures(story, X: dict):
+    """0.4.0: the small area's figures in its report section (small_area_figures: X['files']['fig_map'], 'fig_inside',
+    'fig_bars_1' ... with X['figures']): the clean map with the plots, the readings inside the plots and the yield of
+    every plot with its spread, each with its bold title and caption, kept together on a page. Nothing when the record
+    has none (a small area measured before 0.4.0, or a figure that could not be drawn)."""
+    from reportlab.platypus import KeepTogether, Paragraph
+    from engine.report import clean_report as cr
+    F = {k[len("fig_"):]: v for k, v in (X.get("files") or {}).items() if str(k).startswith("fig_")}
+    I = X.get("figures") or {}
+    if not F:
+        return
+    e_ = cr._e
+    n = int(I.get("n_plots") or len(X.get("polygons") or []))
+    scale = (f"Colours: the dry yield (bu/ac) on the report's scale, red below the clean map's mean "
+             f"({_f(I.get('mean'))} bu/ac, yellow) and green above it, from {_f(I.get('lo'))} to {_f(I.get('hi'))} "
+             "bu/ac (the 2nd to the 98th percentile of the clean map; beyond it the end colours).")
+
+    def names_said(k):
+        return plot_names_said(I.get(k), n)
+
+    def block(path, title, caption, max_h):
+        if path and os.path.exists(path):
+            story.append(KeepTogether([Paragraph(title, cr.BODY), cr._image(path, cr.TEXT_W, max_h),
+                                       Paragraph(e_(caption), cr.CAP)]))
+    block(F.get("map"), "<b>The plots on the clean map</b>",
+          f"The {I.get('n_kept', 0):,} readings the cleaning kept, each drawn as the strip it swept (distance x "
+          "width, as the clean file holds them), with the outlines of the "
+          f"{n:,} plots of {X.get('file', '')} in navy. {names_said('names_map')} {scale}", 4.6 * cr.inch)
+    rem = [f"{I[k]:,} reading(s) {w}" for k, w in (("n_removed", "removed by the cleaning (orange edge)"),
+                                                   ("n_hand", "removed by hand (purple edge)"),
+                                                   ("n_left_out", "left out by the import (blue edge)")) if I.get(k)]
+    block(F.get("inside"), "<b>The readings inside the plots</b>",
+          f"The part of each reading's strip inside its plot, as grain / ground counts it ({I.get('n_parts', 0):,} "
+          "parts; the strips as logged, clipped by the plot's line), coloured by the reading's dry yield as "
+          "imported, the plots' outlines in navy"
+          + (f"; among them the parts of {', '.join(rem)}" if rem else "") + f". {names_said('names_inside')} "
+          f"{scale} The same colours as the map above: the same colour is the same yield.", 4.6 * cr.inch)
+    bars = [F[k] for k in sorted((k for k in F if str(k).startswith("bars_")), key=lambda k: int(k.split("_")[1]))]
+    for i, p in enumerate(bars):
+        more = (f" Part {i + 1} of {len(bars)}: up to {I.get('per_row', 20)} plots a row." if len(bars) > 1 else
+                f" Up to {I.get('per_row', 20)} plots a row." if n > int(I.get("per_row") or 20) else "")
+        block(p, "<b>Yield of the plots</b>" + (f" ({i + 1} of {len(bars)})" if len(bars) > 1 else ""),
+              "Each plot's yield, grain / ground (bu/ac dry; the value written over its bar, two decimals), in the "
+              "table's order. The light blue error bar is the spread inside the plot: the 95 % bootstrap range of "
+              f"the plot's figure under the yield's variation along the passes (moving-block bootstrap along each "
+              f"pass, blocks of {BLOCK_M:g} m, {N_BOOT:,} draws); it leaves out the monitor's calibration error."
+              + (f" {I['n_no_figure']:,} plot(s) without a reading inside: no bar." if I.get("n_no_figure") else "")
+              + more, 7.0 * cr.inch)
 
 
 # ================================================================================================================
@@ -920,18 +1151,7 @@ def find_decoded(flagged_path, R: dict | None = None):
     moved) and the import record (R['sms_import'] or R['settings']['sms_import']); R None: the cleaning JSON next to
     the flagged file (<tag>_flagged.zip -> <tag>_cleaning.json). (None, record) when no decoded file is reachable."""
     if R is None and flagged_path:
-        base = os.path.abspath(str(flagged_path))
-        for suf in ("_flagged.zip", "_flagged.shp"):
-            if base.endswith(suf):
-                js = base[:-len(suf)] + "_cleaning.json"
-                if os.path.exists(js):
-                    try:
-                        import json
-                        with open(js, encoding="utf-8") as f:
-                            R = json.load(f)
-                    except (OSError, ValueError):
-                        R = None
-                break
+        R = cleaning_record(flagged_path)
     if not isinstance(R, dict):
         return None, None
     IM = R.get("sms_import") if isinstance(R.get("sms_import"), dict) else None
@@ -994,23 +1214,211 @@ def _time_order(times, records) -> np.ndarray:
     return np.where(np.isfinite(rec), rec, np.arange(n, dtype=float))
 
 
+def _same_spot(lon_a, lat_a, lon_b, lat_b) -> bool:
+    """True when two logged positions (WGS 84) are one: within SAME_SPOT_DEG in longitude and in latitude; a position
+    missing on either side does not tell two readings apart (True), as the machine + time alone did before 0.4.0."""
+    if not (math.isfinite(lon_a) and math.isfinite(lat_a) and math.isfinite(lon_b) and math.isfinite(lat_b)):
+        return True
+    return abs(lon_a - lon_b) <= SAME_SPOT_DEG and abs(lat_a - lat_b) <= SAME_SPOT_DEG
+
+
+class _Spots:
+    """The positions of a set of readings, found again by position: a reading at the same spot (_same_spot) as one of
+    them is among the cells next to its own (cells of SAME_SPOT_DEG), so a machine + time holding many readings (a
+    time column that holds the date only) is still read in one pass."""
+
+    def __init__(self, lon, lat):
+        self.lon, self.lat = lon, lat
+        self.cells: dict = {}
+        self.missing: list = []                       # readings without a position: at the same spot as any
+        self.order: list = []
+        self.rank: dict = {}
+
+    @staticmethod
+    def _cell(x, y):
+        return math.floor(x / SAME_SPOT_DEG), math.floor(y / SAME_SPOT_DEG)
+
+    def add(self, i):
+        self.rank[i] = len(self.order)
+        self.order.append(i)
+        x, y = self.lon[i], self.lat[i]
+        if math.isfinite(x) and math.isfinite(y):
+            self.cells.setdefault(self._cell(x, y), []).append(i)
+        else:
+            self.missing.append(i)
+
+    def first_at(self, x, y):
+        """The first reading added (in the order added) at the same spot as (x, y), or None."""
+        if not self.order:
+            return None
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return self.order[0]
+        found = list(self.missing[:1])
+        cx, cy = self._cell(x, y)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for k in self.cells.get((cx + dx, cy + dy), ()):
+                    if _same_spot(self.lon[k], self.lat[k], x, y):
+                        found.append(k)
+                        break
+        return min(found, key=self.rank.get) if found else None
+
+
+def _nearest_free(flon, flat, cand, dlon, dlat):
+    """For each flagged reading (flon, flat; in order) the nearest decoded reading of cand not taken before (distances
+    in degrees, the longitude scaled by the cosine of the latitude): a dict {flagged position in the list: decoded
+    reading}; a flagged reading has none once every one is taken. Every distance for a few readings, else a k-d tree
+    (a machine + time holding many readings)."""
+    out = {}
+    if not cand or not flon:
+        return out
+    c = math.cos(math.radians(next((v for v in flat if math.isfinite(v)), 0.0)))
+    pts = np.array([[dlon[j] * c, dlat[j]] if math.isfinite(dlon[j]) and math.isfinite(dlat[j]) else [np.inf, np.inf]
+                    for j in cand], float)
+    free = np.ones(len(cand), bool)
+    if len(cand) * len(flon) <= 250_000:                 # a few readings: every distance
+        for q, (x, y) in enumerate(zip(flon, flat)):
+            if not free.any():
+                break
+            if math.isfinite(x) and math.isfinite(y):
+                d = np.hypot(pts[:, 0] - x * c, pts[:, 1] - y)
+            else:
+                d = np.full(len(cand), np.inf)
+            d = np.where(free & np.isfinite(d), d, np.inf)
+            k = int(np.argmin(d)) if np.isfinite(d).any() else int(np.flatnonzero(free)[0])
+            free[k] = False
+            out[q] = cand[k]
+        return out
+    from scipy.spatial import cKDTree
+    ok = np.isfinite(pts).all(axis=1)
+    tree = cKDTree(pts[ok]) if ok.any() else None
+    back = np.flatnonzero(ok)
+    for q, (x, y) in enumerate(zip(flon, flat)):
+        if not free.any():
+            break
+        k = None
+        if tree is not None and math.isfinite(x) and math.isfinite(y):
+            n_ask = 8
+            while k is None:
+                n_ask = min(n_ask, len(back))
+                _, ii = tree.query([x * c, y], k=n_ask)
+                for t in np.atleast_1d(ii):
+                    if t < len(back) and free[back[t]]:
+                        k = int(back[t])
+                        break
+                if k is None and n_ask >= len(back):
+                    break
+                n_ask *= 4
+        if k is None:
+            k = int(np.flatnonzero(free)[0])
+        free[k] = False
+        out[q] = cand[k]
+    return out
+
+
+def _match_decoded(A: dict, decoded: gpd.GeoDataFrame, dm, dt) -> np.ndarray:
+    """Per reading of the decoded file: True when it is not in the flagged file (A: its readings; dm / dt: the decoded
+    readings' machine and time). A machine + time the flagged file does not hold: not in it. A machine + time held by
+    one reading on each side: the same reading (as before 0.4.0). A machine + time held by several readings on either
+    side (a point export whose times are whole seconds: two readings of one combine in one second): the readings told
+    apart by their logged position (the flagged file's X_log / Y_log against the decoded file's point): a decoded
+    reading at the position of a flagged one is in the flagged file; a flagged reading at no decoded position (its
+    point moved, a flagged file without X_log / Y_log) takes the nearest decoded reading of its machine + time still
+    unmatched; the decoded readings left are not in the flagged file."""
+    have: dict = {}
+    for i, k in enumerate(zip(A["machine"].tolist(), A["time"].tolist())):
+        have.setdefault(k, []).append(i)
+    keys = list(zip(dm.tolist(), dt.tolist()))
+    new = np.array([k not in have for k in keys], bool)
+    cnt: dict = {}
+    for k in keys:
+        cnt[k] = cnt.get(k, 0) + 1
+    many = {k for k, c in cnt.items() if k in have and k[1] != "" and (c > 1 or len(have[k]) > 1)}
+    if not many:
+        return new
+    dj = [j for j, k in enumerate(keys) if k in many]
+    gl = gpd.GeoSeries(decoded.geometry.values[dj], crs=decoded.crs or "EPSG:4326").to_crs(4326)
+    dlon = dict(zip(dj, gl.x.to_numpy(float).tolist()))
+    dlat = dict(zip(dj, gl.y.to_numpy(float).tolist()))
+    by: dict = {}
+    for j in dj:
+        by.setdefault(keys[j], []).append(j)
+    lon, lat = A["lon"], A["lat"]
+    for k, Dk in by.items():
+        Fk = have[k]
+        F = _Spots(lon, lat)
+        for f in Fk:
+            F.add(f)
+        present, hit = set(), set()
+        for j in Dk:
+            f = F.first_at(dlon[j], dlat[j])
+            if f is not None:
+                present.add(j)
+                hit.add(f)
+        # a flagged reading at no decoded position (its point moved, no X_log / Y_log): the nearest one still free,
+        # unless it is a copy of a flagged reading matched (the same spot)
+        H = _Spots(lon, lat)
+        for f in Fk:
+            if f in hit:
+                H.add(f)
+        alone = []
+        for f in Fk:
+            if f not in hit and H.first_at(lon[f], lat[f]) is None:
+                alone.append(f)
+                H.add(f)
+        if alone:
+            rest = [j for j in Dk if j not in present]
+            took = _nearest_free([lon[f] for f in alone], [lat[f] for f in alone], rest, dlon, dlat)
+            present.update(took.values())
+        for j in Dk:
+            new[j] = j not in present
+    return new
+
+
+def _logged_twice(A: dict) -> tuple:
+    """(dup, apart): dup True for a reading that repeats an earlier one of the same machine, time and logged position
+    (_same_spot; the first kept); apart = the readings that share their machine and time with an earlier reading but
+    not its position, each a reading of its own. Readings without a time are never one."""
+    tm = pd.Series(list(A["time"])).astype(str)
+    kk = pd.Series([f"{a}\x00{b}" for a, b in zip(A["machine"], A["time"])])
+    cand = (kk.duplicated(keep="first") & (tm != "")).to_numpy()
+    dup = cand.copy()
+    if not cand.any():
+        return dup, 0
+    lon, lat = A["lon"], A["lat"]
+    groups: dict = {}
+    for i in np.flatnonzero((kk.duplicated(keep=False) & (tm != "")).to_numpy()).tolist():
+        g = groups.get(kk.iat[i])
+        if g is None:
+            g = groups[kk.iat[i]] = _Spots(lon, lat)
+        if g.first_at(lon[i], lat[i]) is None:
+            dup[i] = False
+            g.add(i)
+        else:
+            dup[i] = True
+    return dup, int(cand.sum() - dup.sum())
+
+
 def ground_readings(flagged: gpd.GeoDataFrame, crs, decoded: gpd.GeoDataFrame | None = None,
-                    grid_heading: bool = True) -> dict:
+                    grid_heading: bool = True, cols: dict | None = None) -> dict:
     """Every reading of the harvest file for grain / ground, as logged: the flagged file's readings (kept, removed by
     the cleaning or by hand) and, with `decoded` (sms_import.all_import_values of the decoded file), the readings the
-    import left out (not in the flagged file, matched by machine + time); a machine + time twice counted once. Arrays
+    import left out (not in the flagged file, matched by machine + time, and by the logged position too where one
+    machine + time holds several readings: _match_decoded); one reading logged twice (the same machine, time and
+    logged position: _logged_twice) counted once. Arrays
     in `crs`: x, y (the logged point), heading (deg on the grid: true north corrected by the meridian convergence when
     grid_heading), len_m, wid_m, full_ac (distance x width), yield (dry bu/ac as imported), moisture, src ('flagged' /
     'decoded'), row (in its file), keep, rem (Rem_By), step (the import's left-out step), machine, time, record,
-    pass, from_start_m, to_end_m, fp (the strips); and notes, duplicates, decoded_added, convergence_deg (mean)."""
-    P = prepare(flagged)
-    lab = _labels(flagged)
+    pass, from_start_m, to_end_m, fp (the strips); and notes, duplicates, decoded_added, convergence_deg (mean),
+    yield_column (the flagged file's yield read). cols: the columns the cleaning used (columns_of; None: found in the
+    flagged file as the cleaning finds them)."""
+    P = prepare(flagged, cols)
+    lab = _labels(flagged, P["columns"])
     n0 = len(flagged)
     pts = gpd.GeoSeries(shapely.points(P["raw"]["x"], P["raw"]["y"]), crs=P["raw"]["crs"])
     ll = pts.to_crs(4326)
     pm = pts.to_crs(crs)
-    from engine.clean.yield_clean import detect_columns
-    dc = detect_columns([c for c in flagged.columns if c != "geometry"])
+    dc = P["columns"]
     dset = (np.array([_key_text(v) for v in flagged[dc["dataset"]].tolist()], dtype=object)
             if dc.get("dataset") in flagged.columns else np.full(n0, "", object))
     A = {"x": pm.x.to_numpy(float), "y": pm.y.to_numpy(float), "lon": ll.x.to_numpy(float),
@@ -1028,9 +1436,8 @@ def ground_readings(flagged: gpd.GeoDataFrame, crs, decoded: gpd.GeoDataFrame | 
             notes.append("the flagged file has no time column: the readings of the decoded file cannot be matched; "
                          "grain / ground from the flagged file only")
         else:
-            have = set(zip(A["machine"].tolist(), A["time"].tolist()))
             dm, dt = decoded["machine"].astype(str).to_numpy(), decoded["time"].astype(str).to_numpy()
-            new = np.array([(a, b) not in have for a, b in zip(dm, dt)], bool)
+            new = _match_decoded(A, decoded, dm, dt)
             if new.any():
                 D = decoded[new]
                 gp = gpd.GeoSeries(D.geometry.values, crs=decoded.crs or "EPSG:4326")
@@ -1049,14 +1456,21 @@ def ground_readings(flagged: gpd.GeoDataFrame, crs, decoded: gpd.GeoDataFrame | 
                 for key in A:
                     A[key] = np.concatenate([A[key], ext[key]])
                 added = k
-    # a machine + time twice (a reading logged twice, or the same reading in two files): counted once
+    # one reading logged twice (or the same reading in two files): the same machine, time and logged position,
+    # counted once; two readings of one machine and time at two positions (a point export whose times are whole
+    # seconds) are two readings
     n = len(A["x"])
-    dup = np.zeros(n, bool)
+    dup, apart = np.zeros(n, bool), 0
     if any(str(t) for t in A["time"]):
-        kk = pd.Series([f"{a}\x00{b}" for a, b in zip(A["machine"], A["time"])])
-        dup = (kk.duplicated(keep="first") & (pd.Series(list(A["time"])).astype(str) != "")).to_numpy()
+        dup, apart = _logged_twice(A)
+        if apart:
+            notes.append(f"{apart:,} reading(s) share the machine and the time of another reading but not its logged "
+                         "position (times in whole seconds): each counted as a reading of its own")
     if dup.any():
-        notes.append(f"{int(dup.sum()):,} reading(s) logged twice (same machine and time): counted once")
+        # the words of before 0.4.0 where no two readings shared a machine and time at two positions (the record
+        # of such a file stays byte for byte)
+        notes.append(f"{int(dup.sum()):,} reading(s) logged twice (same machine"
+                     + (", time and position" if apart else " and time") + "): counted once")
         for key in A:
             A[key] = A[key][~dup]
         n = len(A["x"])
@@ -1070,7 +1484,7 @@ def ground_readings(flagged: gpd.GeoDataFrame, crs, decoded: gpd.GeoDataFrame | 
                                                           A["order"], A["x"], A["y"], A["heading"], A["len_m"])
     A["fp"] = footprints(A["x"], A["y"], A["heading"], A["len_m"], A["wid_m"])
     A.update(notes=notes, duplicates=int(dup.sum()), decoded_added=int(added),
-             convergence_deg=(float(np.nanmean(conv)) if n else 0.0), n=n)
+             convergence_deg=(float(np.nanmean(conv)) if n else 0.0), n=n, yield_column=P["yield_column"])
     return A
 
 
@@ -1103,7 +1517,8 @@ def _spread(yv, a, pid, seg_m, ground, name):
     consecutive readings, N_BOOT draws, a seed fixed by SEED and the polygon's name), statistic grain / ground in the
     ratio form: sum(y a) / sum(a) of the readings drawn x sum(a) / ground of the readings measured. Returns {lo, hi,
     pct (half the 95 % range, % of the figure), point, passes, draws, block_m, seed} or None (nothing with an area).
-    It is how much the yield varies along the passes inside the polygon, not the accuracy of the figure."""
+    It is the sampling range of the polygon's figure under the yield's variation along the passes; the monitor's
+    calibration error is not in it (the calibration range is)."""
     import zlib
     yv, a, pid, seg_m = (np.asarray(v) for v in (yv, a, pid, seg_m))
     ok = (a > 0) & np.isfinite(yv)
@@ -1198,7 +1613,8 @@ def measure_ground(A: dict, g, name: str, sms_in=None, margin_m: float = 0.0) ->
             "yield": yv, "grain": grain, "status": status, "removed_by": rem, "step": step,
             "machine": A["machine"][near], "time": A["time"][near], "record": A["record"][near], "sms_in": sin,
             "src": src, "row": A["row"][near], "fp": fps[near], "part": cl, "transient": trans,
-            "len_ft": A["len_ft"][near], "wid_ft": A["wid_ft"][near]}
+            "len_ft": A["len_ft"][near], "wid_ft": A["wid_ft"][near],
+            "yield_column": A.get("yield_column") or OCED_COLUMNS["yield"]}
     return fig, rows
 
 
@@ -1222,7 +1638,7 @@ def ground_text(D: dict, j: int, polygon: str, cleaned: dict | None = None) -> l
     by = str(D["removed_by"][j] or "?") if stt == "removed" else str(D["step"][j] or "?")
     out.append(STATUS_TEXT[stt].format(by=by))
     y, full, sh, ca = float(D["yield"][j]), float(D["full_ac"][j]), float(D["share"][j]), float(D["clip_ac"][j])
-    out.append(f"Yield {_n(y, 2)} bu/ac dry, as imported (Yld_Vol_Dr)")
+    out.append(f"Yield {_n(y, 2)} bu/ac dry, as imported ({D.get('yield_column') or OCED_COLUMNS['yield']})")
     out.append(f"Strip as logged {_n(float(D['wid_ft'][j]), 1)} ft x {_n(float(D['len_ft'][j]), 1)} ft = "
                f"{full:.5f} ac")
     if not D["touch"][j]:
@@ -1260,37 +1676,57 @@ def ground_sum_text(p: dict) -> str:
             f"{_f(G.get('dry_yield_bu_ac'))} bu/ac ({G.get('readings', 0):,} readings)")
 
 
-HOVER_STATUS = {"kept": "Kept by the cleaning", "removed": "Removed by the cleaning ({by})",
-                "hand": "Removed by hand (Edit points)", "left_out": "Left out by the import"}
+HOVER_STATUS = {"kept": "kept by the cleaning", "removed": "removed by the cleaning ({by})",
+                "hand": "removed by hand (Edit points)", "left_out": "left out by the import"}
 HOVER_CLICK = "Click (tap) for the calculation"
+HOVER_CLICK_SUMS = "Click (tap) for its sums"
+
+
+def _hv(v) -> str:
+    """A number of the hover as the maps' hover writes it (the app's fmt_value): two decimals, a value under 0.1
+    with three significant digits (a reading's bushels), '-' for none."""
+    if v is None or not np.isfinite(float(v)):
+        return "-"
+    a = abs(float(v))
+    return f"{float(v):,.2f}" if a >= 0.1 or a == 0 else f"{float(v):.3g}"
+
+
+def ground_hover_fields(D: dict, j: int, polygon: str) -> dict:
+    """The SHORT hover of one reading of the grain / ground rows (measure_ground's rows, row j) as the fields of the
+    maps' hover (0.4.0: the general map's box, '<b>label</b>: value', the yield above them as 'Dry yield: v'): st
+    (what happened to the reading: 'Reading: st'), shl / sh (the share of its strip inside the polygon and the grain
+    it adds: 'Inside P: 50.00 % of its strip · 0.0123 bu', or why it adds none), ck (the click). The whole
+    calculation (ground_text) is the card a click on the reading shows."""
+    stt = str(D["status"][j])
+    full, sh = float(D["full_ac"][j]), float(D["share"][j])
+    if not D["touch"][j]:
+        shl, shv = f"Outside {polygon}", "not counted"
+    elif full <= 0:
+        shl, shv = f"In {polygon}", "no width or no distance, no area"
+    else:
+        shl, shv = f"Inside {polygon}", f"{100 * sh:.2f} % of its strip · {_hv(float(D['grain'][j]))} bu"
+    return {"st": HOVER_STATUS[stt].format(by=str(D["removed_by"][j] or "?")), "shl": shl, "sh": shv,
+            "ck": HOVER_CLICK}
 
 
 def ground_hover_text(D: dict, j: int, polygon: str) -> list:
-    """The SHORT hover of one reading of the grain / ground rows (measure_ground's rows, row j), a few lines that fit
-    beside the cursor: what happened to the reading, the share of its strip inside the polygon, the yield used and the
-    grain it adds (bu). The whole calculation (ground_text) is the card a click on the reading shows."""
-    stt = str(D["status"][j])
-    out = [HOVER_STATUS[stt].format(by=str(D["removed_by"][j] or "?"))]
-    y, full, sh = float(D["yield"][j]), float(D["full_ac"][j]), float(D["share"][j])
-    if not D["touch"][j]:
-        out.append(f"Outside {polygon}: not counted")
-    elif full <= 0:
-        out.append(f"In {polygon}, no width or no distance: no area")
-    else:
-        out.append(f"{100 * sh:.0f} % of its strip inside {polygon}")
-    if D["touch"][j]:
-        out.append(f"Yield used {_n(y, 2)} bu/ac · {float(D['grain'][j]):.4f} bu")
-    else:
-        out.append(f"Yield {_n(y, 2)} bu/ac")
-    out.append(HOVER_CLICK)
-    return out
+    """ground_hover_fields as the lines of plain text the hover shows (the yield first, as the maps' hover)."""
+    F = ground_hover_fields(D, j, polygon)
+    return [f"Dry yield: {_hv(float(D['yield'][j]))} bu/ac", f"Reading: {F['st']}", f"{F['shl']}: {F['sh']}",
+            F["ck"]]
+
+
+def ground_sum_fields(p: dict) -> dict:
+    """The SHORT hover of a polygon's line as the fields of the maps' hover (under 'Plot <name>'): gg (grain /
+    ground, bu/ac), nr (the readings it counts), ck (the click)."""
+    G = p.get("ground") or {}
+    return {"gg": f"{_f(G.get('dry_yield_bu_ac'))} bu/ac", "nr": f"{G.get('readings', 0):,}", "ck": HOVER_CLICK_SUMS}
 
 
 def ground_sum_hover(p: dict) -> str:
-    """The SHORT hover of a polygon's line: its name and grain / ground (the figure the small area leads with)."""
-    G = p.get("ground") or {}
-    return (f"{p['name']}: grain / ground {_f(G.get('dry_yield_bu_ac'))} bu/ac\n"
-            f"{G.get('readings', 0):,} readings\n{HOVER_CLICK.replace('calculation', 'sums')}")
+    """ground_sum_fields as the lines of plain text the hover of a polygon's line shows."""
+    F = ground_sum_fields(p)
+    return "\n".join([f"Plot {p['name']}", f"Grain / ground: {F['gg']}", f"Readings: {F['nr']}", F["ck"]])
 
 
 def figure_of(p: dict, method: str):
@@ -1331,27 +1767,30 @@ def cv_value(cv_pct):
 
 def measure_all(flagged: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, rule: str = DEFAULT_RULE,
                 method: str = DEFAULT_METHOD, decoded: gpd.GeoDataFrame | None = None, cv_pct=None,
-                interior_m: float = 0.0, grid_heading: bool = True, detail_margin_m: float = 0.0) -> dict:
+                interior_m: float = 0.0, grid_heading: bool = True, detail_margin_m: float = 0.0,
+                cols: dict | None = None) -> dict:
     """The three figures of every polygon (section J): measure() under the edge rule (the cleaned map average, and the
     readings as imported), measure() under 'full' (SMS's query: the kept readings whose whole strip is inside) and
     grain / ground (measure_ground over ground_readings; with `decoded` also the readings the import left out). The
     polygons first lose interior_m off each end along their long axis when interior_m > 0. Adds to measure()'s dict:
     method, method_text, ground_rows {name: rows}, cleaned_rows {name: {flagged row: (ac, bu)}}, pairs, cv_pct,
     interior_m, ground_notes, duplicates, decoded_added, convergence_deg; per polygon 'ground', 'sms', 'figure' and
-    'calibration'."""
+    'calibration'. cols: the columns the cleaning used (columns_of(flagged, R)); None: found in the flagged file as
+    the cleaning finds them."""
     method = method_key(method)
     rule = rule_key(rule)
     if flagged.crs is None:
         flagged = flagged.set_crs(4326)
+    cols = cols if cols is not None else columns_of(flagged)
     notes = []
     im = float(interior_m or 0.0)
     if im > 0:
         crs0 = (flagged.crs if not flagged.crs.is_geographic else
                 gpd.GeoSeries(flagged.geometry.values, crs=flagged.crs).estimate_utm_crs())
         polygons, notes = interior_polygons(polygons, im, crs0)
-    M = measure(flagged, polygons, rule, detail_margin_m=detail_margin_m)
-    MS = M if rule == "full" else measure(flagged, polygons, "full")
-    A = ground_readings(flagged, M["crs"], decoded=decoded, grid_heading=grid_heading)
+    M = measure(flagged, polygons, rule, detail_margin_m=detail_margin_m, cols=cols)
+    MS = M if rule == "full" else measure(flagged, polygons, "full", cols=cols)
+    A = ground_readings(flagged, M["crs"], decoded=decoded, grid_heading=grid_heading, cols=cols)
     G_rows, C_rows = {}, {}
     cv = cv_value(cv_pct)
     for k, (p, g) in enumerate(zip(M["polygons"], M["geoms"])):

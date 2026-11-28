@@ -164,7 +164,7 @@ def test_app_end_to_end(field, tmp_path, monkeypatch, use):
     steps = next(d.value for d in at.dataframe if "filter" in d.value.columns)
     assert list(steps["filter"]).count("S1") == 1
     assert steps.iloc[0]["filter"] == "S1" and steps.iloc[0]["removed"] == field["n"] - field["n_inside"]
-    tabs = [t.label for t in at.tabs]
+    tabs = [t.label for t in at.tabs if " · " not in t.label]   # 0.4.0: the five step tabs come first
     assert tabs[0] == "Yield path" and "Grower's data" in tabs and "Clean map" not in tabs
     kept = next(m for m in at.metric if m.label == "Readings kept")
     assert f"S1 clipped {field['n'] - field['n_inside']:,}" in kept.help

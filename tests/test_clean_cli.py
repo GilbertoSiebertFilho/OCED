@@ -50,7 +50,8 @@ def test_cli_imports_as_sms_and_clips_like_the_app(field, tmp_path):
     S_app = {"method": "sms3sigma", "tag": "app", "sms3sigma": {}, "machines": {"harmonise": False},
              "aoi": {"file": field["boundary"], "buffer_m": float(sms.DEFAULTS["clip_tolerance_m"]),
                      "clip_output": True, "feature": None},
-             "scale_ticket": {"value": 110000.0, "unit": "lb", "basis": "wet", "moisture_pct": None, "note": None,
+             # no basis given on the command line: dry (0.4.0), the app's default too
+             "scale_ticket": {"value": 110000.0, "unit": "lb", "basis": "dry", "moisture_pct": None, "note": None,
                               "area_ac": None},
              "test_weight_lb_bu": float(RS["test_weight_lb_bu"]), "moisture": {"standard_pct": RS["dry_moisture_pct"]}}
     A = er.clean(shp_i, str(tmp_path / "app_out"), S_app, log=lambda m: None)

@@ -7,7 +7,7 @@ the small CSS of the page).
     st.set_page_config(page_title=brand.NAME, page_icon=brand.page_icon(), layout="wide")
     brand.inject()                    # once per run, right after set_page_config
     st.logo(brand.LOGO_H, icon_image=brand.LOGO_SHIELD, size="large")
-    brand.step_header(1, "Raw data", "Upload the monitor files")   # the numbered heading of a step card
+    brand.step_header(1, "Files", "The raw data and the field files")   # the numbered heading of a step card
     brand.brand_block()               # name, version and tagline of the title bar
 
 Palette (assets/brand/BRAND.md, the Olds College site stylesheet): navy is the primary colour (buttons, headings,
@@ -18,8 +18,11 @@ fills, icons, outlines and large labels only, and the *_TEXT shades when a word 
 
 The theme itself is .streamlit/config.toml (read when the app is started from the project folder: run_oced.bat);
 inject() adds what a theme cannot set, as light-dark() pairs that follow the rendered theme: a navy title bar (the
-app_header container: white logo, name, version pill, Start over), the four steps as white cards on a light canvas
-with a navy top edge and a numbered badge (step_header(); the oced_step_1..4 containers), the controls that decide a
+app_header container: white logo, name, version pill, the steps done, Start over), the six steps as tabs across
+the top (st.tabs, key step_tab) with one white card per tab on a light canvas, a navy top edge and a numbered badge
+(step_header(); the oced_step_1..6 containers; a step done shows a light-blue check, a step not needed an outlined
+badge), Back / Next step at the foot of
+each card, the controls that decide a
 run in tinted, edged panels (method_panel), the tabs as pills with the selected one navy, primary buttons navy with a
 lift on hover, the main action (run_go) larger and the clean-shapefile download green, metrics as small cards, the
 captions at full opacity (MUTED, 7.6:1). Only stable hooks are used (data-testid, role / aria attributes, the
@@ -40,7 +43,7 @@ NAME = "OCED"
 LONG_NAME = "OCED — Olds College Extract Data"
 TAGLINE = "Olds College Extract Data · raw yield data to clean shapefiles with the SMS 3-sigma sequence"
 ORG = "Olds College Smart Farm (OFPE)"
-VERSION = "0.3.8"
+VERSION = "0.4.0"
 
 # ---- palette (hex strings; BRAND.md)
 NAVY = "#00358E"            # primary: buttons, headings, tree group titles, active states, lines and fits in figures
@@ -161,12 +164,14 @@ def _css() -> str:
     through st.context.theme.type is not used: on the first run after a connection it reports the OS preference, not
     the configured theme.
 
-    The look (v2.6): a navy title bar (app_header), the four steps as white cards on a light canvas with a navy top
-    edge and a numbered badge (step_header; keys oced_step_1..4), the controls that decide the run in tinted panels
+    The look (v2.6; 0.4.0: the steps as tabs): a navy title bar (app_header) with the steps done, the six steps as
+    tabs across the top (key step_tab), one white card per tab on a light canvas with a navy top edge and a numbered
+    badge (step_header; keys oced_step_1..6; a light-blue check once the step is done, outlined when not needed), Back / Next step at the foot
+    of each card (step_nav_<n>), the controls that decide the run in tinted panels
     (method_panel: crop and cleaning method; factor_method_box; the column mapping expander colmap), the tabs as
     pills (the selected one navy), primary buttons navy with a lift on hover, the main action (run_go) larger and the
     clean-shapefile download green, metrics as small cards. The captions keep full opacity (WCAG AA: 7.6:1 on white).
-    The steps of 0.3.1 add: the import badges, the 'Next' line, the group labels of the import settings, the tinted
+    The steps of 0.3.1 add: the import badges, the group labels of the import settings, the tinted
     import panel, the strips of cards (a grid of equal tracks, two per row on a phone), the map toolbar (small pills
     on no box), the larger Apply and Clean buttons, the white boxes of step 3 with a navy edge, the result strip and
     the yield path. The app writes no style block of its own; a few elements keep inline colours (the legend chips,
@@ -182,6 +187,7 @@ def _css() -> str:
     tint2 = "light-dark(#F5F9FE, rgba(255,255,255,0.03))"
     edge = "light-dark(#C9DCF3, rgba(0,156,222,0.35))"
     pill_txt = f"light-dark({NAVY}, #CFE3FA)"
+    tab_bar = "light-dark(#F5F9FE, #16191F)"                 # the step tabs' bar: tint2 made opaque (it is sticky)
     edge2 = "light-dark(#C9D8EC, rgba(0,156,222,0.35))"     # the edge of the map toolbar, the boxes of step 3
     note_bg = f"light-dark({BG2}, rgba(0,156,222,0.08))"     # the notes under a result card, the yield path
     body = f"light-dark({TEXT}, #E5E7EB)"
@@ -229,6 +235,46 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
   background: linear-gradient(135deg, {navy} 0%, #0060C0 100%); box-shadow: 0 3px 8px rgba(0,53,142,0.30); }}
 .oced-step-title {{ font-size: 1.45rem; font-weight: 800; color: {heading}; line-height: 1.15; }}
 .oced-step-sub {{ font-size: 0.92rem; color: {muted}; margin-top: 0.1rem; }}
+.oced-step-num.done {{ background: {blue}; box-shadow: 0 3px 8px rgba(0,156,222,0.35); }}
+.oced-done {{ margin-left: 0.6rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 0.15rem 0.5rem; border-radius: 999px; background: {tint}; color: {heading}; border: 1px solid {blue};
+  vertical-align: middle; }}
+/* a step not needed for the file on screen (step 5, Plots, without a plot boundary; steps 4 and 5 of a planter or
+   sprayer file): an outlined badge, neither done nor missing, and a 'not needed' tag */
+.oced-step-num.skip {{ background: {card}; color: {muted}; border: 2px dashed {blue}; box-shadow: none; }}
+.oced-done.oced-skip {{ background: transparent; color: {muted}; border: 1px dashed {blue}; }}
+/* the title bar's 'n of 6 steps done' ('n of 5' while step 5, Plots, is not needed; 'n of 4' for a planter or sprayer
+   file, whose steps 4 and 5 are not needed) */
+.oced-progress {{ display: inline-block; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.03em; color: #FFFFFF;
+  padding: 0.22rem 0.7rem; border-radius: 999px; background: rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.45); margin-bottom: 0.35rem; }}
+.oced-progress.done {{ background: {blue}; border-color: {blue}; }}
+/* the six step tabs: larger pills (their own bar only: '> div >' leaves the tabs inside a step as they are); the
+   bar stays on screen while the page scrolls (sticky under Streamlit's header, 3.75rem; opaque, a soft shadow under
+   it; its z-index under the header, the sidebar, dialogs, tooltips and a map in full screen, which all open above
+   it); always one row: where the main area is too narrow for the six pills (a phone, a narrow window, or a laptop
+   with the sidebar open, which a rule on the viewport's width would miss) the row scrolls sideways, the open step's
+   pill brought into view (STEP_BAR_JS); up to 900 px the pills are also smaller */
+.stApp [data-testid="stMain"] .st-key-step_tab > div > [role="tablist"] {{
+  padding: 0.55rem; position: sticky; top: 3.75rem; z-index: 90; background: {tab_bar};
+  box-shadow: 0 6px 14px -8px rgba(0,53,142,0.35); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }}
+.stApp [data-testid="stMain"] .st-key-step_tab > div > [role="tablist"] > [data-testid="stTab"] {{
+  padding: 0.55rem 1.15rem; flex: none; }}
+.stApp [data-testid="stMain"] .st-key-step_tab > div > [role="tablist"] > [data-testid="stTab"] p {{
+  font-size: 1.02rem; font-weight: 700; white-space: nowrap; }}
+@media (max-width: 900px) {{
+  .stApp [data-testid="stMain"] .st-key-step_tab > div > [role="tablist"] {{ padding: 0.4rem; gap: 0.3rem; }}
+  .stApp [data-testid="stMain"] .st-key-step_tab > div > [role="tablist"] > [data-testid="stTab"] {{
+    padding: 0.4rem 0.8rem; }}
+  .stApp [data-testid="stMain"] .st-key-step_tab > div > [role="tablist"] > [data-testid="stTab"] p {{
+    font-size: 0.95rem; }}
+}}
+/* the grower's weight box (step 3): no +/- buttons (a step of a hundredth is of no use on a field's total), their
+   room left to the number */
+.stApp [class*="st-key-gw_w_"] [data-testid="stNumberInputStepDown"],
+.stApp [class*="st-key-gw_w_"] [data-testid="stNumberInputStepUp"] {{ display: none; }}
+/* Back / Next step at the foot of a card */
+.stApp [class*="st-key-step_nav_"] {{ margin-top: 0.8rem; padding-top: 0.7rem; border-top: 1px solid {rule}; }}
 
 /* ---- the controls that decide the run: tinted panels */
 .stApp .st-key-method_panel, .stApp .st-key-factor_method_box {{
@@ -336,10 +382,6 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 .oced-badge-as_is, .oced-badge-as_logged {{ background: transparent; color: {link}; border: 1px solid {blue}; }}
 .oced-badge-older, .oced-badge-failed {{ background: transparent; color: light-dark({ORANGE_TEXT}, {ORANGE});
   border: 1px solid {ORANGE}; }}
-/* ---- the last line of a step: where to go next */
-.oced-next {{ text-align: right; font-size: 0.86rem; color: {muted}; margin-top: 0.4rem; }}
-.oced-next a {{ color: {link}; text-decoration: none; font-weight: 600; }}
-.oced-next a:hover {{ text-decoration: underline; }}
 /* ---- the labels of a group of fields (OPERATION, FILTER ...) */
 .oced-group {{ font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
   color: {muted}; margin: 0.35rem 0 0.1rem; }}
@@ -347,7 +389,7 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 .stApp [class*="st-key-imp_panel_"] {{
   background: {tint}; border: 1px solid {edge}; border-left: 5px solid {blue}; border-radius: 12px;
   padding: 0.7rem 1.0rem 0.85rem !important; }}
-/* ---- a strip of cards (steps 1 and 2): a grid of equal tracks, two per row on a phone */
+/* ---- a strip of cards (step 2): a grid of equal tracks, two per row on a phone */
 .stApp [class*="st-key-strip_"] [data-testid="stHorizontalBlock"] {{ display: grid !important;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: 1fr; gap: 0.6rem; }}
 .stApp [class*="st-key-strip_"] [data-testid="stColumn"] {{ width: auto !important; min-width: 0 !important;
@@ -375,7 +417,7 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
   border-color: {navy}; box-shadow: none; }}
 .stApp [class*="st-key-attr_box_"] button[role="radio"][aria-checked="true"] p {{ color: #FFFFFF; }}
 .stApp [class*="st-key-attr_more_"] {{ max-width: 11rem; }}
-/* ---- the main action of steps 2 and 3 (Apply, Clean), larger */
+/* ---- the main action of steps 1 and 3 (Apply, Clean), larger */
 .stApp .st-key-run_go_2 [data-testid="stBaseButton-primary"],
 .stApp .st-key-run_go_imp [data-testid="stBaseButton-primary"] {{ min-height: 3.1rem; padding: 0.7rem 2rem;
   border-radius: 12px; font-size: 1.08rem; font-weight: 700; }}
@@ -412,14 +454,30 @@ div[data-testid="stCaptionContainer"] a {{ color: {link}; }}
 </style>"""
 
 
-def step_header(num: int, title: str, subtitle: str = "") -> None:
-    """The heading of a step card: a numbered navy badge, the title and a one-line subtitle (the .oced-step classes
-    of inject()); its id oced-step-<num> is the anchor next_step() links to."""
+def step_header(num: int, title: str, subtitle: str = "", done: bool = False, not_needed: bool = False) -> None:
+    """The heading of a step card: a numbered navy badge (light blue with a check once the step is done, never green),
+    the title with a 'done' tag then, and a one-line subtitle (the .oced-step classes of inject()). not_needed: a step
+    the file on screen does not need (step 5, Plots, without a plot boundary): an outlined badge with its number and a
+    'not needed' tag, neither done nor missing (the title bar leaves it out of its count)."""
     import html
     import streamlit as st
-    st.html(f'<div class="oced-step" id="oced-step-{int(num)}"><div class="oced-step-num">{int(num)}</div><div>'
-            f'<div class="oced-step-title">{html.escape(title)}</div>'
+    badge = "&#10003;" if done else str(int(num))
+    cls = " done" if done else " skip" if not_needed else ""
+    tag = ('<span class="oced-done">done</span>' if done else
+           '<span class="oced-done oced-skip">not needed</span>' if not_needed else "")
+    st.html(f'<div class="oced-step" id="oced-step-{int(num)}"><div class="oced-step-num{cls}" '
+            f'title="Step {int(num)}{" (not needed)" if not_needed and not done else ""}">{badge}</div><div>'
+            f'<div class="oced-step-title">{html.escape(title)}' + tag + "</div>"
             + (f'<div class="oced-step-sub">{html.escape(subtitle)}</div>' if subtitle else "") + "</div></div>")
+
+
+def progress_html(n_done: int, n_steps: int, note: str | None = None) -> str:
+    """The steps done, at the right of the title bar: 'n of N steps done' (light blue once all are done); note: the
+    hover of the count (why a step is left out of it)."""
+    import html
+    return (f'<div class="oced-progress{" done" if n_done >= n_steps else ""}"'
+            + (f' title="{html.escape(note)}"' if note else "")
+            + f'>{int(n_done)} of {int(n_steps)} steps done</div>')
 
 
 # the import of a file, as a badge: kind -> its words (the .oced-badge-<kind> classes of inject())
@@ -434,15 +492,6 @@ def import_badge(kind: str) -> str:
     import html
     k = kind if kind in BADGE_WORDS else "as_is"
     return f'<span class="oced-badge oced-badge-{k}">{html.escape(BADGE_WORDS[k])}</span>'
-
-
-def next_step(num: int, title: str, note: str = "") -> None:
-    """The last line of a step, small and right-aligned: 'Next: 3 · Cleaning ↓' (a link to that step's heading) and
-    an optional note in brackets."""
-    import html
-    import streamlit as st
-    st.html(f'<div class="oced-next"><a href="#oced-step-{int(num)}">Next: {int(num)} · {html.escape(title)} ↓</a>'
-            + (f' &nbsp;({html.escape(note)})' if note else "") + "</div>")
 
 
 def group_label(text: str) -> None:
@@ -461,10 +510,49 @@ def brand_block(name: str | None = None, version: str | None = None, tagline: st
             f'{html.escape(tagline or TAGLINE)}</div></div>')
 
 
+# the step bar on a narrow screen is one row that scrolls sideways (the media query of _css): the open step's pill is
+# brought into view, centred in the bar, when the page opens and after every change of step. Only the bar's own
+# scrollLeft is set (never scrollIntoView), so the page never moves up or down.
+STEP_BAR_JS = """<script>
+(function () {
+  if (window.__ocedStepBar) return;
+  window.__ocedStepBar = true;
+  var SEL = '.st-key-step_tab > div > [role="tablist"]';
+  var force = false;
+  function follow() {
+    var bars = document.querySelectorAll(SEL);
+    for (var i = 0; i < bars.length; i++) {
+      var bar = bars[i], tab = bar.querySelector('[role="tab"][aria-selected="true"]');
+      if (!tab || bar.scrollWidth <= bar.clientWidth + 1) continue;
+      if (bar.__ocedOpen === tab && !force) continue;     // the same step: a sideways swipe of the reader is left alone
+      bar.__ocedOpen = tab;
+      var rb = bar.getBoundingClientRect(), rt = tab.getBoundingClientRect();
+      var left = bar.scrollLeft + (rt.left - rb.left) - (bar.clientWidth - rt.width) / 2;
+      left = Math.max(0, Math.min(left, bar.scrollWidth - bar.clientWidth));
+      if (Math.abs(bar.scrollLeft - left) > 1) bar.scrollTo({left: left, behavior: 'smooth'});
+    }
+    force = false;
+  }
+  var due = null;
+  function later() { if (due) clearTimeout(due); due = setTimeout(function () { due = null; follow(); }, 60); }
+  new MutationObserver(function (ms) {
+    for (var i = 0; i < ms.length; i++) {
+      var t = ms[i].target;
+      if (ms[i].type === 'childList' || (t && t.closest && t.closest('.st-key-step_tab'))) { later(); return; }
+    }
+  }).observe(document.body, {attributes: true, attributeFilter: ['aria-selected'], childList: true, subtree: true});
+  window.addEventListener('resize', function () { force = true; later(); });
+  later();
+})();
+</script>"""
+
+
 def inject():
-    """Write the style block into the page (st.html; once per run, after st.set_page_config)."""
+    """Write the style block into the page (st.html; once per run, after st.set_page_config), and the step bar's
+    follow script (STEP_BAR_JS)."""
     import streamlit as st
     st.html(_css())
+    st.html(STEP_BAR_JS, unsafe_allow_javascript=True)
 
 
 def rule():
@@ -474,5 +562,5 @@ def rule():
 
 
 def footer_caption() -> str:
-    """The sidebar footer: 'OCED 0.3.8 · Olds College Smart Farm (OFPE)'."""
+    """The sidebar footer: 'OCED 0.4.0 · Olds College Smart Farm (OFPE)'."""
     return f"{NAME} {VERSION} · {ORG}"

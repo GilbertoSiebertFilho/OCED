@@ -1773,7 +1773,15 @@ def write_clean(source: dict, clean_shp: str, out_dir: str, *, widths: bool = Tr
     warnings, notes = [], {}
     factors = {str(k): float(v) for k, v in (factors or {}).items() if v is not None}
     units = _units(root, unit_ids)
+    # a unit with no grain flow (a tractor with the grain cart, selected with the combines by the field) was left out
+    # by the decoder and has no reading in the clean file: its logs are not written, and the written card is read back
+    # with the combines' units only
+    left_out = [uid for uid in unit_ids if uid not in {u.uid for u in units}]
+    unit_ids = [u.uid for u in units]
     vins = {u.vin for u in units}
+    for uid in left_out:
+        warnings.append(f"{uid.split('::')[0]}: no grain-flow channel in its logs (not a combine): its logs are not "
+                        "in the written card")
     for k in factors:
         if k not in vins:
             warnings.append(f"factor for {k!r}: no such machine in these logs ({', '.join(sorted(vins))})")

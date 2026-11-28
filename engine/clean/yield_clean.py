@@ -490,6 +490,12 @@ def sanitise_tag(s) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(s)).strip("_")
 
 
+def ticket_basis_default(moisture_pct=None) -> str:
+    """The basis of a grower's weight given without one: 'dry' (at the standard moisture), or 'wet' (as delivered)
+    when the moisture of the weighed grain is given with it (a moisture only applies to a wet weight)."""
+    return "wet" if moisture_pct is not None else "dry"
+
+
 def merge_settings(user=None) -> dict:
     """DEFAULT_SETTINGS updated with `user` (any subset), validated. Raises ValueError with a clear message."""
     S = copy.deepcopy(DEFAULT_SETTINGS)
@@ -525,6 +531,12 @@ def merge_settings(user=None) -> dict:
             S[k].update(v)
         else:
             S[k] = v
+    # ---- a grower's weight given without its basis: at the standard moisture (dry), or as delivered (wet) when the
+    # weighed grain's moisture comes with it (0.4.0; before, every weight without a basis was taken as wet). Settings
+    # without a weight keep the default ticket as it was (basis 'wet', value null)
+    ut = user.get("scale_ticket") if isinstance(user.get("scale_ticket"), dict) else {}
+    if ut.get("value") is not None and ut.get("basis") is None:
+        S["scale_ticket"]["basis"] = ticket_basis_default(ut.get("moisture_pct"))
     # ---- aliases of the v1 keys: harmonise_machines <-> machines.harmonise, boundary -> aoi.file (diagnostic only)
     um = user.get("machines") if isinstance(user.get("machines"), dict) else {}
     if "harmonise_machines" in user and "harmonise" not in um:
@@ -619,7 +631,8 @@ def merge_settings(user=None) -> dict:
         if unit != "bu/ac":
             raise ValueError("scale_ticket.area_ac only applies to a yield per acre (unit 'bu/ac'): drop it or give the "
                              "grower's figure in bu/ac")
-    tb = str(T["basis"] if T["basis"] is not None else "wet").strip().lower()
+    tb = str(T["basis"] if T["basis"] is not None else
+             (ticket_basis_default(T["moisture_pct"]) if T["value"] is not None else "wet")).strip().lower()
     if tb not in ("wet", "dry"):
         raise ValueError(f"scale_ticket.basis must be 'wet' or 'dry', not {T['basis']!r}")
     T["basis"] = tb
@@ -1286,7 +1299,8 @@ def ticket_spec(S) -> dict | None:
     the run then writes Yld_Level only, as the v1 engine did)."""
     T = S.get("scale_ticket") or {}
     if T.get("value") is not None:
-        return {"value": float(T["value"]), "unit": T.get("unit") or "lb", "basis": T.get("basis") or "wet",
+        return {"value": float(T["value"]), "unit": T.get("unit") or "lb",
+                "basis": T.get("basis") or ticket_basis_default(T.get("moisture_pct")),
                 "moisture_pct": T.get("moisture_pct"), "note": T.get("note"), "area_ac": T.get("area_ac"),
                 "test_weight_lb_bu": T.get("test_weight_lb_bu"), "use": T.get("use") or "adjust",
                 "bushel_from": T.get("bushel_from") or "file", "legacy": False}
@@ -1477,19 +1491,19 @@ def grower_bushel_weight(S, monitor_tw=None):
     return None, None, False
 
 
-def ticket_value_text(value, unit: str = "lb", bu_decimals: int = 1) -> str:
-    """The ticket's value as the ticket wrote it: '1,500,000 lb', '9,000 bu', '7,500.5 bu', '200.1234 t', '0.5 t'. lb
-    and whole numbers carry no decimals; a fractional bu `bu_decimals`; a fractional kg / t up to four (a tonne
-    ticket is written with its decimals: 200.1234 t is 441,197 lb, '200 t' would be 272 lb short)."""
+def ticket_value_text(value, unit: str = "lb", bu_decimals: int = 2) -> str:
+    """The grower's weight as given, never rounded to a whole number (0.4.0): two decimals in every unit
+    ('1,500,000.00 lb', '4,451.50 lb', '9,000.00 bu', '50.25 bu/ac'; a bu `bu_decimals`, at least two), kg and t
+    with their decimals up to four and at least two ('200.1234 t', '0.50 t': a tonne ticket is written with its
+    decimals, 200.1234 t is 441,197.43 lb, '200 t' would be 272 lb short)."""
     v = float(value)
     u = str(unit or "lb")
-    if u == "bu/ac":                              # a yield: '50 bu/ac', '50.25 bu/ac'
-        return f"{v:,.0f} {u}" if v == int(v) else f"{v:,.2f} {u}"
-    if u in ("kg", "t") and v != int(v):
-        return f"{v:,.4f}".rstrip("0").rstrip(".") + f" {u}"
-    if u == "bu" and v != int(v):
-        return f"{v:,.{bu_decimals}f} {u}"
-    return f"{v:,.0f} {u}"
+    if u in ("kg", "t"):
+        whole, _, dec = f"{v:,.4f}".partition(".")
+        return f"{whole}.{dec.rstrip('0').ljust(2, '0')} {u}"
+    if u == "bu":
+        return f"{v:,.{max(2, int(bu_decimals))}f} {u}"
+    return f"{v:,.2f} {u}"
 
 
 def ticket_summary(S, test_weight_lb_bu=None, test_weight_source=None, area_ac=None, area_source=None,
@@ -1538,8 +1552,7 @@ def ticket_summary(S, test_weight_lb_bu=None, test_weight_source=None, area_ac=N
         lb = bu_g * tw_g
         bu = lb / tw                                     # the same grain in the monitor's bushel
     v = tk["value"]
-    vtxt = (ticket_value_text(v, tk["unit"]).rsplit(" ", 1)[0] if tk["unit"] in ("kg", "t", "bu/ac") else
-            (f"{v:,.0f}" if v >= 100 else f"{v:,.3g}"))
+    vtxt = ticket_value_text(v, tk["unit"]).rsplit(" ", 1)[0]      # the weight as given, with its decimals
     own = differ and not mass_unit and grower_explicit   # the grower's bushels made a mass, then the file's bushels
     if tk["unit"] == "bu/ac":
         cap = f"{vtxt} bu/ac x {t_area:,.2f} ac ({t_area_src}) = {(bu_g if own else bu):,.2f} bu"
@@ -1548,10 +1561,10 @@ def ticket_summary(S, test_weight_lb_bu=None, test_weight_source=None, area_ac=N
     else:
         cap = f"{vtxt} {tk['unit']} = {bu:,.2f} bu at {tw:.2f} lb/bu (test weight from {test_weight_source})"
     if own:
-        cap += (f" of {tw_g:.2f} lb ({g_src}) = {lb:,.0f} lb = {bu:,.2f} bu at {tw:.2f} lb/bu (test weight from "
+        cap += (f" of {tw_g:.2f} lb ({g_src}) = {lb:,.2f} lb = {bu:,.2f} bu at {tw:.2f} lb/bu (test weight from "
                 f"{test_weight_source}: the bushel of the monitor's total)")
     elif not mass_unit and lb and tw:
-        cap += f" = {lb:,.0f} lb at {tw:.2f} lb/bu (test weight from {test_weight_source})"
+        cap += f" = {lb:,.2f} lb at {tw:.2f} lb/bu (test weight from {test_weight_source})"
     if differ and mass_unit:
         cap += (f"; that weight is {bu_g:,.2f} bu at {tw_g:.2f} lb/bu ({g_src}), not compared: the monitor's bushels "
                 f"weigh {tw:.2f} lb")
@@ -2940,7 +2953,7 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
                     elif summ["grower_bushels_applied"]:
                         warnings.append(f"scale ticket: the grower's bushels weigh {gw:.2f} lb ({tw_g_src}) and the "
                                         f"monitor's {fw:.2f} lb ({tw_src}): the {summ['ticket_bu_grower']:,.2f} bu given "
-                                        f"are {ticket_lb:,.0f} lb = {ticket_bu:,.2f} of the monitor's bushels "
+                                        f"are {ticket_lb:,.2f} lb = {ticket_bu:,.2f} of the monitor's bushels "
                                         f"({100 * (gw / fw - 1):+.2f} %), and that is what L compares")
                     else:
                         warnings.append(f"scale ticket: a bushel weight of {gw:.2f} lb/bu ({tw_g_src}) differs from the "
@@ -3170,10 +3183,10 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
             ticket = float(sum(float(v["integral_bu"] or 0.0) * float(v["L"]) for v in levels_m.values()))
             if ticket_cmp and abs(ticket / float(ticket_cmp) - 1) > LEVEL_TOL:
                 what = ("the sum of machines.totals_bu" if n_no_ticket == 0 else
-                        f"the field total implied by machines.totals_bu (tickets given {ticket_given:,.0f} bu + the "
+                        f"the field total implied by machines.totals_bu (tickets given {ticket_given:,.2f} bu + the "
                         f"integral x L_ref of the {n_no_ticket} machine(s) without a ticket)")
                 name = "scale_ticket_bu" if tk["legacy"] else "scale_ticket"
-                warnings.append(f"{name} ({float(ticket_cmp):,.0f} bu) differs from {what} ({ticket:,.0f} bu) "
+                warnings.append(f"{name} ({float(ticket_cmp):,.2f} bu) differs from {what} ({ticket:,.2f} bu) "
                                 f"by {100 * (ticket / float(ticket_cmp) - 1):+.2f} %: the per-machine tickets are used")
         else:
             ticket = float(ticket_cmp)
@@ -3291,9 +3304,9 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
                 R["level"]["card_summary"] = cs
                 if abs(cs["ratio"] - 1) > CARD_SUMMARY_TOL:
                     warnings.append(
-                        f"level: the readings of this Case IH / New Holland card hold {cs['readings_wet_lb']:,.0f} lb "
+                        f"level: the readings of this Case IH / New Holland card hold {cs['readings_wet_lb']:,.2f} lb "
                         f"wet, {100 * (cs['ratio'] - 1):+.2f} % against the card's own Summary "
-                        f"({cs['summary_wet_lb']:,.0f} lb, the Estimated Weight SMS shows for it). L = {factor:.4f} "
+                        f"({cs['summary_wet_lb']:,.2f} lb, the Estimated Weight SMS shows for it). L = {factor:.4f} "
                         f"is against the readings (over every processed reading"
                         + (f", with the {int(lo_grain['steps'][IMPORT_MIN_STEP]['n']):,} readings Import as SMS left "
                            "out below its minimum," if lo_in else "")
@@ -3333,11 +3346,11 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
                 what = ("the scale ticket" if levels_m is None else
                         "the field total implied by the per-machine tickets")
                 warnings.append(
-                    f"level: {what} ({ticket:,.0f} bu) is divided by the integral of the processed set "
+                    f"level: {what} ({ticket:,.2f} bu) is divided by the integral of the processed set "
                     + ("with the readings the import left out below its minimum " if lo_in else "")
-                    + f"(inside {aoi_zone(A['buffer_m'])}: {integral:,.0f} bu over "
+                    + f"(inside {aoi_zone(A['buffer_m'])}: {integral:,.2f} bu over "
                     f"{integral_area:,.2f} ac, L = {factor:.4f}), but the records set aside by the AOI carry another "
-                    f"{out_bu:,.0f} bu over {out_ac:,.2f} ac (whole file {integral + out_bu:,.0f} bu, L would be "
+                    f"{out_bu:,.2f} bu over {out_ac:,.2f} ac (whole file {integral + out_bu:,.2f} bu, L would be "
                     f"{ticket / (integral + out_bu):.4f}): give the ticket(s) of the field of interest only, or run "
                     "without the AOI when the ticket covers the whole export")
             elif out_bu > ASIDE_SAY_SHARE * integral:
@@ -3403,7 +3416,7 @@ def clean(path, S, C, log=print, source=None, import_readings=None):
         miss = R["level"]["leveled_export_integral_bu"] / ticket - 1
         if abs(miss) > LEVEL_TOL:
             warnings.append(f"the leveled export integrates to {R['level']['leveled_export_integral_bu']:,.2f} bu, "
-                            f"{100 * miss:+.2f} % from the scale ticket ({ticket:,.0f} bu)")
+                            f"{100 * miss:+.2f} % from the scale ticket ({ticket:,.2f} bu)")
         # the integrals of the columns actually written: L is derived on the comparison column (ylev) and applied to
         # the mapped dry yield. A weight at the standard moisture is compared with that same dry yield, so Yld_Level
         # integrates to the weight (yld_level_vs_ticket_pct 0); for a wet weight (ylev: the wet yield, or Yld_Dry_Sy
@@ -4034,6 +4047,7 @@ def figures_sms(g, R, diag, tag, out):
     plt.close(fig)
 
     # ---- limits: the values entering each 3-sigma step and the limits applied (one line pair per group)
+    from engine.report import limits_shown as lshow
     steps = [s for s in (R.get("sms3sigma") or {}).get("steps", []) if s.get("lo") is not None]
     order = [r["filter"] for r in R["cascade"]]
     rank = {f: k for k, f in enumerate(order)}
@@ -4054,17 +4068,25 @@ def figures_sms(g, R, diag, tag, out):
             vals = series.get(attr) if attr in series else y.to_numpy(float)
             entering = rem_rank >= rank[f]
             v = vals[entering & np.isfinite(vals)] if vals is not None else np.array([])
+            # display only: a dry-yield pass whose mean - k SD was negative cut nothing below; its lower line is the
+            # import minimum in force (dashed), the record keeps the 0 typed
+            low = [lshow.low_shown(s, R) for s in ss]
+            lo_in = [L["value"] if L is not None else s["lo"] for s, L in zip(ss, low)]
             if len(v):
                 lo_, hi_ = np.nanpercentile(v, [0.1, 99.9])
                 pad = 0.15 * (hi_ - lo_ + 1e-9)
-                rng = (min(lo_ - pad, min(s["lo"] for s in ss)), max(hi_ + pad, max(s["hi"] for s in ss)))
+                rng = (min(lo_ - pad, min(lo_in)), max(hi_ + pad, max(s["hi"] for s in ss)))
                 ax.hist(np.clip(v, *rng), bins=60, range=rng, color=GREEN, alpha=0.8, zorder=2)
-            for s in ss:
-                for b in (s["lo"], s["hi"]):
-                    ax.axvline(b, color=ORANGE, lw=1.4 if len(ss) == 1 else 0.9, zorder=3)
+            for s, L, b_lo in zip(ss, low, lo_in):
+                for b in (b_lo, s["hi"]):
+                    ax.axvline(b, color=ORANGE, lw=1.4 if len(ss) == 1 else 0.9, zorder=3,
+                               ls="--" if (L is not None and b == b_lo) else "-")
             unit = ss[0]["unit"]
             name = ss[0]["attribute"]
-            txt = (f"{ss[0]['lo']:.2f}-{ss[0]['hi']:.2f} {unit}" if len(ss) == 1 else f"{len(ss)} groups")
+            lo_txt = (f"{lo_in[0]:.2f}" if low[0] is None else
+                      f"{lo_in[0]:.2f} (import minimum)" if low[0]["minimum"] is not None else
+                      f"{lo_in[0]:.2f} (no cut below)")
+            txt = (f"{lo_txt}-{ss[0]['hi']:.2f} {unit}" if len(ss) == 1 else f"{len(ss)} groups")
             ax.set_title(f"{f} {name}: {txt}", loc="left", fontsize=10)
             ax.set_xlabel(f"{name} ({unit}) of the points entering {f}")
             ax.set_yticks([])
@@ -4711,8 +4733,7 @@ def write_all(path, out, tag, S, g0, g, gx, gy, R, diag, log=print):
         Lf = L.get("factor_final")
         v = L.get("ticket_value", tk["value"])
         unit = L.get("ticket_unit", tk["unit"])
-        vtxt = (ticket_value_text(v, unit).rsplit(" ", 1)[0] if unit in ("kg", "t") else
-                (f"{v:,.0f}" if v >= 100 else f"{v:,.3g}"))
+        vtxt = ticket_value_text(v, unit).rsplit(" ", 1)[0]          # the weight as given, with its decimals
         R["yield_column_for_difm"] = col
         if sym:
             R["level_sym_column_for_difm"] = col

@@ -98,10 +98,25 @@ def _starts_from(at):
     return next(m for m in at.markdown if str(m.value).startswith("Starts from "))
 
 
+def step_order(at, kind="markdown"):
+    """The elements of a kind in the order the long page of 0.3.x showed them: 0.4.0 draws the steps as tabs (the
+    test mode, OCED_ALL_STEPS, draws every tab in one run), and the import settings, step 2 of 0.3.x, are now folded
+    in step 1, before the default import's map (step 2). So: step 2's elements (the default import, then the import
+    in use), step 1's (the import settings), then steps 3 to 6 (the plots, step 5, before the final files, as 0.3.x
+    drew the small area before them)."""
+    tabs = [t for t in at.tabs if " · " in str(t.label)][:6]
+    if len(tabs) < 6:
+        return list(getattr(at, kind))
+    out = []
+    for i in (1, 0, 2, 3, 4, 5):
+        out += list(getattr(tabs[i], kind))
+    return out
+
+
 def _badge_lines(at):
-    """The lines with an import badge, as text."""
+    """The lines with an import badge, as text (in the order of step_order)."""
     import re
-    return [re.sub(r"<[^>]+>", "", m.value).strip() for m in at.markdown if "oced-badge" in m.value]
+    return [re.sub(r"<[^>]+>", "", m.value).strip() for m in step_order(at) if "oced-badge" in m.value]
 
 
 def _extract_again(at, rows=(0,)):

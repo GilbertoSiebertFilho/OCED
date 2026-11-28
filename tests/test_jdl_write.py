@@ -402,3 +402,57 @@ def test_jdl_writer_writes_below_the_record_root_not_the_input_tree(tmp_path):
     roots = [str(tmp_path / "b"), str(tmp_path / "a")]
     rel = W.out_relpath(os.path.join(roots[0], "JD-Data", "log", "x.jdl"), sorted(roots))
     assert rel == os.path.join("2", "JD-Data", "log", "x.jdl")
+
+
+def test_jdl_writer_leaves_a_tractor_out_of_the_written_card(tmp_path, monkeypatch):
+    """Two combines and a tractor (its logs hold no grain-flow channel, as a tractor with the grain cart that the field
+    of interest selects with the combines) decoded together: the written card holds the combines' logs only, the round
+    trip passes (it reads the written card with the combines' units), and a warning names the tractor's unit."""
+    import types
+    import uuid
+    folder = str(tmp_path / "cards")
+    orig = S.definitions
+
+    def tractor_defs(*a, **k):
+        # the flow channel's DDI 510 becomes DDI 400 (same varint length, so every length prefix holds): no grain flow
+        out = orig(*a, **k)
+        chan = W._enc_varint(S.IDS["flow"])
+        old = W._key(1, 0) + chan + W._key(2, 0) + W._enc_varint(510)
+        new = W._key(1, 0) + chan + W._key(2, 0) + W._enc_varint(400)
+        assert len(old) == len(new) and out.count(old) == 1
+        return out.replace(old, new)
+
+    vins = ("1SYNTH000TEST000A", "1SYNTH000TEST000B", "1SYNTH000TRACTOR")
+    for k, vin in enumerate(vins):
+        monkeypatch.setattr(S, "VIN", vin)
+        monkeypatch.setattr(S, "uuid", types.SimpleNamespace(UUID=lambda int, o=16 * k: uuid.UUID(int=int + o)))
+        monkeypatch.setattr(S, "definitions", tractor_defs if vin.endswith("TRACTOR") else orig)
+        S.make_card(folder, seed=3 + k)
+    work = str(tmp_path / "work")
+    cand = [c for c in er.open_input([folder], work, log=lambda m: None) if c["kind"] == "raw"][0]
+    units = er.list_units(cand)
+    assert sorted(u.machine for u in units) == sorted(vins)
+    tractor = [u.id for u in units if u.machine == vins[2]]
+    assert len(tractor) == 1
+    dec = er.decode(cand, [u.id for u in units], None, work, log=lambda m: None, tag="syn")
+    assert sorted(dec["report"]["units"]) == sorted(u.id for u in units)        # the tractor was selected too
+    assert any(vins[2] in w and "not a combine" in w for w in dec["report"]["warnings"])
+    g = pyogrio.read_dataframe(dec["shp"])
+    assert sorted(set(g.Machine.astype(str))) == sorted(vins[:2])                 # it has no reading
+    clean_shp = str(tmp_path / "syn_clean.shp")
+    _, c = _write_subset(dec, clean_shp, _subset)
+    res = W.write_clean(dec["source"], clean_shp, str(tmp_path / "out"), log=lambda m: None)
+    assert res["round_trip"]["ok"], res["round_trip"]
+    assert res["round_trip"]["n_missing"] == 0 and res["round_trip"]["n_extra"] == 0
+    assert res["n_kept"] == len(c)
+    # the written card: the combines' logs only (two each), no file of the tractor
+    jdl = [os.path.join(d, f) for d, _, fs in os.walk(res["path"]) for f in fs if f.endswith(".jdl")]
+    assert len(jdl) == 4
+    assert sorted({J.read_meta(p).vin for p in jdl}) == sorted(vins[:2])
+    combine_units = [u.id for u in units if u.machine != vins[2]]
+    df1 = J.decode_detailed(res["path"], combine_units, None, log=lambda m: None)[0]
+    assert len(df1) == len(c) and sorted(set(df1.Machine.astype(str))) == sorted(vins[:2])
+    # the warning names the tractor's unit
+    named = [w for w in res["warnings"] if tractor[0].split("::")[0] in w]
+    assert len(named) == 1 and "no grain-flow channel" in named[0] and "not in the written card" in named[0], \
+        res["warnings"]

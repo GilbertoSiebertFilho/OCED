@@ -138,8 +138,12 @@ def test_app_small_area_kept_measured_again_after_edits_saved_and_removed(clean,
     at.button(key="clean_one").click()
     _run(at)
     tag, wd = at.session_state["active"], at.session_state["workdir"]
-    ks = next(k for k in at.session_state.filtered_state if str(k).startswith("sa_rule_"))[len("sa_rule_"):]
-    at.text_input(key=f"sa_path_{ks}").input(clean["poly"])
+    # 0.4.0: the polygon file is given in step 1 (keys by file), Measure is in step 5, Plots (by clean file), drawn
+    # once a plot boundary is given
+    ka = next(k for k in at.session_state.filtered_state if str(k).startswith("sa_rule_"))[len("sa_rule_"):]
+    at.text_input(key=f"sa_path_{ka}").input(clean["poly"])
+    _run(at)
+    ks = next(str(b.key) for b in at.button if str(b.key or "").startswith("sa_go_"))[len("sa_go_"):]
     at.button(key=f"sa_go_{ks}").click()
     _run(at)
     A = at.session_state["small_area"][tag]
@@ -198,7 +202,7 @@ def test_app_small_area_kept_measured_again_after_edits_saved_and_removed(clean,
     assert os.path.normcase(at2.session_state["small_area"][tag]["path"]) == os.path.normcase(kept_copy)
     assert at2.session_state["cleaned"][tag]["R"]["small_area"]["polygons"] == S1["polygons"]
     # 'Remove the small area'
-    k2 = next(k for k in at2.session_state.filtered_state if str(k).startswith("sa_rule_"))[len("sa_rule_"):]
+    k2 = next(str(b.key) for b in at2.button if str(b.key or "").startswith("sa_rm_"))[len("sa_rm_"):]
     at2.button(key=f"sa_rm_{k2}").click()
     _run(at2)
     assert tag not in at2.session_state["small_area"] and "small_area" not in at2.session_state["cleaned"][tag]["R"]

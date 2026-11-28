@@ -195,7 +195,7 @@ def test_weight_in_lb_with_another_bushel_weight_and_the_combine_factor(f5):
     assert C["monitor_final_bu"] * L["factor_final"] == pytest.approx(L["scale_ticket_bu"], rel=1e-9)
     assert abs(C["diff_final_pct"]) < 1.0 and C["band"] == "<= 1 %" and abs(C["diff_pct"]) > 2.0
     cap = er.level_caption(R)
-    assert "with the combine factor" in cap and f"{L['export_total_harmonised_bu']:,.0f} bu" in cap
+    assert "with the combine factor" in cap and f"{L['export_total_harmonised_bu']:,.2f} bu" in cap
     assert er.level_factor_text(L).startswith(f"{L['factor_final']:.4f} (before the combine harmonisation")
     # leveled: the wet yield x factor x L sums to the weight, in the file's bushel
     assert L["leveled_export_integral_bu"] == pytest.approx(T["wet_lb"] / 60.0, rel=1e-9)
@@ -523,4 +523,17 @@ def test_left_out_grain_in_L_is_what_the_texts_give_for_the_processed_readings(t
     assert "with the readings the import left out below its minimum" in L["rule"]
     w = [x for x in R["warnings"] if "card's own Summary" in x]
     assert len(w) == 1 and f"with the {n_lo:,} readings Import as SMS left out below its minimum" in w[0]
-    assert f"{L['import_left_out_in_total_bu']:,.0f} bu of readings the import left out" in er.level_caption(R)
+    assert f"{L['import_left_out_in_total_bu']:,.2f} bu of readings the import left out" in er.level_caption(R)
+
+
+def test_the_level_sentence_writes_the_monitor_weight_with_two_decimals():
+    """0.4.0: the monitor's total weight in the level sentence of the report has two decimals, as in the level table
+    of the same pages (never '111,090 lb' beside '111,089.61 lb'), with and without the readings the import left out."""
+    L = {"ticket_bu": 2000.0, "ticket_unit": "bu", "ticket_basis": "dry", "export_total_bu": 1851.49,
+         "export_total_lb": 111089.6123, "export_area_ac": 30.0, "integral_column": "Yld_Vol_Dr", "factor": 1.0802}
+    txt = cr._level_text({"level": L})
+    assert "all processed points; 111,089.61 lb)" in txt and "111,090 lb" not in txt
+    L2 = dict(L, import_left_out={"included_in_L": True, "steps": {"below the min. yield volume": {"n": 12}}},
+              processed_set_integral_bu=1800.0, import_left_out_in_total_bu=51.49, import_left_out_area_ac=0.5)
+    txt2 = cr._level_text({"level": L2})
+    assert "; 111,089.61 lb in all)" in txt2 and "111,090 lb" not in txt2

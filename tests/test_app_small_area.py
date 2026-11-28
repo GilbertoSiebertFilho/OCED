@@ -70,7 +70,7 @@ def test_boxes_total_bu_follow_the_attribute_and_small_area(field, tmp_path, mon
     V1 = at.session_state["datasets"][at.session_state["active"]]
     shp1 = V1["shp"]
     m, a, t = _numbers(shp1, "Yld_Vol_Dr")
-    assert _metric(at, "Total dry bu").value == f"{t:,.1f} bu"
+    assert _metric(at, "Total dry bu").value == f"{t:,.2f} bu"
     # step 1: moisture chosen on the map -> the boxes give the moisture's mean and average, no total
     k1 = _key(at, "attr_raw_")
     at.session_state[k1] = "Moisture__"
@@ -96,7 +96,7 @@ def test_boxes_total_bu_follow_the_attribute_and_small_area(field, tmp_path, mon
     C = at.session_state["cleaned"][at.session_state["active"]]
     cm, ca, ct = _numbers(C["shp"], "Yld_Vol_Dr")
     tot = _metric(at, "Total dry bu, cleaned")
-    assert tot is not None and tot.value == f"{ct:,.1f} bu"
+    assert tot is not None and tot.value == f"{ct:,.2f} bu"
     assert _metric(at, "Average dry yield, cleaned (SMS)").value == f"{ca:,.2f} bu/ac"
     k3 = _key(at, "attr_clean_")
     for col, lab, unit in (("Speed_mph_", "speed", "mph"), ("Moisture__", "moisture", "%")):
@@ -119,9 +119,14 @@ def test_boxes_total_bu_follow_the_attribute_and_small_area(field, tmp_path, mon
                                    y0 + (y1 - y0) * 0.6),
                                box(x0, y0, x0 + (x1 - x0) * 0.2, y0 + (y1 - y0) * 0.2)],
                      crs=4326).to_file(poly, driver="GeoJSON")
-    ks = _key(at, "sa_rule_")[len("sa_rule_"):]
-    at.text_input(key=f"sa_path_{ks}").input(str(poly))
-    at.selectbox(key=f"sa_rule_{ks}").set_value("clip")
+    # 0.4.0: the polygon file and the rule are given in step 1 (keys by file), Measure is in step 5, Plots (by clean
+    # file), drawn once a plot boundary is given (without one, step 5 is one line)
+    ka = _key(at, "sa_rule_")[len("sa_rule_"):]
+    assert not [b for b in at.button if str(b.key or "").startswith("sa_go_")]
+    at.text_input(key=f"sa_path_{ka}").input(str(poly))
+    at.selectbox(key=f"sa_rule_{ka}").set_value("clip")
+    _run(at)
+    ks = next(str(b.key) for b in at.button if str(b.key or "").startswith("sa_go_"))[len("sa_go_"):]
     at.button(key=f"sa_go_{ks}").click().run()
     assert not at.exception, at.exception
     assert not at.error, [e.value for e in at.error]

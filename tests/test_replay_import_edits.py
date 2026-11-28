@@ -321,7 +321,7 @@ def test_app_step2_edits_files_without_cleaning_and_a_cleaning(field, tmp_path, 
     _run(at)
     E3 = me.read_edits(ep)
     assert len(E3["remove"]) == 30 and set(keys[r] for r in out_rows) <= set(E3["remove"])
-    assert "step 3" in E3["note"]
+    assert "step 4" in E3["note"]                         # 0.4.0: the replay of the cleaning is in step 4
 
 
 def in_rows_extra(x):

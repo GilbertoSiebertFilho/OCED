@@ -35,7 +35,8 @@ def _rect(x0, x1, y0, y1):
     return Polygon(list(zip(lo, la)))
 
 
-def make_field(folder: str, seed: int = 7) -> dict:
+def make_field(folder: str, seed: int = 7, yield_sd: float = 5.0) -> dict:
+    """yield_sd: the SD of the yield's noise (bu/ac); a large one (40) makes mean - 3 SD of the dry yield negative."""
     import geopandas as gpd
     rng = np.random.default_rng(seed)
     os.makedirs(folder, exist_ok=True)
@@ -52,7 +53,7 @@ def make_field(folder: str, seed: int = 7) -> dict:
             xs = xs[::-1]
         y = p * PASS_GAP_M
         spd = np.full(n, speed_mph) + rng.normal(0, 0.15, n)
-        yld = 65 + 8 * np.sin(xs / 90.0) + 0.15 * y / 10 + rng.normal(0, 5, n)
+        yld = 65 + 8 * np.sin(xs / 90.0) + 0.15 * y / 10 + rng.normal(0, yield_sd, n)
         moi = 14.0 + rng.normal(0, 0.4, n)
         for i in range(n):
             rows.append({"x": xs[i], "y": y, "Speed_mph_": spd[i], "Distance_f": spd[i] * 1.46667,
@@ -247,3 +248,39 @@ def make_two_combines(folder: str, bias_b: float = 1.05, seed: int = 21, n_pass:
              "share_below_standard": float((df["Moisture__"] < std_moist).mean()), "bias_b": float(bias_b),
              "test_weight": float(test_weight), "std_moist": float(std_moist)}
     return {"shp": shp, "boundary": bnd, "n": n, "df": df, "truth": truth}
+
+
+# an Operations Center point export: the columns of make_field under the names such an export gives them (its own
+# names: no Yld_Vol_Dr, Distance_f, Swth_Wdth_ or Track_deg_), in the order of such an export, every value made up
+OPS_COLUMNS = ["DISTANCE", "SWATHWIDTH", "VRYIELDVOL", "Crop", "WetMass", "Moisture", "Time", "Heading", "VARIETY",
+               "Elevation", "IsoTime", "Machine", "FUEL", "VEHICLSPEE", "DRYMATTER", "PRODUCTHAS"]
+
+
+def make_ops_export(folder: str, seed: int = 7, n_rows: int | None = None) -> dict:
+    """make_field's readings as an Operations Center point export keeps them: DISTANCE (ft), SWATHWIDTH (ft),
+    VRYIELDVOL (dry bu/ac), WetMass (wet lb/ac), Moisture (%), Time ('9/14/2026 1:00:00 PM'), Heading (deg),
+    Elevation, IsoTime (ISO 8601, UTC), Machine, VEHICLSPEE (mph), and the export's other columns (Crop, VARIETY, FUEL,
+    DRYMATTER, PRODUCTHAS) with made-up values. n_rows: the first n_rows readings only. Returns {"shp", "boundary",
+    "n", "df", "oced_shp"}: oced_shp is the same readings under OCED's names (make_field's file, cut to n_rows)."""
+    import geopandas as gpd
+    F = make_field(os.path.join(folder, "oced_names"), seed=seed)
+    g0 = gpd.read_file(F["shp"])
+    if n_rows:
+        g0 = g0.iloc[:int(n_rows)].copy()
+    oced = os.path.join(folder, "Synthetic_oced_names.shp")
+    g0.to_file(oced, engine="pyogrio")
+    t = pd.to_datetime(g0["Time"])
+    ops = pd.DataFrame({
+        "DISTANCE": g0["Distance_f"].to_numpy(float), "SWATHWIDTH": g0["Swth_Wdth_"].to_numpy(float),
+        "VRYIELDVOL": g0["Yld_Vol_Dr"].to_numpy(float), "Crop": np.full(len(g0), 25, np.int32),
+        "WetMass": g0["Yld_Mass_W"].to_numpy(float), "Moisture": g0["Moisture__"].to_numpy(float),
+        "Time": [f"{v.month}/{v.day}/{v.year} {v.strftime('%I:%M:%S %p').lstrip('0')}" for v in t],
+        "Heading": g0["Track_deg_"].to_numpy(float), "VARIETY": "Synthetic variety",
+        "Elevation": g0["Elevation_"].to_numpy(float),
+        "IsoTime": [v.strftime("%Y-%m-%dT%H:%M:%S.000Z") for v in t], "Machine": g0["Machine"].astype(str),
+        "FUEL": np.full(len(g0), 0.0004), "VEHICLSPEE": g0["Speed_mph_"].to_numpy(float),
+        "DRYMATTER": np.full(len(g0), 100.0), "PRODUCTHAS": "0000aaaa"})
+    g = gpd.GeoDataFrame(ops[OPS_COLUMNS], geometry=g0.geometry.values, crs=g0.crs)
+    shp = os.path.join(folder, "Synthetic_ops_export.shp")
+    g.to_file(shp, engine="pyogrio")
+    return {"shp": shp, "boundary": F["boundary"], "n": len(g), "df": ops, "oced_shp": oced}

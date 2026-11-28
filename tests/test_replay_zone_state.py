@@ -143,3 +143,15 @@ def test_a_file_changed_on_disk_is_read_again(rv, tmp_path):
     Z = rv.zone_map_of("F")
     assert Z["fingerprint"] != fp0
     assert rv.zone_info(Z["path"], Z["fingerprint"], Z["column"])["labels"] == ["3", "4"]
+
+
+def test_the_makes_corrected_are_one_entry_per_file():
+    """0.4.0: the make of a combine corrected in one replay of a file (step 2's import, step 4's cleaning, step 5's
+    plots) is the make in every replay of that file: one session key per file of the work, not per replay."""
+    import replay_view as RV
+    assert RV.makes_key("clean_abc", "Field_A") == RV.makes_key("plots_abc", "Field_A") == \
+        RV.makes_key("imp_xyz", "Field_A")
+    assert RV.makes_key("clean_abc", "Field_A") != RV.makes_key("clean_abc", "Field_B")
+    assert RV.makes_key("clean_abc") != RV.makes_key("plots_abc")            # a replay of no file keeps its own
+    src = open(os.path.join(ROOT, "app", "replay_view.py"), encoding="utf-8").read()
+    assert 'f"replay_makes_{key}"' not in src.split("def section(")[1]

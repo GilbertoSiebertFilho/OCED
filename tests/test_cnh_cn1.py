@@ -258,4 +258,4 @@ def test_app_extracts_a_card_and_shows_its_summary(tmp_path, monkeypatch):
     assert next(m for m in at.metric if m.label == "Readings").value == f"{n:,}"
     cap = next(c for c in at.caption if c.value.startswith("SMS Summary (the display's totals)"))
     assert "1.48 ac" in cap.value                                                            # 6,000 m2
-    assert "1,500 lb wet" in cap.help and "moisture 14.00 %" in cap.help                     # 60 s x 25 lb/s
+    assert "1,500.00 lb wet" in cap.help and "moisture 14.00 %" in cap.help                     # 60 s x 25 lb/s

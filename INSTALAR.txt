@@ -1,7 +1,7 @@
 OCED - Olds College Extract Data - instalação num computador novo
 ================================================================
 
-Versão 0.3.8 (a versão aparece na barra de título e no painel lateral do app).
+Versão 0.4.0 (a versão aparece na barra de título e no painel lateral do app).
 
 O OCED abre os arquivos que vêm das máquinas (colheitadeiras, plantadeiras e pulverizadores: cartões e logs brutos,
 dados ISOXML e exportações de pontos), importa-os como o Ag Leader SMS, mostra o mapa de cada atributo, limpa os
@@ -47,25 +47,83 @@ Onde ficam os resultados
    - clean\ (a limpeza de cada arquivo: o registro JSON, o relatório PDF e os pontos marcados) e
      clean_shapefiles\ (os shapefiles limpos e, de cada um, o shapefile para o DIFM, <nome>_sms3s_clean_DIFM.zip,
      <nome>_sms3s_clean_adjusted_DIFM.zip ou <nome>_3s_clean_DIFM.zip, veja Shapefile para o DIFM);
-   - native\<nome>\ (a colheita limpa gravada pelo passo 4 no formato do monitor, cn1, gs3 ou jdl, ou em ISOXML,
-     com o zip que o botão do passo 4 baixa; gravar o mesmo formato de novo troca o conjunto anterior);
+   - native\<nome>\ (a colheita limpa gravada pelo passo 6 no formato do monitor, cn1, gs3 ou jdl, ou em ISOXML,
+     com o zip que o botão do passo 6 baixa; gravar o mesmo formato de novo troca o conjunto anterior);
    - sections\ (só para exportações do Operations Center por seção: o arquivo reduzido a uma leitura por segundo);
    - superseded\<data-hora>\ (uma limpeza que deixou de valer porque o arquivo foi extraído ou importado de novo:
      guardada aqui, não apagada);
    - field_files\ (o boundary e o mapa de zonas do trabalho, quando enviados pelo navegador no passo 1);
    - edits\<nome>\ (as leituras removidas ou mantidas à mão, <nome>_manual_edits.json, um arquivo para os passos 2
-     e 3, e a cópia editada <nome>_edited.shp) e without_cleaning\ (os arquivos do passo 2 sem limpeza: o shapefile e
+     e 4, e a cópia editada <nome>_edited.shp) e without_cleaning\ (os arquivos do passo 2 sem limpeza: o shapefile e
      o shapefile para o DIFM);
    - small_area\<nome>\ (o arquivo de polígonos da área pequena, guardado com o trabalho);
    - oced_work.json (o trabalho salvo: abre de novo pelo painel lateral, também depois de mover a pasta).
-   Os mesmos arquivos são baixados pelos botões do passo 4. Para gravar a colheita limpa no formato bruto do
-   monitor (passo 4), o cartão ou os logs de onde ela foi extraída precisam continuar no computador (na pasta
+   Os mesmos arquivos são baixados pelos botões do passo 6. Para gravar a colheita limpa no formato bruto do
+   monitor (passo 6), o cartão ou os logs de onde ela foi extraída precisam continuar no computador (na pasta
    input\ do trabalho, ou onde foram lidos).
    A pasta workspace fica dentro da pasta do app. Para usar outra (mais curta, por exemplo), defina a variável de
    ambiente OCED_WORKSPACE antes de abrir o app: num Prompt de Comando, setx OCED_WORKSPACE C:\OCED_work ; depois
    feche a janela preta do app e abra-o de novo com dois cliques em run_oced.bat, ou de um Prompt de Comando novo
    (o setx não muda o Prompt de Comando em que foi digitado). Os trabalhos salvos e o cn1_card_names.json (os nomes
    de cartão Case IH já dados) ficam na pasta antiga: para mantê-los, mova-os para a pasta nova com o app fechado.
+
+Novidades da 0.4.0
+   - Os passos agora são abas no alto da página, como no OCVR: seis passos, um cartão por aba, "Back" e
+     "Next step" no fim de cada cartão e "n of 6 steps done" na barra de título ("n of 5" enquanto o passo 5, Plots,
+     não é necessário: o arquivo na tela não tem boundary das parcelas, ou é de plantadeira ou pulverizador; o
+     número do passo 5 diz então "not needed"). Só a aba aberta é desenhada, então a página fica mais leve; o que
+     você digitou ou escolheu num passo continua lá quando você volta a ele (as marcas do "Edit points" até serem
+     enviadas: a linha ao lado do player avisa). Um passo que ainda não pode ser usado diz numa linha o que falta e
+     qual passo dá isso.
+   - Uma exceção: os arquivos de dados brutos enviados por upload esperam o "Open" só enquanto o passo 1 está
+     aberto (abrir outro passo antes esvazia esse campo; um caminho digitado fica), então clique Open antes. Os
+     arquivos pequenos escolhidos num upload (boundary do talhão, mapa de zonas, boundary das parcelas, boundary
+     próprio de um arquivo no passo 3) ficam guardados e esperam o "Use" ou o "Open". Se, além de um arquivo
+     guardado do boundary do talhão, do mapa de zonas ou do boundary próprio, um caminho também for digitado, o
+     "Use" e o "Open" não usam nenhum dos dois e pedem numa linha: "Clear" no arquivo que espera ou apague o
+     caminho.
+   - Peso do produtor: uma caixa esvaziada (peso, umidade, peso do bushel, acres ou umidade padrão) agora fica
+     vazia; antes o valor voltava (só digitar 0 removia).
+   - Passo 1 (Files): tudo o que os passos seguintes usam: os dados brutos, o boundary do talhão, o boundary das
+     parcelas (o arquivo de polígonos da área pequena e a sua regra, dados aqui e guardados com o trabalho, mesmo
+     antes do Measure; a seção "Plot boundary" fica aberta depois que você muda algo nela; fechada, o título diz
+     o arquivo dado ou medido; um shapefile enviado em partes leva o nome do seu .shp) e o mapa de zonas. As
+     configurações de importação ficam fechadas em "Import settings · advanced" de cada arquivo: quem não abre
+     continua com o padrão do SMS.
+   - Boundary das parcelas: lido ao ser dado (polígonos e acres, ou o erro) e já desenhado nos mapas dos passos 2 e 5.
+   - Passo 2 (Raw map): o mapa das leituras importadas com o boundary, os quadros que seguem o atributo escolhido,
+     os detalhes da importação e o "Play the harvest" das leituras em uso (com "Without cleaning").
+   - Passo 3 (Cleaning): as configurações, Clean, os resultados, o mapa limpo e as tabelas.
+   - Passo 4 (Clean map): o mapa limpo com o boundary do talhão e o "Play the harvest" da limpeza para remover ou
+     manter pontos à mão (Reprocess, que mede as parcelas de novo).
+   - Passo 5 (Plots): tudo das parcelas: o mapa limpo com o boundary das parcelas e o nome de cada uma, o corte da
+     área pequena (Measure, depois da limpeza do talhão inteiro, como antes: os números, as tabelas, o mapa, os
+     arquivos e "Change in step 1") e um replay da limpeza que mostra as parcelas (um player próprio, sem "Edit
+     points": as edições à mão são feitas no passo 4). Sem boundary das parcelas, uma linha diz isso.
+   - Passo 6 (Final files): o shapefile limpo, o arquivo para o DIFM, os relatórios e os formatos brutos.
+   - Área pequena (passo 5): o Measure agora funciona num arquivo que guarda os nomes de coluna próprios (uma
+     exportação de pontos do Ops Center: VRYIELDVOL, DISTANCE, SWATHWIDTH ...): ele lê as mesmas colunas que a
+     limpeza leu e os textos dizem a coluna usada; os arquivos com os nomes do OCED dão os mesmos números.
+   - Área pequena: o grain / ground não toma mais duas leituras da mesma colhedora no mesmo segundo (uma exportação
+     com a hora em segundos inteiros) por uma leitura gravada duas vezes: só conta uma vez quando a colhedora, a hora
+     e a posição gravada se repetem, e uma leitura que a importação deixou de fora no segundo de uma mantida conta.
+   - A barra das abas dos passos fica fixa no alto da tela quando a página rola (no celular, uma linha que rola
+     para o lado).
+   - Os mapas que desenham o boundary das parcelas (passo 2, o mapa limpo do passo 5 e o mapa da área pequena)
+     escrevem o nome de cada parcela dentro dela, o mesmo nome da tabela da área pequena (a coluna de nome, senão
+     o número; "nome (2)" para uma segunda parcela de mesmo nome), no tamanho que cabe na parcela; com muitas
+     parcelas pequenas os nomes aparecem ao dar zoom. O mouse na linha de uma parcela também diz o nome.
+   - As tabelas da área pequena dizem em cada coluna o que ela é e a unidade ("Yield, grain / ground (bu/ac)",
+     "Grain (bu)", "Ground (ac)" ...), com uma ajuda de como é calculada; o CSV não muda.
+   - Replay da colheita: toda produtividade com duas casas (bu/ac acumulado, a leitura sob o cursor, cada
+     colhedora, as zonas), o valor real da conta; o arquivo do replay guarda cada produtividade a 0,01 bu/ac (um
+     replay salvo por uma versão anterior continua abrindo).
+   - Limite inferior do 3 sigma: quando média - 3 DP da produtividade dá negativo, nada é cortado abaixo e o
+     limite mostrado é o mínimo da importação, com o motivo (no cartão do replay, que agora diz "3-sigma limits
+     of this combine", nas abas Limits e Steps do passo 3 e no relatório); o filtro e os arquivos não mudam.
+   - A limpeza não muda: as mesmas entradas e escolhas dão os mesmos arquivos, byte a byte (a versão gravada num
+     conjunto ISOXML passa a ser 0.4.0). Os números de passo das novidades das versões anteriores, abaixo, são os do
+     layout de cada uma.
 
 Novidades da 0.3.8
    - Logs .jdl da John Deere (Gen4): lidos como o SMS lê. Cada amostra de fluxo e de umidade vai para a amostra de
@@ -131,7 +189,7 @@ Dados ISOXML (ISO 11783)
    Além dos cartões e logs (Case IH / New Holland .cn1, John Deere .jdl e GreenStar 3), o passo 1 lê os dados de
    colheita em ISOXML: a pasta TASKDATA (TASKDATA.XML com os arquivos TLG*.XML e TLG*.BIN), uma ou várias, também
    o zip de zips que o portal de telemetria entrega. Eles entram como o SMS os lê (um log de cada vez) e a colheita
-   limpa pode ser gravada de novo em ISOXML no passo 4. Dados ISOXML de plantadeira ou pulverizador não são lidos:
+   limpa pode ser gravada de novo em ISOXML no passo 6. Dados ISOXML de plantadeira ou pulverizador não são lidos:
    abra a exportação de pontos deles.
 
 Zip danificado na entrada (qualquer formato)
@@ -140,8 +198,8 @@ Zip danificado na entrada (qualquer formato)
    motivo ficam no relatório da extração (decode_report.json), no registro (JSON) e no relatório (PDF) da limpeza
    e no trabalho salvo, que repete o aviso quando é aberto de novo. Um zip danificado dado sozinho é recusado.
 
-Colheita limpa no formato do monitor (passo 4)
-   Além do shapefile, o passo 4 grava a colheita limpa no formato bruto de onde ela veio: cartão Case IH / New
+Colheita limpa no formato do monitor (passo 6)
+   Além do shapefile, o passo 6 grava a colheita limpa no formato bruto de onde ela veio: cartão Case IH / New
    Holland (.cn1), cartão John Deere GreenStar 3, logs John Deere Gen4 (.jdl) ou ISOXML TASKDATA; para uma
    exportação de pontos, só ISOXML. O conjunto ISOXML é novo, feito das leituras limpas (não é cópia do conjunto do
    monitor), com um log de tempo por colhedora e mais logs quando as leituras não cabem em sequência num só (o SMS
@@ -157,14 +215,14 @@ Passes do Optimize Swath Widths (passo 3)
 
 Shapefile para o DIFM
    O DIFM (difm.farm) lê shapefiles no formato da exportação de shapefile do Ag Leader SMS, não dados brutos. Ao
-   lado do shapefile limpo de cada arquivo, o passo 4 oferece "Shapefile for DIFM" (também em clean_shapefiles\): é
+   lado do shapefile limpo de cada arquivo, o passo 6 oferece "Shapefile for DIFM" (também em clean_shapefiles\): é
    esse zip que se envia ao DIFM. O de uma colheita (<nome>_sms3s_clean_DIFM.zip) tem os mesmos pontos limpos, nas
    mesmas posições, só com os campos do SMS que o DIFM mapeia (Yld_Mass_D, Yld_Vol_Dr, Track_deg_, Distance_f,
    Elevation_, Moisture__, Y_Offset_f, Speed_mph_, Time, Swth_Wdth_ e os demais da exportação), nas larguras do
    arquivo que o DIFM já leu, com os valores do arquivo limpo: os textos como estão e os números com 6 casas
    decimais (mais do que qualquer monitor mede; a exportação do SMS tem 4). Um número que o arquivo limpo guarda com
    mais casas é arredondado, e um zero sai como 0.000000, nunca -0.000000. Com 15 casas o zip de um talhão grande
-   passava de 10 MB; se o zip ainda passar de 10 MB, o passo 4 avisa. Y_Offset_f é 0 quando a origem não tem
+   passava de 10 MB; se o zip ainda passar de 10 MB, o passo 6 avisa. Y_Offset_f é 0 quando a origem não tem
    deslocamento lateral; tudo em WGS 84.
    Campo que o arquivo limpo não tem (uma exportação do Operations Center não traz Field, Dataset, Product,
    Duration_s, Yld_Vol_We nem Yld_Mass_D): só é preenchido com o que sai exatamente dos próprios valores do arquivo
@@ -173,7 +231,7 @@ Shapefile para o DIFM
    ele); Duration_s = o intervalo entre leituras seguidas da mesma colhedora, quando 90 % delas têm o mesmo (1 s
    num log de uma leitura por segundo); Field = o talhão que os metadados da exportação citam, Product = a cultura
    que a importação leu do arquivo, Dataset = a colhedora de cada leitura. O que não dá para tirar fica vazio, e
-   leituras sem Yld_Mass_D ou sem Yld_Vol_Dr (os campos que o DIFM mapeia como produtividade) viram aviso no passo 4.
+   leituras sem Yld_Mass_D ou sem Yld_Vol_Dr (os campos que o DIFM mapeia como produtividade) viram aviso no passo 6.
    Time e Date são datas, a data de cada leitura: a data da própria exportação do SMS como está; para um horário, o
    dia desse horário, com uma regra só para todo horário em UTC (logs e cartões John Deere, e qualquer horário que
    diz o seu fuso, como o IsoTime de uma exportação do Operations Center): o relógio deste computador naquele
@@ -181,13 +239,13 @@ Shapefile para o DIFM
    meia-noite); horário sem fuso, de outra origem, fica como está (dados ISOXML: o horário é o relógio do próprio
    monitor, que o SMS mostra como está, então cada leitura fica no seu dia); senão o Harv_Day ou a data no nome do
    dataset.
-   Um zip gravado por uma versão anterior (15 casas) é gravado de novo quando o passo 4 o mostra.
+   Um zip gravado por uma versão anterior (15 casas) é gravado de novo quando o passo 6 o mostra.
    O de uma plantadeira ou
    pulverizador (<nome>_3s_clean_DIFM.zip) mantém as próprias colunas, com as datas como datas (a unidade da taxa
    se escolhe no Define Features do DIFM); ainda não foi testado no DIFM. O shapefile limpo continua com todas as
    colunas.
    Qual produtividade vai para o DIFM: quando a limpeza ajustou a produtividade (fator de colhedora aplicado e/ou
-   peso do produtor usado para ajustar), o passo 4 pergunta, na hora de gerar o arquivo da colheita:
+   peso do produtor usado para ajustar), o passo 6 pergunta, na hora de gerar o arquivo da colheita:
    - "3-sigma + combine correction and grower's weight (adjusted yield)", o padrão, grava
      <nome>_sms3s_clean_adjusted_DIFM.zip: Yld_Vol_Dr é a produtividade ajustada da limpeza (Yld_Harm = seca limpa x
      fator de colhedora; Yld_Level = seca limpa x fator de colhedora x L quando o peso do produtor ajusta) e
@@ -196,9 +254,9 @@ Shapefile para o DIFM
      resultado por massa ou por volume, e o peso por bushel e a umidade continuam os do monitor (leitura com
      produtividade 0 continua 0). A opção cita só o que foi aplicado (colhedora, peso do produtor ou os dois);
    - "3-sigma only (the monitor's yield)" grava <nome>_sms3s_clean_DIFM.zip, com a produtividade seca do monitor,
-     limpa; o passo 4 avisa que a ajustada não está nesse arquivo.
+     limpa; o passo 6 avisa que a ajustada não está nesse arquivo.
    Sem ajuste (nenhum fator aplicado; sem peso do produtor, ou peso usado só para validar) não há pergunta e sai só
-   o <nome>_sms3s_clean_DIFM.zip. Os dois arquivos podem existir; o passo 4 oferece o escolhido, a legenda diz qual
+   o <nome>_sms3s_clean_DIFM.zip. Os dois arquivos podem existir; o passo 6 oferece o escolhido, a legenda diz qual
    produtividade ele leva (com os fatores de colhedora e o L) e o registro da limpeza (JSON, shapefile_for_difm)
    guarda qual foi gerado: ao abrir o trabalho de novo a escolha continua; uma limpeza nova volta ao padrão. A seca
    simétrica (Yld_Dry_Sy) não é um ajuste e não tem campo nesse formato. Uma limpeza que precisa ser refeita não

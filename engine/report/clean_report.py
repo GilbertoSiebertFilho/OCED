@@ -54,6 +54,7 @@ from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, Simpl
 from engine.clean import references as refs
 from engine.clean.sms3sigma import edge_rule_text as sms_edge_rule
 from engine.clean import yield_clean
+from engine.report import limits_shown as lshow
 
 # Olds College palette (assets/brand/BRAND.md, app/brand.py): navy headings and table headers, light-blue zebra rows and
 # rules; the warnings keep their amber (5.9:1 on white)
@@ -406,7 +407,8 @@ def _machines_text(R) -> str:
 
 
 def _ticket_label(L) -> str:
-    """The grower's weight in its unit ('1,500,000 lb'; the legacy '9,000 bu' when the engine knows bushels only)."""
+    """The grower's weight in its unit ('1,500,000.00 lb'; the legacy '9,000.00 bu' when the engine knows bushels
+    only)."""
     v, u = L.get("ticket_value"), L.get("ticket_unit")
     if v is None:
         v, u = L.get("ticket_bu", L.get("scale_ticket_bu")), "bu"
@@ -515,8 +517,8 @@ def _import_text(imp: dict) -> str:
     if not s:
         r = imp.get("resolved") or imp
         s = ", ".join(f"{_e(k)} {_e(v)}" for k, v in r.items() if not isinstance(v, (dict, list)) and v is not None)
-    if imp.get("mode") == "custom":                      # the user's settings of step 2, not SMS's default
-        s = "Your settings (step 2): " + s
+    if imp.get("mode") == "custom":                      # the user's settings of step 1, not SMS's default
+        s = "Your settings (step 1, Import settings): " + s
     elif imp.get("mode") == "older":                     # a work of an earlier version: its import kept as saved
         ch = imp.get("older") if isinstance(imp.get("older"), list) else []
         head = (f"Decoded by an older OCED with {_e(imp['older_decode'])}, kept" if imp.get("older_decode")
@@ -605,11 +607,11 @@ def _level_text(R) -> str | None:
               f"{_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, plus the {_n(n_lo)} readings "
               f"Import as SMS left out below its minimum, {_n(L.get('import_left_out_in_total_bu'), 2)} bu over "
               f"{_n(L.get('import_left_out_area_ac'), 2)} ac"
-              + (f"; {_n(L.get('export_total_lb'))} lb in all" if L.get("export_total_lb") else ""))
+              + (f"; {_n(L.get('export_total_lb'), 2)} lb in all" if L.get("export_total_lb") else ""))
     else:
         s += (f" / monitor total {_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac "
               f"(column {_e(L.get('integral_column'))}, all processed points"
-              + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else ""))
+              + (f"; {_n(L.get('export_total_lb'), 2)} lb" if L.get("export_total_lb") else ""))
     if _harmonised_differs(L) and "factor_harmonised" in L:
         # the L in the file (and of the band and the verdict) is the one after the combine factor: that one in bold
         s += (f") = L = {float(L['factor']):.4f} before the combine factor; with it the monitor total is "
@@ -917,13 +919,19 @@ def _section_sms_limits(story, R, num):
         f"{flr}) and what each removed. The dry yield is the yield scaled by Optimize Swath Widths. "
         + _e((M.get("clip") or {}).get("note", "")) + ".", SUB))
     rows = [["Group", "Step", "n before", "Mean", "SD", "Low", "High", "Removed", "SD after", "SD drop"]]
+    neg = []                                   # dry-yield passes whose mean - k SD was negative (display only)
     for s_ in steps:
         if s_.get("lo") is None:
             rows.append([_e(str(s_["group"])[:30]), _e(s_["step"]), _n(s_["n_before"]), "-", "-", "-", "-", "0", "-",
                          _e(s_.get("note") or "")])
             continue
+        L = lshow.low_shown(s_, R)
+        if L is not None:
+            neg.append((s_, L))
         rows.append([_e(str(s_["group"])[:30]), _e(f"{s_['step']} {s_['attribute']}"), _n(s_["n_before"]),
-                     f"{s_['mean']:.3f}", f"{s_['sd']:.3f}", f"{s_['lo']:.2f}", f"{s_['hi']:.2f}", _n(s_["removed"]),
+                     f"{s_['mean']:.3f}", f"{s_['sd']:.3f}",
+                     (f"{L['value']:.2f}*" if L is not None else f"{s_['lo']:.2f}"), f"{s_['hi']:.2f}",
+                     _n(s_["removed"]),
                      (f"{s_['sd_after']:.3f}" if s_.get("sd_after") is not None else "-"),
                      (f"{s_['sd_drop_pct']:.2f} %" + (" &rarr; again" if s_.get("next_pass") else "")
                       if s_.get("sd_drop_pct") is not None else "-")])
@@ -931,6 +939,11 @@ def _section_sms_limits(story, R, num):
                       0.67 * inch, 0.55 * inch, 0.65 * inch], small=True)
     t.setStyle(TableStyle([("ALIGN", (2, 0), (-1, -1), "RIGHT")]))
     story.append(t)
+    if neg:
+        story.append(Paragraph(
+            "* The low limit in force: mean - k SD of the dry yield was negative, so the filter cut nothing below it; "
+            "the import minimum is the lowest dry yield the import let in. " + "; ".join(
+                f"{_e(str(s_['group'])[:30])} {_e(s_['step'])}: {_e(L['text'])}" for s_, L in neg) + ".", SUB))
     imx = _import_max_text(M.get("import_max"))
     if imx:
         story.append(Paragraph(imx, SUB))
@@ -1421,15 +1434,15 @@ def _section_level(story, R, num):
         rows.append(["Made a total", f"{_ticket_label(L)} &times; {_n(L.get('ticket_area_ac'), 2)} ac "
                      f"({_e(L.get('ticket_area_source') or 'area')}) = "
                      + (f"{_n(L.get('ticket_bu_grower'), 2)} bu of {float(L['test_weight_grower']):.2f} lb = "
-                        f"{_n(L.get('ticket_lb'))} lb = {_n(L.get('ticket_bu'), 2)} bu at "
+                        f"{_n(L.get('ticket_lb'), 2)} lb = {_n(L.get('ticket_bu'), 2)} bu at "
                         f"{float(L['test_weight_used']):.2f} lb/bu (the file's bushel)" if own else
                         f"{_n(L.get('ticket_bu'), 2)} bu"
-                        + (f"; {_n(L.get('ticket_lb'))} lb at {float(L['test_weight_used']):.2f} lb/bu"
+                        + (f"; {_n(L.get('ticket_lb'), 2)} lb at {float(L['test_weight_used']):.2f} lb/bu"
                            if L.get("ticket_lb") and L.get("test_weight_used") else ""))])
     elif L.get("ticket_unit") and L.get("ticket_unit") != "bu":
         conv = (f"{_n(tick, 2)} bu" + (f" at {float(L['test_weight_used']):.2f} lb/bu" if L.get("test_weight_used") else "")
                 + (f" ({_e(_tw_source(L))})" if L.get("test_weight_source") else "")
-                + (f"; {_n(L.get('ticket_lb'))} lb" if L.get("ticket_lb") and L.get("ticket_unit") != "lb" else ""))
+                + (f"; {_n(L.get('ticket_lb'), 2)} lb" if L.get("ticket_lb") and L.get("ticket_unit") != "lb" else ""))
         rows.append(["Converted to bushels", conv])
     if L.get("test_weight_grower") and L.get("ticket_caption"):
         # two bushel weights: the comparison is one of mass, in the bushel of the monitor's total
@@ -1457,7 +1470,8 @@ def _section_level(story, R, num):
                   f"{_n(L.get('import_left_out_in_total_bu'), 2)} bu over {_n(L.get('import_left_out_area_ac'), 2)} "
                   "ac, column " if lo_in else
                   f"{_n(mon, 2)} bu over {_n(L.get('export_integral_area_ac', L.get('export_area_ac')), 2)} ac, column ")
-                 + f"{_e(L.get('integral_column'))}" + (f"; {_n(L.get('export_total_lb'))} lb" if L.get("export_total_lb") else "")
+                 + f"{_e(L.get('integral_column'))}"
+                 + (f"; {_n(L.get('export_total_lb'), 2)} lb" if L.get("export_total_lb") else "")
                  + (f"; after the combine harmonisation {_n(L.get('export_total_harmonised_bu'), 2)} bu"
                     if harm_differs else "")])
     # the factor applied to the columns first (factor_final = after the harmonisation when a combine factor was
@@ -1470,17 +1484,17 @@ def _section_level(story, R, num):
     mon_f = L.get("export_total_harmonised_bu") if (harm_differs and not L.get("per_machine")) else None
     if mon_f and tick:
         # the L in the file goes with the monitor total after the combine factor, not with the one before it
-        lv += (f" (monitor {_n(mon_f)} bu with the combine factor vs scale {_n(tick)} bu, "
+        lv += (f" (monitor {_n(mon_f, 2)} bu with the combine factor vs scale {_n(tick, 2)} bu, "
                f"{100 * (float(tick) / float(mon_f) - 1):+.2f} %")
         if L.get("ticket_bu_at_standard") is not None and L.get("ticket_bu") is not None:
-            lv += (f"; the ticket's {_n(L['ticket_bu'])} bu at {float(L['ticket_moisture_pct']):g} % = {_n(tick)} bu at "
-                   "the standard moisture")
+            lv += (f"; the ticket's {_n(L['ticket_bu'], 2)} bu at {float(L['ticket_moisture_pct']):g} % = "
+                   f"{_n(tick, 2)} bu at the standard moisture")
         lv += ")"
     elif mon and tick:
-        lv += f" (monitor {_n(mon)} bu vs scale {_n(tick)} bu, {100 * (float(tick) / float(mon) - 1):+.2f} %"
+        lv += f" (monitor {_n(mon, 2)} bu vs scale {_n(tick, 2)} bu, {100 * (float(tick) / float(mon) - 1):+.2f} %"
         if L.get("ticket_bu_at_standard") is not None and L.get("ticket_bu") is not None:
-            lv += (f"; the ticket's {_n(L['ticket_bu'])} bu at {float(L['ticket_moisture_pct']):g} % = {_n(tick)} bu at "
-                   "the standard moisture")
+            lv += (f"; the ticket's {_n(L['ticket_bu'], 2)} bu at {float(L['ticket_moisture_pct']):g} % = "
+                   f"{_n(tick, 2)} bu at the standard moisture")
         lv += ")"
     if harm_differs and L.get("factor") is not None and ff is not None and abs(float(ff) - float(L["factor"])) > 1e-9:
         lv += f"; before the combine harmonisation {float(L['factor']):.4f}"
@@ -1731,7 +1745,8 @@ def make_report(result: dict, path: str) -> str:
     for c in R["cascade"]:
         if sms_pre and c.get("filter") == "S1" and not c.get("removed"):
             continue                               # the clip is the pre-step row above (the app shows it so)
-        rows.append([f"{_e(c['filter'])} {_e(c.get('name', ''))}", _e(c["criterion"]), _sources_cell(c),
+        crit = lshow.criterion_shown(R, c) if _is_sms(R) else c["criterion"]   # a negative 3-sigma lower limit
+        rows.append([f"{_e(c['filter'])} {_e(c.get('name', ''))}", _e(crit), _sources_cell(c),
                      _n(c["removed"]), _n(c["remaining"])])
         if not c.get("on", True):
             off.append(len(rows) - 2)
@@ -1842,7 +1857,11 @@ def make_report(result: dict, path: str) -> str:
                              "Dry yield before and after the SMS 3-sigma cleaning (after: the yield scaled by Optimize "
                              "Swath Widths); bottom row: points removed by each step group."),
                      "limits": "The values entering each 3-sigma step and the limits applied (one pair of lines per "
-                               "group).",
+                               "group)."
+                               + (" A dashed lower line: mean - k SD of the dry yield was negative, so nothing was cut "
+                                  "below and the line is the import minimum in force."
+                                  if any(lshow.low_shown(s, R) for s in (R.get("sms3sigma") or {}).get("steps") or [])
+                                  else ""),
                      "cascade": "Points removed by each SMS step."})
     head = [Paragraph(f"{num}. Figures", H2)]          # kept with the first figure, so the heading is never orphaned
     num += 1

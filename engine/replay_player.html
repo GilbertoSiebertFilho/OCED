@@ -454,6 +454,7 @@ function decode(s, n) {
   return out;
 }
 const LAT0 = P.center[1], LON0 = P.center[0];
+const YQ = P.y_q || 0.1;                    // the yield's quantum (bu/ac): 0.01 from 0.4.0, 0.1 in an older file
 const K_GROUND = 1 / Math.cos(LAT0 * Math.PI / 180);          // ground metres -> Web Mercator metres
 const mx = (lon) => lon * Math.PI / 180 * R_EARTH;
 const my = (lat) => R_EARTH * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
@@ -466,7 +467,7 @@ const C = P.combines.map((c) => {
   const X = new Float64Array(n), Y = new Float64Array(n), Q = new Float64Array(n * 8), A = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     t[i] *= 0.1; dir[i] *= 0.1; w[i] *= 0.01; dist[i] *= 0.01; off[i] *= 0.01;
-    y[i] = y[i] < 0 ? NaN : y[i] * 0.1; m[i] = m[i] < 0 ? NaN : m[i] * 0.01; s[i] = s[i] < 0 ? NaN : s[i] * 0.01;
+    y[i] = y[i] < 0 ? NaN : y[i] * YQ; m[i] = m[i] < 0 ? NaN : m[i] * 0.01; s[i] = s[i] < 0 ? NaN : s[i] * 0.01;
     X[i] = mx(LON0 + lo[i] * 1e-7); Y[i] = my(LAT0 + la[i] * 1e-7);
   }
   // the strip of each reading (engine/clean/yield_clean.swept_strips; an SMS output: swath_quads), in mercator metres
@@ -516,7 +517,7 @@ const C = P.combines.map((c) => {
     painted: -1, idx: -1, ang: null, px: NaN, py: NaN, reel: Math.random() * 6, steer: 0, lastWork: false });
 });
 const MAKES = P.makes;
-const SA = P.small_area || null;        // the small area of the cleaning shown (polygons, names, box), app step 3
+const SA = P.small_area || null;        // the small area of the cleaning shown (polygons, names, box), app step 5
 const T_END = P.t_end || 0;
 const IDLE = (P.idle || []).slice().sort((a, b) => a[0] - b[0]);
 const KIND = P.kind;
@@ -527,7 +528,7 @@ const FORCE_RASTER = /raster=1/.test(location.hash);
    The zone map is the user's own (OCED never builds one). Each reading carries its management zone and whether it is
    on a border (zb). The running numbers of each zone are prefix sums over the readings of that zone, combine by
    combine, read at the reading each combine has reached: right after any seek, at any speed. Their columns are rounded
-   (1 cm, 0.1 bu/ac), so each combine-zone sum is scaled by its exact total over the timeline (P.zones.cells): at the
+   (1 cm, 0.01 bu/ac), so each combine-zone sum is scaled by its exact total over the timeline (P.zones.cells): at the
    end they are the final statistics computed in Python. */
 const ZM = P.zones || null, HAS_Z = !!(ZM && ZM.classes && ZM.classes.length);
 const ZK = HAS_Z ? ZM.classes.length : 0;
@@ -857,7 +858,7 @@ function paintBase() {
     }
   }
 }
-// the small area (step 3 of the app): its polygons in yellow over a dark halo, each with its name, over the readings
+// the small area (step 5 of the app): its polygons in yellow over a dark halo, each with its name, over the readings
 const SA_M = (P.small_area && P.small_area.polygons || []).map((pg) => ({ name: pg.name,
   rings: pg.rings.map((r) => r.map(([lo, la]) => [mx(lo), my(la)])), label: pg.label ? [mx(pg.label[0]), my(pg.label[1])] : null }));
 function drawSmallArea(s) {
@@ -1683,7 +1684,7 @@ function buildLegendOf(el, m) {
     const sc = SCALES[m], unit = P.units[m];
     el.innerHTML = `<div class="lt">${m === "yield" ? "Dry yield" : m === "moisture" ? "Moisture" : "Speed"} <span style="font-weight:500;color:var(--muted)">· ${unit}</span></div>
       <div class="ramp" style="background:linear-gradient(90deg,${sc.stops.join(",")})"></div>
-      <div class="ramp-l"><span>${fmt(sc.lo, 1)}</span><span>2nd to 98th percentile</span><span>${fmt(sc.hi, 1)}</span></div>` +
+      <div class="ramp-l"><span>${fmt(sc.lo, m === "yield" ? 2 : 1)}</span><span>2nd to 98th percentile</span><span>${fmt(sc.hi, m === "yield" ? 2 : 1)}</span></div>` +
       (KIND === "clean" ? `<div class="lchips" style="margin-top:7px"><div class="lchip"><span class="swatch" style="background:${GREY}"></span>Removed by the cleaning</div></div>` : "");
   } else if (m === "combine") {
     el.innerHTML = `<div class="lt">Combine</div><div class="lchips">` + C.map((c) => `<div class="lchip"><span class="swatch" style="background:${c.color}"></span>${c.num} · ${esc(c.name)}<em>${fmt(c.n, 0)}</em></div>`).join("") + "</div>";
@@ -1708,15 +1709,15 @@ function uiTick(now) {
     const state = !m.show ? ["wait", "Waiting"] : m.done ? ["done", "Done"] : m.working ? ["work", "Working"] : ["idle", "Idle"];
     st.className = "state " + state[0]; st.textContent = state[1];
     const j = Math.max(0, i), ok = i >= 0;
-    $("y" + c.num).textContent = ok ? fmt(c.y[j], 1) : "—"; $("m" + c.num).textContent = ok ? fmt(c.m[j], 1) : "—"; $("s" + c.num).textContent = ok ? fmt(c.s[j], 1) : "—";
+    $("y" + c.num).textContent = ok ? fmt(c.y[j], 2) : "—"; $("m" + c.num).textContent = ok ? fmt(c.m[j], 1) : "—"; $("s" + c.num).textContent = ok ? fmt(c.s[j], 1) : "—";
     $("a" + c.num).textContent = `${fmt(c.cumA[i + 1], 1)} ac · ${fmt(c.cumB[i + 1], 0)} bu`;
   }
   const pct = ATOT > 0 ? 100 * A / ATOT : 0;
   $("pct").textContent = fmt(pct, 1) + " %";
   $("progbar").style.width = pct.toFixed(2) + "%";
   $("sofar-t").textContent = KIND === "clean" ? "So far (kept readings)" : "So far";
-  $("tot").innerHTML = `<div class="val"><b>${fmt(A, 1)}</b><span>acres harvested</span></div><div class="val"><b>${fmt(B, 0)}</b><span>bushels (dry)</span></div>` +
-    `<div class="val"><b>${A > 0 ? fmt(B / A, 1) : "—"}</b><span>bu/ac so far</span></div><div class="val"><b>${fmt(pct, 1)} %</b><span>of the harvest</span></div>`;
+  $("tot").innerHTML = `<div class="val"><b>${fmt(A, 2)}</b><span>acres harvested</span></div><div class="val"><b>${fmt(B, 2)}</b><span>bushels (dry)</span></div>` +
+    `<div class="val" title="Area-weighted: the bushels harvested so far over the acres harvested so far (the report's mean of the cleaned map is a plain mean of the readings, so the two can differ, more with narrowed or short strips)"><b>${A > 0 ? fmt(B / A, 2) : "—"}</b><span>bu/ac so far<br>(area-weighted)</span></div><div class="val"><b>${fmt(pct, 1)} %</b><span>of the harvest</span></div>`;
   if (HAS_Z) updateZones();
   if (!S.benched) $("rp-stats").textContent = JSON.stringify(stats);
 }
@@ -1766,7 +1767,7 @@ function drawZoneChart(R, fieldY) {
   if (fieldY === fieldY) {
     const y = base - H_ * fieldY / top;
     g.strokeStyle = "#00358E"; g.lineWidth = 1.6; g.setLineDash([5, 3]); g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]);
-    const t = `all zones ${fmt(fieldY, 1)}`; g.font = `700 10.5px ${FONT}`;
+    const t = `all zones ${fmt(fieldY, 2)}`; g.font = `700 10.5px ${FONT}`;
     const tw = g.measureText(t).width + 6, ty = y - 3 > 13 ? y - 3 : y + 15;
     g.fillStyle = "rgba(255,255,255,0.92)"; g.fillRect(x1 - tw, ty - 12, tw, 13);
     g.fillStyle = "#00358E"; g.textAlign = "right"; g.textBaseline = "bottom"; g.fillText(t, x1 - 3, ty);
@@ -1790,13 +1791,13 @@ function updateZones() {
   const ks = [...Array(ZK).keys()]; if (hasOutside()) ks.push(ZK);
   for (const k of ks) {
     const r = R[k], z = zoneOf(k);
-    $("zy" + k).textContent = zfmt(r.yield, 1);
+    $("zy" + k).textContent = zfmt(r.yield, 2);
     $("za" + k).textContent = k < ZK ? `${fmt(r.A, 1)} of ${fmt(z.map_ac, 1)} ac` : `${fmt(r.A, 1)} ac`;
     $("zbu" + k).textContent = `${fmt(r.B, 0)} bu · ${fmt(r.n, 0)} rdg`;
     if (k < ZK) $("zp" + k).style.width = (z.map_ac > 0 ? Math.min(100, 100 * r.A / z.map_ac) : 0).toFixed(1) + "%";
     $("zbg" + k).innerHTML = (here[k] || []).map((c) => `<span class="num" style="background:${esc(c.color)}" title="${esc(c.name)} is harvesting here">${c.num}</span>`).join("");
   }
-  $("zsheet-y").textContent = fieldY === fieldY ? `· ${fmt(fieldY, 1)} bu/ac in the zones` : "";
+  $("zsheet-y").textContent = fieldY === fieldY ? `· ${fmt(fieldY, 2)} bu/ac in the zones` : "";
   $("t-zbd").title = (S.zborder ? "Border readings counted" : `Border readings left out (${fmt(nb, 0)} so far)`) + ": readings closer to a zone border than half their swath width";
   $("t-zbd").lastChild.textContent = S.zborder ? "Border readings counted" : `Border readings left out: ${fmt(nb, 0)}`;
   drawZoneChart(R, fieldY);
@@ -1808,7 +1809,7 @@ function openZoneCard() {
   const nbAll = ZM.stats.interior.zones.reduce((a, r) => a + (r.n_border || 0), 0);
   const rows = Z.filter((r) => r.zone < ZK || r.n > 0).map((r) => {
     const out = r.zone === ZK, z = zoneOf(r.zone);
-    return `<tr${out ? ' class="outz"' : ""}><td>${zSwatch(z)} ${esc(out ? "Outside the zones" : z.name)}</td><td><b>${zfmt(r.yield, 1)}</b></td><td>${zfmt(r.sd, 1)}</td>` +
+    return `<tr${out ? ' class="outz"' : ""}><td>${zSwatch(z)} ${esc(out ? "Outside the zones" : z.name)}</td><td><b>${zfmt(r.yield, 2)}</b></td><td>${zfmt(r.sd, 2)}</td>` +
       `<td>${fmt(r.acres, 1)}${out ? "" : ` <span style="color:var(--muted)">of ${fmt(r.map_ac, 1)}</span>`}</td><td>${fmt(r.bu, 0)}</td><td>${fmt(r.n, 0)}</td>` +
       `<td>${ver === "interior" ? fmt(r.n_border || 0, 0) : "—"}</td></tr>`;
   }).join("");
@@ -1833,7 +1834,7 @@ function openZoneCard() {
         const same = pc.same_as_field ? ["yes", "yes"] : pc.same_highest && pc.same_lowest ? ["no", "no: same lowest and highest"] :
           pc.same_highest ? ["no", "no: same highest"] : pc.same_lowest ? ["no", "no: same lowest"] : ["no", "no"];
         return `<tr><td><span class="num" style="display:inline-grid;width:18px;height:18px;font-size:10.5px;background:${esc(c.color || "#ccc")}">${pc.num}</span> ${esc(pc.name)}</td>` +
-          ZCLS.map((z) => `<td>${by[z.label] ? fmt(by[z.label].yield, 1) : '<span style="color:var(--muted)">—</span>'}</td>`).join("") +
+          ZCLS.map((z) => `<td>${by[z.label] ? fmt(by[z.label].yield, 2) : '<span style="color:var(--muted)">—</span>'}</td>`).join("") +
           `<td>${(pc.order_by_yield || []).map(short).join(" &lt; ")}</td><td>${pc.rho_field === null || pc.rho_field === undefined ? "—" : fmt(pc.rho_field, 2)}</td>` +
           `<td class="${same[0]} wrap">${same[1]}</td></tr>`;
       }).join("") + "</table></div>";
@@ -2068,7 +2069,7 @@ const COL_RM = "#C2185B", COL_KP = "#0B63CE", COL_MV = "#E8590C";
 for (const c of C) {
   const d = c.data, n = c.n;
   const dq = (k, sc) => { if (!d[k]) return null; const v = decode(d[k], n); for (let i = 0; i < n; i++) v[i] = v[i] < 0 ? NaN : v[i] * sc; return v; };
-  c.yf = dq("yf", 0.1); c.sf = dq("sf", 0.01); c.wl = dq("wl", 0.01);
+  c.yf = dq("yf", YQ); c.sf = dq("sf", 0.01); c.wl = dq("wl", 0.01);
   c.e = d.e ? decode(d.e, n) : null;
   c.sp = d.sp ? decode(d.sp, n) : null; c.ss = d.ss ? decode(d.ss, n) : null;   // the small area: polygon, share (0.1 %)
 }
@@ -2328,9 +2329,9 @@ function boxMenu(x0, y0, x1, y1) {
 /* the card of a reading */
 const ORD = (k) => { const m = /^S(\d)([a-z]?)$/.exec(k || ""); return m ? +m[1] + (m[2] ? (m[2].charCodeAt(0) - 96) / 10 : 0) : 0; };
 function limKeys(c, attr) { const L_ = LIM[c.id]; return L_ ? Object.keys(L_).filter((k) => String(L_[k][2] || "").includes(attr)).sort((a, b) => ORD(a) - ORD(b)) : []; }
-function limTxt(c, attr) {
-  const parts = limKeys(c, attr).map((k) => { const l = LIM[c.id][k]; return `${fmt(l[0], 2)} – ${fmt(l[1], 2)} (${esc(k)})`; });
-  return parts.length ? `<span class="lim">limits ${parts.join(", ")}</span>` : "";
+function limTxt(c, attr) {              // l[4]: a negative 3-sigma lower limit shown as the import minimum in force
+  const parts = limKeys(c, attr).map((k) => { const l = LIM[c.id][k], n = l[4]; return `${n ? `${fmt(n.v, 2)} (${esc(n.why)})` : fmt(l[0], 2)} – ${fmt(l[1], 2)} (${esc(k)})`; });
+  return parts.length ? `<span class="lim">${P.limits_of === "all" ? "3-sigma limits of all the combines (one group)" : "3-sigma limits of this combine"}: ${parts.join(", ")}</span>` : "";
 }
 function outTxt(c, i, v, attr) {        // outside a limit of a filter this reading reached (kept: all of them)
   if (v !== v) return "";
@@ -2349,7 +2350,7 @@ function cardHtml(c, i) {
   const rows = [];
   rows.push(`<div class="ch"><span class="num" style="background:${c.color}">${c.num}</span><b>${esc(c.name)}</b><span class="ct">${HAS_CLOCK ? esc(cp.date) + " · " : ""}${esc(cp.time)}</span></div>`);
   const yl = KIND === "clean" ? limTxt(c, "yield") : "", ml = KIND === "clean" ? limTxt(c, "moisture") : "", sl = KIND === "clean" ? limTxt(c, "speed") : "";
-  rows.push(`<div class="cr"><span>Dry yield</span><span><b>${fmt(yv, 1)}</b> bu/ac${c.yf && Math.abs(c.yf[i] - c.y[i]) > 0.05 ? ` <i>(as filtered; logged ${fmt(c.y[i], 1)})</i>` : ""}${KIND === "clean" ? outTxt(c, i, yv, "yield") : ""} ${yl}</span></div>`);
+  rows.push(`<div class="cr"><span>Dry yield</span><span><b>${fmt(yv, 2)}</b> bu/ac${c.yf && Math.abs(c.yf[i] - c.y[i]) > 0.005 ? ` <i>(as filtered; logged ${fmt(c.y[i], 2)})</i>` : ""}${KIND === "clean" ? outTxt(c, i, yv, "yield") : ""} ${yl}</span></div>`);
   rows.push(`<div class="cr"><span>Moisture</span><span><b>${fmt(c.m[i], 2)}</b> %${KIND === "clean" ? outTxt(c, i, c.m[i], "moisture") : ""} ${ml}</span></div>`);
   rows.push(`<div class="cr"><span>Speed</span><span><b>${fmt(sv, 2)}</b> mph${c.sf && Math.abs(c.sf[i] - c.s[i]) > 0.005 ? ` <i>(after the swath step; logged ${fmt(c.s[i], 2)})</i>` : ""}${KIND === "clean" ? outTxt(c, i, sv, "speed") : ""} ${sl}</span></div>`);
   rows.push(`<div class="cr"><span>Swath width</span><span><b>${fmt(ft(c.w[i]), 1)}</b> ft${c.wl && Math.abs(c.wl[i] - c.w[i]) > 0.005 ? ` <i>(logged ${fmt(ft(c.wl[i]), 1)})</i>` : ""} · distance <b>${fmt(ft(c.dist[i]), 1)}</b> ft</span></div>`);
@@ -2659,7 +2660,7 @@ function zoneCheck() {
       mN = Math.max(mN, Math.abs(R[k].n - f.n));
       if (f.acres > 0) mA = Math.max(mA, rel(R[k].A, f.acres));
       if (f.bu > 0) mB = Math.max(mB, rel(R[k].B, f.bu));
-      if (f.yield !== null) { mY = Math.max(mY, rel(R[k].yield, f.yield)); if (fmt(R[k].yield, 1) !== fmt(f.yield, 1)) shown++; }
+      if (f.yield !== null) { mY = Math.max(mY, rel(R[k].yield, f.yield)); if (fmt(R[k].yield, 2) !== fmt(f.yield, 2)) shown++; }
       if (f.mean !== null) mM = Math.max(mM, rel(R[k].mean, f.mean));
       if (f.sd !== null && f.sd > 0) mS = Math.max(mS, rel(R[k].sd, f.sd));
     }

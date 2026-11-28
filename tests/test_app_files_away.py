@@ -293,7 +293,7 @@ def test_apply_to_all_leaves_a_file_whose_readings_are_not_at_hand(field, tmp_pa
     _set_import(at, max=150.0)
     line = _orange(at)
     why = (f"its readings are not at hand ({b}: Harvest_B.shp in the folder B): reconnect the drive, then choose it "
-           "in step 2 and Apply the same change on it")
+           "in step 1 and Apply the same change on it")
     assert f"Apply to all also changes {c} (Max. yield volume none → 150.00)." in line, line
     assert f"Apply to all leaves {b} as it is: {why}." in line, line
     assert f"{b} (Max." not in line and "sets aside the cleaning of" not in line, line

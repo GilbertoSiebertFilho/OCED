@@ -250,7 +250,7 @@ def test_app_small_area_of_036_kept_drawn_copied_and_measured_again(field, tmp_p
     A = at2.session_state["small_area"][tag]
     assert os.path.normcase(A["path"]) == os.path.normcase(p036) and A["rule"] == "clip"
     assert not any("measured by an earlier version of OCED" in m.value for m in at2.info)
-    assert "Removed by the cleaning" in _deck_json(at2)                    # the small area's map
+    assert "removed by the cleaning" in _deck_json(at2)                    # the small area's map
     assert {k: v for k, v in _files_under(wd).items() if k != "oced_work.json"} == \
         {k: v for k, v in before.items() if k != "oced_work.json"}
     S0 = at2.session_state["cleaned"][tag]["R"]["small_area"]
@@ -276,12 +276,12 @@ def test_app_small_area_of_036_kept_drawn_copied_and_measured_again(field, tmp_p
     assert S1["before"]["polygons"][0]["kept"] == S0["polygons"][0]["kept"]
     # the map: the 6 removed by hand in purple, their hover says so; the caption counts them
     dj = _deck_json(at2)
-    assert "Removed by hand (Edit points)" in dj and "171,71,188" in dj.replace(" ", "")
+    assert "removed by hand (Edit points)" in dj and "171,71,188" in dj.replace(" ", "")
     # 0.3.8: the hover is short; a click on the reading shows the whole of it under the map
     ks = next(k for k in at2.session_state.filtered_state if str(k).startswith("sa_sig_"))[len("sa_sig_"):]
     spec = next(json.loads(e.proto.json) for e in at2.get("deck_gl_json_chart") if '"sa-strips"' in e.proto.json)
     hand = next(s_ for L_ in spec["layers"] if L_.get("id") == "sa-strips" for s_ in L_["data"]
-                if s_["tip"].startswith("Removed by hand (Edit points)"))
+                if s_["st"] == "removed by hand (Edit points)")
     at2.session_state[f"sa_pick_{ks}"] = {"sig": at2.session_state[f"sa_sig_{ks}"], "c": hand["c"]}
     _run(at2)
     assert any("Removed by hand (Edit points): its yield is not used" in m.value for m in at2.markdown)

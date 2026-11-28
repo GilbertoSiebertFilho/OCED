@@ -86,21 +86,31 @@ def test_the_hover_is_short_and_the_card_holds_the_calculation(dec):
         assert not any("SMS's query" in x or "Cleaned map average" in x for x in H)
     sh = np.asarray(D["share"], float)
     j = int(np.flatnonzero(np.asarray(D["touch"]) & (sh > 0.4) & (sh < 0.6))[0])
-    assert sa.ground_hover_text(D, j, "P") == ["Kept by the cleaning", "50 % of its strip inside P",
-                                               f"Yield used 100.00 bu/ac · {50 * T.A1:.4f} bu", sa.HOVER_CLICK]
+    # 0.4.0: the general map's pattern, 'label: value unit', two decimals (a reading's bushels under 0.1: three
+    # significant digits, as the general map's hover writes a small value)
+    g = 50 * T.A1
+    gs = f"{g:,.2f}" if g >= 0.1 else f"{g:.3g}"
+    assert sa.ground_hover_text(D, j, "P") == ["Dry yield: 100.00 bu/ac", "Reading: kept by the cleaning",
+                                               f"Inside P: {100 * sh[j]:.2f} % of its strip · {gs} bu", sa.HOVER_CLICK]
+    assert sa.ground_hover_fields(D, j, "P") == {"st": "kept by the cleaning", "shl": "Inside P",
+                                                 "sh": f"{100 * sh[j]:.2f} % of its strip · {gs} bu",
+                                                 "ck": sa.HOVER_CLICK}
     # the whole calculation stays in the card (ground_text), unchanged
     L = sa.ground_text(D, j, "P", M["cleaned_rows"]["P"])
     assert f"Grain counted 100.00 bu/ac x {T.A1:.5f} ac x 50.0 % = {50 * T.A1:.4f} bu" in L
     assert "SMS's query: its strip is not whole inside: not counted" in L
     r = int(np.flatnonzero(np.asarray(D["status"]) == "removed")[0])
-    assert sa.ground_hover_text(D, r, "P")[0] == "Removed by the cleaning (S5a)"
+    assert sa.ground_hover_text(D, r, "P")[1] == "Reading: removed by the cleaning (S5a)"
     q = int(np.flatnonzero(np.asarray(D["status"]) == "left_out")[0])
-    assert sa.ground_hover_text(D, q, "P")[0] == "Left out by the import"
+    assert sa.ground_hover_text(D, q, "P")[1] == "Reading: left out by the import"
     o = int(np.flatnonzero(~np.asarray(D["touch"], bool))[0])
-    assert sa.ground_hover_text(D, o, "P")[1:3] == ["Outside P: not counted", "Yield 100.00 bu/ac"]
+    H = sa.ground_hover_text(D, o, "P")
+    assert H[0] == "Dry yield: 100.00 bu/ac" and H[2] == "Outside P: not counted"
     p = M["polygons"][0]
     h = sa.ground_sum_hover(p).split("\n")
-    assert h[0] == f"P: grain / ground {p['ground']['dry_yield_bu_ac']:,.2f} bu/ac" and len(h) <= SHORT_LINES
+    assert h[:2] == ["Plot P", f"Grain / ground: {p['ground']['dry_yield_bu_ac']:,.2f} bu/ac"]
+    assert len(h) <= SHORT_LINES and h[-1] == sa.HOVER_CLICK_SUMS
+    assert sa.ground_sum_fields(p)["gg"] == f"{p['ground']['dry_yield_bu_ac']:,.2f} bu/ac"
 
 
 def test_a_click_picks_the_card_of_the_reading_or_the_line():
@@ -183,24 +193,29 @@ def test_the_map_hover_and_the_card_keep_the_name_as_it_is(clean, tmp_path):
     markup); the card under the map (markdown, escaped there) keeps the name as it is too."""
     import html as H
 
+    import pandas as pd
     import streamlit as st
-    ns = _app_defs({"st": st, "sarea": sa, "np": np, "html": H}, "small_area_map_data", "SA_MAP_MARGIN_M",
-                   "SA_MAP_MAX", "SA_FILL", "SA_LINE")
+    ns = _app_defs({"st": st, "sarea": sa, "np": np, "pd": pd, "html": H}, "small_area_map_data", "SA_MAP_MARGIN_M",
+                   "SA_MAP_MAX", "SA_FILL", "SA_LINE", "SA_YIELD", "SA_STRIP_ALPHA", "ATTR_INFO",
+                   "rgba_of", "fmt_value")
     G = gpd.read_file(clean["poly"])
     G["name"] = ["Rate <120 & up", "B&B"]
     poly = str(tmp_path / "odd names.geojson")
     G.to_file(poly, driver="GeoJSON")
     fz = clean["R"]["files"]["flagged_zip"]
     MD = ns["small_area_map_data"](fz, 0.0, poly, 0.0, "clip", "ground")
-    tips = [x["tip"] for x in MD["strips"] + MD["parts"] + MD["lines"]]
-    assert any("Rate <120 & up" in t for t in tips) and any("B&B" in t for t in tips)
-    for t in tips:
+    # 0.4.0: the hover's fields (the general map's 'v', the small area's st / shl / sh, a line's plot / gg / nr)
+    texts = ([x["shl"] for x in MD["strips"] + MD["parts"]] + [x["sh"] for x in MD["strips"] + MD["parts"]]
+             + [x["plot"] for x in MD["lines"]])
+    assert any("Rate <120 & up" in t for t in texts) and any("B&B" in t for t in texts)
+    for t in texts + [x["st"] for x in MD["strips"]]:
         assert "&lt;" not in t and "&gt;" not in t and "&amp;" not in t, t
-        assert len(t.splitlines()) <= SHORT_LINES
     M = sa.detail_of(fz, poly, "clip", margin_m=0, method="ground")
-    line_tips = [x["tip"] for x in MD["lines"]]
+    assert {x["plot"] for x in MD["lines"]} == {str(p_["name"]) for p_ in M["polygons"]}
     for p_ in M["polygons"]:
-        assert sa.ground_sum_hover(p_) in line_tips
+        L = [x for x in MD["lines"] if x["plot"] == str(p_["name"])]
+        assert L and all(x["gg"] == sa.ground_sum_fields(p_)["gg"] and x["hd"] == "none" and x["pd"] == "inline"
+                         for x in L)
     titles = [c["title"] for c in MD["cards"]]
     assert "Polygon Rate <120 & up" in titles and "Polygon B&B" in titles
 
@@ -269,28 +284,38 @@ def test_app_short_hover_card_on_click_replay_and_before_after(clean, tmp_path, 
     at.button(key="clean_one").click()
     _run(at)
     tag = at.session_state["active"]
-    ks = next(k for k in at.session_state.filtered_state if str(k).startswith("sa_rule_"))[len("sa_rule_"):]
-    at.text_input(key=f"sa_path_{ks}").input(clean["poly"])
+    # 0.4.0: the polygon file is given in step 1 (keys by file), Measure is in step 5, Plots (by clean file), drawn
+    # once a plot boundary is given
+    ka = next(k for k in at.session_state.filtered_state if str(k).startswith("sa_rule_"))[len("sa_rule_"):]
+    at.text_input(key=f"sa_path_{ka}").input(clean["poly"])
+    _run(at)
+    ks = next(str(b.key) for b in at.button if str(b.key or "").startswith("sa_go_"))[len("sa_go_"):]
     at.button(key=f"sa_go_{ks}").click()
     _run(at)
     S0 = at.session_state["cleaned"][tag]["R"]["small_area"]
     assert S0["method"] == "ground"
-    # the map: selectable (one object), its tooltip the short hover in its own box, every layer with an id
+    # the map: selectable (one object), its tooltip the general map's hover (map_tooltip: '<b>Dry yield</b>: v',
+    # 'Plot <name>' on a line) with the small area's short lines, in its own box; every layer with an id
+    import html as H
     e, spec = _sa_chart(at)
-    assert list(e.proto.selection_mode) and json.loads(e.proto.tooltip)["html"] == '<div class="oced-sa-tip">{tip}</div>'
+    ns = _app_defs({"html": H}, "MAP_TIP_STYLE", "map_tooltip", "SA_TIP_MORE", "SA_TIP_CLASS")
+    tt = json.loads(e.proto.tooltip)
+    want = ns["map_tooltip"]("Dry yield", plots=True, more=ns["SA_TIP_MORE"], cls=ns["SA_TIP_CLASS"])
+    assert list(e.proto.selection_mode) and tt["html"] == want["html"] and tt["style"] == want["style"]
+    assert tt["html"].startswith('<div class="oced-sa-tip"><span style="display:{hd}"><b>Dry yield</b>: {v}</span>')
     strips, lines = _layer(spec, "sa-strips"), _layer(spec, "sa-lines")
-    tips = {s["tip"] for s in strips} | {s["tip"] for s in _layer(spec, "sa-parts")}
-    for t in tips:
-        L = t.split("\n")
+    rows = strips + _layer(spec, "sa-parts")
+    for r in rows:
+        L = [f"Dry yield: {r['v']}", f"Reading: {r['st']}", f"{r['shl']}: {r['sh']}", r["ck"]]
         assert len(L) <= SHORT_LINES and max(len(x) for x in L) <= SHORT_CHARS, L
-        assert "SMS's query" not in t and "Grain counted" not in t
-    assert any(" % of its strip inside P1" in t for t in tips)
+        assert r["v"].endswith(" bu/ac") and "SMS's query" not in " ".join(L) and "Grain counted" not in " ".join(L)
+    assert any(r["shl"] == "Inside P1" and " % of its strip · " in r["sh"] for r in rows)
     # the script that keeps the hover inside the map
     assert any("__ocedSaTipFit" in str(h.proto) for h in at.get("html"))
     assert not [k for k in at.session_state.filtered_state if str(k).startswith("sa_card_")]
     # a click on a counted reading (the selection callback's result): its whole calculation under the map
     sig = at.session_state[f"sa_sig_{ks}"]
-    s = next(x for x in strips if "% of its strip inside P1" in x["tip"] and x["tip"].startswith("Kept"))
+    s = next(x for x in strips if x["shl"] == "Inside P1" and x["st"] == "kept by the cleaning")
     at.session_state[f"sa_pick_{ks}"] = {"sig": sig, "c": s["c"]}
     _run(at)
     md = " ".join(m.value for m in at.markdown)

@@ -92,7 +92,7 @@ import pandas as pd
 from engine.formats import common, detect
 from engine.clean import yield_clean
 
-__version__ = "0.3.8"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
+__version__ = "0.4.0"           # the version of OCED (app/brand.py VERSION; written into the ISOXML sets OCED writes)
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHP_EXTS = (".shp", ".shx", ".dbf", ".prj", ".cpg")
 WORKDIR_TAG_CHARS = 20          # characters of the tag in a work folder's name (path length: new_workdir)
@@ -474,7 +474,7 @@ def engine_knows_v2() -> bool:
 TICKET_UNITS = ("lb", "kg", "bu", "t", "bu/ac")   # bu/ac = the grower's yield per acre (x the field's acres)
 LB_PER_KG = 2.20462262185
 LB_PER_UNIT = {"lb": 1.0, "kg": LB_PER_KG, "t": 1000.0 * LB_PER_KG}       # bu needs the test weight
-TICKET_DEFAULT = {"value": None, "unit": "lb", "basis": "wet", "moisture_pct": None, "note": None, "area_ac": None,
+TICKET_DEFAULT = {"value": None, "unit": "lb", "basis": None, "moisture_pct": None, "note": None, "area_ac": None,
                   "test_weight_lb_bu": None, "use": "adjust"}
 # test_weight_lb_bu (inside the ticket) = the grower's own bushel weight; use = "adjust" (level the yields) or
 # "validate" (the weight only validates the monitor): engine/clean/yield_clean.py DEFAULT_SETTINGS['scale_ticket']
@@ -516,7 +516,9 @@ def ticket_settings(settings: dict | None) -> dict | None:
             raise ValueError(f"scale_ticket.area_ac must be a positive area in acres, not {out['area_ac']!r}")
         if out["unit"] != "bu/ac":
             out["area_ac"] = None                     # acres only matter for a yield per acre
-    out["basis"] = str(out.get("basis") or "wet").strip().lower()
+    # a weight given without its basis: dry (at the standard moisture), wet when its grain moisture is given (0.4.0;
+    # before, wet); the legacy scale_ticket_bu keeps its scale_ticket_basis default (wet), as the v1 engine
+    out["basis"] = str(out.get("basis") or yield_clean.ticket_basis_default(out.get("moisture_pct"))).strip().lower()
     if out["basis"] not in ("wet", "dry"):
         raise ValueError(f"scale_ticket.basis must be 'wet' or 'dry', not {out['basis']!r}")
     if out.get("moisture_pct") is not None:
@@ -617,12 +619,12 @@ def ticket_conversion(ticket: dict | None, test_weight: float | None = None, shp
             # the grower's bushels weigh tw_g: the same grain in the bushel of the monitor's total
             out["bu_grower"], out["lb"] = bu, bu * tw_g
             out["bu"] = out["lb"] / tw
-            out["text"] = ((head + " " if head else "") + f"of {tw_g:.2f} lb ({g_lab}) = {out['lb']:,.0f} lb = "
+            out["text"] = ((head + " " if head else "") + f"of {tw_g:.2f} lb ({g_lab}) = {out['lb']:,.2f} lb = "
                            f"{out['bu']:,.2f} bu at {tw:.2f} lb/bu ({src}: the bushel of the monitor's total)")
             return out
         out["bu"] = bu
         out["lb"] = bu * tw if tw else None
-        tail = (f"= {out['lb']:,.0f} lb at {tw:.2f} lb/bu ({src})" if tw else
+        tail = (f"= {out['lb']:,.2f} lb at {tw:.2f} lb/bu ({src})" if tw else
                 ("" if head else "(bushels as given: no conversion needed)"))
         out["text"] = (head + (" " if head and tail else "") + tail
                        + (f"; the bushels are compared as given ({g_lab} {tw_g:.2f} lb/bu is not applied to a weight "
@@ -632,11 +634,12 @@ def ticket_conversion(ticket: dict | None, test_weight: float | None = None, shp
     if not tw:
         out["error"] = ("no test weight to convert the weight to bushels (the file has no Yld_Mass_W / Yld_Vol_We and "
                         "no crop is set): give test_weight_lb_bu")
-        out["text"] = f"{v:,.0f} {u}" + (f" = {out['lb']:,.0f} lb" if u != "lb" else "") + "; " + out["error"]
+        out["text"] = (yield_clean.ticket_value_text(v, u) + (f" = {out['lb']:,.2f} lb" if u != "lb" else "") + "; "
+                       + out["error"])
         return out
     out["bu"] = out["lb"] / tw
     out["text"] = (f"= {out['bu']:,.2f} bu at {tw:.2f} lb/bu ({src})" if u == "lb" else
-                   f"= {out['lb']:,.0f} lb = {out['bu']:,.2f} bu at {tw:.2f} lb/bu ({src})")
+                   f"= {out['lb']:,.2f} lb = {out['bu']:,.2f} bu at {tw:.2f} lb/bu ({src})")
     if differ:
         # compared as a mass: the other bushel weight only says how many of those bushels the weight makes
         out["bu_grower"] = out["lb"] / tw_g
@@ -646,7 +649,7 @@ def ticket_conversion(ticket: dict | None, test_weight: float | None = None, shp
 
 
 def ticket_label(ticket: dict | None) -> str:
-    """'1,500,000 lb' / '9,000 bu' for the tree row and the summaries ('' without a ticket)."""
+    """'1,500,000.00 lb' / '9,000.00 bu' for the tree row and the summaries ('' without a ticket)."""
     t = ticket if (isinstance(ticket, dict) and ticket.get("value")) else None
     if not t:
         return ""
@@ -677,9 +680,9 @@ def level_factor_text(L: dict) -> str:
 
 
 def level_caption(R: dict) -> str:
-    """'monitor 10,500 bu vs scale 10,000 bu (-4.76 %)' from R['level'] ('' without a level). With a wet ticket plus
-    its moisture the scale figure is the ticket at the standard moisture, the one L and the closure use: 'monitor M bu
-    vs scale S bu (+x %; T bu at m % = S bu at Ms %)'."""
+    """'monitor 10,500.00 bu vs scale 10,000.00 bu (-4.76 %)' from R['level'] ('' without a level). With a wet ticket
+    plus its moisture the scale figure is the ticket at the standard moisture, the one L and the closure use: 'monitor
+    M bu vs scale S bu (+x %; T bu at m % = S bu at Ms %)'."""
     L = R.get("level") or {}
     if not L:
         return ""
@@ -693,17 +696,17 @@ def level_caption(R: dict) -> str:
     after = L.get("export_total_harmonised_bu")
     if (after is not None and not L.get("per_machine")
             and abs(float(after) - float(mon)) > 1e-9 * max(1.0, abs(float(mon)))):
-        s = (f"monitor {float(after):,.0f} bu with the combine factor ({float(mon):,.0f} bu before it) vs scale "
-             f"{float(tick):,.0f} bu ({100 * (float(tick) / float(after) - 1):+.2f} %")
+        s = (f"monitor {float(after):,.2f} bu with the combine factor ({float(mon):,.2f} bu before it) vs scale "
+             f"{float(tick):,.2f} bu ({100 * (float(tick) / float(after) - 1):+.2f} %")
     else:
-        s = (f"monitor {float(mon):,.0f} bu vs scale {float(tick):,.0f} bu "
+        s = (f"monitor {float(mon):,.2f} bu vs scale {float(tick):,.2f} bu "
              f"({100 * (float(tick) / float(mon) - 1):+.2f} %")
     if (L.get("import_left_out") or {}).get("included_in_L") and L.get("import_left_out_in_total_bu"):
-        s += (f"; the monitor holds {float(L['import_left_out_in_total_bu']):,.0f} bu of readings the import left out "
+        s += (f"; the monitor holds {float(L['import_left_out_in_total_bu']):,.2f} bu of readings the import left out "
               "below its minimum")
     if L.get("ticket_bu_at_standard") is not None and L.get("ticket_bu") is not None:
         ms = (R.get("moisture") or {}).get("standard_pct")
-        s += (f"; {float(L['ticket_bu']):,.0f} bu at {float(L['ticket_moisture_pct']):g} % = {float(tick):,.0f} bu"
+        s += (f"; {float(L['ticket_bu']):,.2f} bu at {float(L['ticket_moisture_pct']):g} % = {float(tick):,.2f} bu"
               + (f" at {float(ms):g} %" if ms is not None else " at the standard moisture"))
     s += ")"
     if L.get("ticket_unit") and L.get("ticket_unit") != "bu" and L.get("ticket_value") is not None:
@@ -861,7 +864,7 @@ def small_area_after_clean(R: dict, polygons_path: str, rule: str = "clip", log=
 
 def small_area_remove(R: dict, log=print) -> bool:
     """The small area of a cleaning taken away (the app's 'Remove the small area'): R['small_area'] and its files
-    (<tag>_small_area.csv, .zip, _parts.zip) removed, the cleaning JSON and the report made again without it. The
+    (<tag>_small_area.csv, .zip, _parts.zip, _ground.zip and the report's figures) removed, the cleaning JSON and the report made again without it. The
     clean, flagged and DIFM files are not touched. True when there was one."""
     X = R.pop("small_area", None)
     F = R.get("files") or {}
@@ -869,8 +872,10 @@ def small_area_remove(R: dict, log=print) -> bool:
         F.pop(k, None)
     if not X:
         return False
-    for p in [(X.get("files") or {}).get(k) for k in ("csv", "zip", "parts_zip", "ground_zip")]:
-        if p and os.path.isfile(p):
+    XF = X.get("files") or {}
+    for p in ([XF.get(k) for k in ("csv", "zip", "parts_zip", "ground_zip")]
+              + [v for k, v in XF.items() if str(k).startswith("fig_")]):   # 0.4.0: the report's figures
+        if p and isinstance(p, str) and os.path.isfile(p):
             try:
                 os.remove(p)
             except OSError:
@@ -1046,7 +1051,7 @@ def recommended_yield_column(R: dict) -> tuple[str, str]:
     With a grower's weight (R['level'] and a leveled column in the clean file) the leveled column is the "real"
     yield and wins over everything: Yld_Lvl_Sy (= Yld_Dry_Sy x factor x L) when the sessions recommend the symmetric
     basis and that column was written, else Yld_Level (= mapped dry yield x factor x L); the reason names the ticket
-    in its unit and L ("leveled to the grower's weight 1,500,000 lb (L = 0.960): the bu/ac now sum to the scale")."""
+    in its unit and L ("leveled to the grower's weight 1,500,000.00 lb (L = 0.960): the bu/ac now sum to the scale")."""
     col = R.get("yield_column_for_difm") or "Yld_Vol_Dr"
     ch = ((R.get("sms3sigma") or {}).get("difm_ready_changes") or {}) if R.get("method") == "sms3sigma" else {}
     reason = ("the dry yield as SMS exports it after Optimize Swath Widths"
@@ -1189,7 +1194,7 @@ def difm_note(R: dict) -> str:
     """The clean file and which yield column to map, for the CLI summary."""
     col, reason = recommended_yield_column(R)
     s = (f"The clean shapefile is {os.path.basename(R['files']['difm_ready_zip'])}; the yield to map is "
-         f"{col} ({reason}). For the DIFM platform use the app's step 4 'Shapefile for DIFM' (the layout DIFM reads)")
+         f"{col} ({reason}). For the DIFM platform use the app's step 6 (Final files) 'Shapefile for DIFM' (the layout DIFM reads)")
     if R.get("manual_edits"):
         s += ". " + yield_clean.manual_mod.summary_text(R)
     if R.get("level_column_for_difm") and leveled_column(R) is None:
@@ -1199,8 +1204,8 @@ def difm_note(R: dict) -> str:
         L = R["level"]
         mon = L.get("processed_set_integral_bu", L.get("export_total_bu", L.get("export_integral_bu")))
         s += (f". {col} is the real level: the file keeps the monitor's columns"
-              + (f" (monitor total {float(mon):,.0f} bu" + (
-                  f"; L is built on {float(L['export_total_bu']):,.0f} bu with the readings the import left out below "
+              + (f" (monitor total {float(mon):,.2f} bu" + (
+                  f"; L is built on {float(L['export_total_bu']):,.2f} bu with the readings the import left out below "
                   "its minimum" if (L.get("import_left_out") or {}).get("included_in_L") else "") + ")"
                  if mon is not None else "")
               + " and adds the leveled ones (Yld_Level"
@@ -1924,8 +1929,10 @@ def main(argv=None) -> int:
     ap.add_argument("--ticket-area-ac", type=float, default=None, metavar="AC",
                     help="with --ticket-unit bu/ac: the acres the grower's yield is over (default: the boundary's "
                          "area, else the area the readings swept)")
-    ap.add_argument("--ticket-basis", choices=["wet", "dry"], default="wet",
-                    help="wet (default): the scale weighed wet grain; dry: the weight is already at the standard moisture")
+    ap.add_argument("--ticket-basis", choices=["wet", "dry"], default=None,
+                    help="dry (the default): the weight is at the standard moisture; wet: the scale weighed the grain "
+                         "as delivered (the default with --ticket-moisture). --scale-ticket-bu (legacy) keeps wet as "
+                         "its default")
     ap.add_argument("--ticket-moisture", type=float, default=None, metavar="PCT",
                     help="moisture of the weighed grain, when the ticket gives it (wet basis only)")
     ap.add_argument("--scale-ticket-bu", type=float, default=None, metavar="BU",
@@ -2237,7 +2244,8 @@ def _cli(a) -> int:
                          "standard moisture, so the ticket's moisture would be ignored): drop it or give the weight as "
                          "the scale wrote it with --ticket-basis wet")
     if a.scale_ticket is not None:
-        settings["scale_ticket"] = {"value": a.scale_ticket, "unit": a.ticket_unit or "lb", "basis": a.ticket_basis,
+        settings["scale_ticket"] = {"value": a.scale_ticket, "unit": a.ticket_unit or "lb",
+                                    "basis": a.ticket_basis or yield_clean.ticket_basis_default(a.ticket_moisture),
                                     "moisture_pct": a.ticket_moisture, "note": None,
                                     "area_ac": a.ticket_area_ac if (a.ticket_unit == "bu/ac") else None}
     if a.scale_ticket_bu is not None:
@@ -2245,8 +2253,7 @@ def _cli(a) -> int:
             raise ValueError("--scale-ticket-bu is the legacy ticket in bushels and takes no unit or moisture: use "
                              "--scale-ticket VALUE --ticket-unit lb|kg|bu|t [--ticket-moisture PCT] instead")
         settings["scale_ticket_bu"] = a.scale_ticket_bu
-        if a.ticket_basis:
-            settings["scale_ticket_basis"] = a.ticket_basis
+        settings["scale_ticket_basis"] = a.ticket_basis or "wet"     # the legacy alias keeps the v1 default
     if a.test_weight is not None and settings.get("scale_ticket"):
         settings.setdefault("test_weight_lb_bu", a.test_weight)   # the same test weight converts the ticket
     if a.boundary:

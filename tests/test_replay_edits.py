@@ -121,9 +121,9 @@ def test_the_card_values_are_the_ones_the_filters_compared(auto):
     for C in P["combines"]:
         r = np.asarray(C["rows"])
         if "yf" in C["data"]:
-            yf = _decode(P, C, "yf") * 0.1
+            yf = _decode(P, C, "yf") * P["y_q"]
             want = F["Yld_Vol_Dr"].to_numpy(float)[r] * F["Swath_Scl"].to_numpy(float)[r]
-            assert np.nanmax(np.abs(yf - want)) <= 0.05 + 1e-9
+            assert np.nanmax(np.abs(yf - want)) <= P["y_q"] / 2 + 1e-9
         if "sf" in C["data"]:
             sf = _decode(P, C, "sf") * 0.01
             d0, d1 = F["Distance_f"].to_numpy(float)[r], F["Dist_Opt"].to_numpy(float)[r]

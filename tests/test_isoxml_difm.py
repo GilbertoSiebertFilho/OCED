@@ -168,6 +168,7 @@ def test_app_isoxml_harvest_shapefile_for_difm_swath_passes_and_isoxml_again(tmp
     assert not at.exception, at.exception
     assert at.session_state["smsset"]["swath_passes"] == 2 and any(STALE in w.value for w in at.warning)
     _by_key(at.number_input, "gw_w_").set_value(round(_wet_lb(a1) * 1.05)).run()
+    _by_key(at.button_group, "gw_b_").set_value("wet").run()                       # a wet weight, as delivered
     _by_key(at.button_group, "gw_use_").set_value("adjust").run()
     C2 = _clean(at)
     R2 = C2["R"]

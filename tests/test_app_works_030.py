@@ -26,7 +26,7 @@ sys.path.insert(0, ROOT)
 
 from engine import sms_import as si  # noqa: E402
 from tests.app_steps import (_apply_import, _apply_to_all, _badge_lines, _set_import, _starts_from,  # noqa: E402
-                             _switch_off, by_key)
+                             _switch_off, by_key, step_order)
 from tests.test_app_steps import (_D, _app, _clean, _extract, _open, _orange, _pick, _prod, _reopen,  # noqa: E402
                                   _sig, field)
 
@@ -278,13 +278,13 @@ def test_a_basis_that_cannot_be_read_yet_is_not_taken_as_known(field, tmp_path, 
     assert any(x.startswith("Starts from Older rule") for x in b1), b1
     sf = _starts_from(at).help
     assert sf.startswith("Imported by an earlier version of OCED, kept as it is: the crop of its data could not be "
-                         "read yet") and "Step 2 imports it" not in sf, sf
+                         "read yet") and "Step 1 imports it" not in sf, sf
     _pick(at, k)
     _set_import(at, max=150.0)
     why = ("the crop of their data could not be read yet (their readings are not at hand): reconnect the drive and "
            "open the work again, then Apply on each")
     away = (f"its readings are not at hand ({m}: Harvest_M.shp in the folder M): reconnect the drive, then choose it "
-            "in step 2 and Apply the same change on it")
+            "in step 1 and Apply the same change on it")
     line = _orange(at)
     assert f"as they are: {why}." in line and all(f"{t}, " in line or f"{t} as" in line for t in pend), line
     assert f"Apply to all leaves {m} as it is: {away}." in line, line
@@ -522,7 +522,7 @@ def test_apply_to_all_names_how_to_finish_a_target_whose_default_fails(field, tm
     assert not at.exception, at.exception
     warn = " ".join(w.value for w in at.warning)
     assert (f"{b}: SMS's default import of this file could not be made (OSError: No space left on device): the file "
-            "and its import are unchanged; free disk space, then choose it in step 2 and Apply the same change on it"
+            "and its import are unchanged; free disk space, then choose it in step 1 and Apply the same change on it"
             ) in warn, warn
     assert "free disk space and try again" not in warn, warn
     assert _prod(at, a)[0] == "default" and _prod(at, b)[0] == "custom" and _prod(at, b)[4] == 150.0
@@ -750,7 +750,7 @@ def test_a_0_3_0_export_that_cannot_be_read_at_the_open_is_not_taken_as_naming_n
         if how == "no_shx":                               # the first sentence of the reader's message only
             assert "Harvest_A.shx" in B["why"] and "SHAPE_RESTORE_SHX" not in B["why"], B
         _pick(at, a)
-        badge = next(m.help for m in at.markdown if "oced-badge" in m.value)
+        badge = next(m.help for m in step_order(at) if "oced-badge" in m.value)
         said = [c.value for c in at.caption] + [str(c.help) for c in at.caption if c.help] + [_starts_from(at).help]
         told = [x for x in said + [str(badge)] if "could not be read yet (" in x]
         assert len(told) >= 4 and all(B["why"] in x and advice in x and other not in x for x in told), told

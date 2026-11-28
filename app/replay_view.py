@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """OCED: the harvest replay in the app ('Play the harvest'), beside the maps of step 2 (the readings as imported) and
-of step 3 (the cleaning result, kept and removed). The player is engine/replay.py's HTML, embedded with st.iframe
+of step 4 (the cleaning result, kept and removed), and in step 5 (Plots: the cleaning with the plots). The player is engine/replay.py's HTML, embedded with st.iframe
 (Streamlit 1.61: an HTML string becomes a same-origin srcdoc frame that runs its script, with the frame policy that
 allows full screen; st.components.v1.html is deprecated, st.html runs no script in a frame of its own), and the same
 replay is offered as a file to open in a browser tab.
 
     import replay_view
     replay_view.section(shp, key, kind="import", outline=rings, raw_root=folder, field=tag)       # step 2
-    replay_view.section(flagged_shp, key, kind="clean", outline=rings, steps=names, field=tag)    # step 3
+    replay_view.section(flagged_shp, key, kind="clean", outline=rings, steps=names, field=tag)    # step 4
+    replay_view.section(flagged_shp, key, kind="clean", small_area=sa, field=tag)                 # step 5
 
 It reads the files only: nothing of the import or of the cleaning changes. The payload is built when the section is
 opened (never on a rerun with it closed) and kept in Streamlit's cache (file, its modification time, the boundary,
@@ -19,7 +20,7 @@ upload is kept in the work folder (zones/<tag>/), and the choice (file and class
 there, so both replays of the file use it and it is still there after a rerun or when the work is opened again. With
 it, the player shows the zones and the yield inside each one, and zone_yield.csv can be downloaded.
 
-Edits by hand (step 3, the replay of a cleaning, when the caller gives on_edits): the player is mounted through a
+Edits by hand (step 4, the replay of a cleaning, when the caller gives on_edits): the player is mounted through a
 two-way component (st.components.v2, inline JavaScript, no build step: it holds the same self-contained player in an
 iframe of its own and passes on the marks the player posts with 'Reprocess with these edits'). The marks (combine
 number, reading index of the payload) become the engine's reading keys here (engine.replay.edit_keys, which refuses a
@@ -30,11 +31,12 @@ it shows the readings removed and kept by hand.
 The replay of the imported readings (step 2, 0.3.7) has an edit mode too when the caller gives edits (the file's
 edits file, {} for none yet) and on_edits: a click removes any reading or puts back one removed by hand, 'Apply these
 edits' sends them (engine.replay.edit_keys stage 'import'), and on_edits merges them into the same edits file as step
-3's (one list of edits by hand per file); nothing is cleaned there.
+4's (one list of edits by hand per file); nothing is cleaned there.
 
 The work's own zone map (0.3.7, the field files of step 1): field_zone, used by every file without one of its own
-('From the field files'); 'Use another for this file' gives a file its own, which wins. A small area (step 3,
-small_area: engine.clean.small_area.replay_part) is drawn on the replay of the cleaning."""
+('From the field files'); 'Use another for this file' gives a file its own, which wins. A small area (the plots,
+small_area: engine.clean.small_area.replay_part) is drawn on the replay of the cleaning: in step 4's and in the replay of
+step 5 (Plots), a player of its own without Edit points."""
 from __future__ import annotations
 
 import hashlib
@@ -531,6 +533,20 @@ def zone_control(field: str | None, key: str, field_zone: dict | None = None, on
 
 
 # ------------------------------------------------------------------------------------------------ the section
+def marks_kept_line(kind: str) -> str:
+    """The line beside a player with Edit points: its marks live in the player until they are sent."""
+    send = "'Apply these edits'" if kind == "import" else "'Reprocess with these edits'"
+    return (f"Marks are kept until you change step or fold this section: press {send} first, or the marks not yet "
+            "sent are lost.")
+
+
+def makes_key(key: str, field: str | None = None) -> str:
+    """The session key of the makes corrected by hand: one entry per file of the work (field), shared by every replay
+    of that file (the import in step 2, the cleaning in step 4, the plots in step 5); a replay of no file of the work
+    keeps its own (by its key)."""
+    return f"replay_makes_field_{field}" if field else f"replay_makes_{key}"
+
+
 def section(path: str | None, key: str, kind: str = "import", outline=None, raw_root=None,
             steps: dict | None = None, title: str | None = None, label: str = "Play the harvest",
             field: str | None = None, record: str | None = None, on_edits=None, edits: dict | None = None,
@@ -561,7 +577,8 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
         except Exception:                                # noqa: BLE001 - no input folder recorded: no hint
             root = None
         hints = _hints(root, _mtime(root)) if root and os.path.exists(root) else {}
-        makes = dict(st.session_state.get(f"replay_makes_{key}") or {})
+        mk_key = makes_key(key, field)
+        makes = dict(st.session_state.get(mk_key) or {})
         Z = zone_control(field, key, field_zone, on_field_column)
         zone = (Z["path"], Z["fingerprint"], Z["column"]) if Z else None
         args = (path, stamp, kind, outline or None, dict(steps or {}), makes, hints, title)
@@ -592,7 +609,7 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
                " 'Edit points' (top right of the player): click a reading to remove it by hand, or a reading removed "
                "by hand (a cross) to put it back, then 'Apply these edits': nothing is cleaned, the edits go to the "
                "files without cleaning below and to every cleaning of this file (one list of edits by hand with step "
-               "3's)." if kind == "import" else
+               "4's)." if kind == "import" else
                " 'Edit points' (top right of the player): click a kept reading to remove it, or one the moisture, "
                "speed or yield filter removed to keep it, then 'Reprocess with these edits'; the card of the "
                "reading under the cursor shows its data and its combine's limits.")
@@ -603,6 +620,10 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
         if edit and not (P.get("edit") or {}).get("ok"):
             st.info("Edit points is off for this replay: " + str((P.get("edit") or {}).get("why")) + ".",
                     icon=":material/edit_off:")
+        elif edit:
+            # 0.4.0: the steps are tabs and only the open one is drawn, so the player is closed by a change of step
+            # (as by folding this section): the marks not yet sent are not kept
+            st.caption(f":orange[{marks_kept_line(kind)}]")
         if kind == "import" and (P.get("manual") or {}).get("removed_by_hand"):
             st.caption(f"{int(P['manual']['removed_by_hand']):,} reading(s) removed by hand: a cross marks them in the "
                        "player, and the totals of the player leave them out.")
@@ -657,5 +678,5 @@ def section(path: str | None, key: str, kind: str = "import", outline=None, raw_
                     if pick != own:
                         new[C["id"]] = pick
                 if new != makes and st.button("Apply", key=f"replay_mk_go_{key}", type="primary"):
-                    st.session_state[f"replay_makes_{key}"] = new
+                    st.session_state[mk_key] = new
                     st.rerun()

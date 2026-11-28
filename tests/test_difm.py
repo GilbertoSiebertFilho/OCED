@@ -1098,6 +1098,7 @@ def test_app_asks_which_yield_when_the_cleaning_adjusted_it(two, tmp_path, monke
     _open(at, two["shp"])
     _by_key(at.toggle, "cf_on_").set_value(True).run()
     _by_key(at.number_input, "gw_w_").set_value(float(two["truth"]["wet_lb"])).run()
+    _by_key(at.button_group, "gw_b_").set_value("wet").run()                       # the true weight as delivered
     _by_key(at.button_group, "gw_use_").set_value("adjust").run()
     at.button(key="clean_one").click().run()
     assert not at.exception, at.exception

@@ -78,8 +78,10 @@ def _clean_and_measure(at, poly):
     at.button(key="clean_one").click()
     _run(at)
     tag = at.session_state["active"]
-    k = next(str(t.key) for t in at.text_input if str(t.key).startswith("sa_path_"))[len("sa_path_"):]
-    at.text_input(key=f"sa_path_{k}").input(poly)
+    ka = next(str(t.key) for t in at.text_input if str(t.key).startswith("sa_path_"))[len("sa_path_"):]
+    at.text_input(key=f"sa_path_{ka}").input(poly)                       # 0.4.0: path in step 1, Measure in step 5
+    _run(at)                                                             # (drawn once a plot boundary is given)
+    k = next(str(b.key) for b in at.button if str(b.key or "").startswith("sa_go_"))[len("sa_go_"):]
     at.button(key=f"sa_go_{k}").click()
     _run(at)
     assert at.session_state["cleaned"][tag]["R"]["small_area"]["method"] == "ground"

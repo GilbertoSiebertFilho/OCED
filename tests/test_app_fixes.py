@@ -423,7 +423,7 @@ def test_a_point_export_imported_with_the_earlier_limits(kind, tmp_path, monkeyp
     kind_, text = at.session_state["work_msg"]
     assert kind_ == "warning" and line in text, text
     assert "opened again it is imported as SMS with product wheat, 60.00 lb/bu, 13.5 %, from 0 bu/ac, no maximum" in text
-    assert "generic import of a point file" in text and "import it again in step 2" in text
+    assert "generic import of a point file" in text and "import it again in step 1's import settings" in text
     assert at.session_state["datasets"][t]["n"] == n_old and t in at.session_state["cleaned"]
     assert at.session_state["datasets"][t]["import_mode"] == "default"            # D7: kept, labelled
     assert any("Older rule" in b for b in _badge_lines(at))
